@@ -32,6 +32,8 @@ def main() -> None:
         for link in re.findall(r'\]\(([^)]+)\)',path.read_text(encoding='utf-8')):
             if re.match(r'https?:|#',link): continue
             assert (path.parent/link.split('#')[0]).exists(), f'Broken documentation link in {path}: {link}'
+    attributes = subprocess.check_output(['git','check-attr','eol','--','third_party/nlohmann/json.hpp'],cwd=ROOT,text=True)
+    assert attributes.strip().endswith(': lf'), 'Vendored text must retain LF for cross-platform SHA checks'
     assert subprocess.run(['git','check-ignore','-q','Docs/local-design.md'],cwd=ROOT).returncode == 0
     assert subprocess.run(['git','check-ignore','-q','.cicd/workflow.py'],cwd=ROOT).returncode == 1
     subprocess.run(['git','diff','--check'],cwd=ROOT,check=True)
