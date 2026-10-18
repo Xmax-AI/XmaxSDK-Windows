@@ -197,6 +197,25 @@ static void quality_policy() {
     stream.adaptive(false);
     CHECK(stream.observe_quality(0, 4, stamp + .003, cancel).empty());
 }
+static void playback_policy_before_join() {
+    struct Probe : FakeRtc {
+        void join(const Connection& connection, VideoEncodingConfiguration format, bool mic,
+                  RtcCallbacks callbacks, const Cancel& cancel) override {
+            CHECK(remote_volume == .25f);
+            FakeRtc::join(connection, format, mic, std::move(callbacks), cancel);
+        }
+    };
+    auto http = std::make_shared<FakeHttp>();
+    auto rtc = std::make_shared<Probe>();
+    Config config;
+    config.key = "test";
+    XmaxRealtimeManager sdk(std::make_shared<ApiService>(config, http), [rtc] { return rtc; });
+    sdk.prepare({1920, 1024, 30});
+    sdk.volume(.25f);
+    sdk.connect(false);
+    CHECK(sdk.volume() == .25f);
+    sdk.disconnect(true);
+}
 static void long_signaling_keepalive() {
     auto http = std::make_shared<FakeHttp>();
     auto rtc = std::make_shared<FakeRtc>();
@@ -279,7 +298,8 @@ int main() {
              {"adaptive quality policy", quality_policy},
              {"async exception containment", async_exception_boundary},
              {"actual publication timing and stale callback isolation", publication_timing},
-             {"dual keepalive during long signaling", long_signaling_keepalive}}) {
+             {"dual keepalive during long signaling", long_signaling_keepalive},
+             {"playback policy applied before subscription", playback_policy_before_join}}) {
         try {
             test.second();
             std::cout << "PASS " << test.first << '\n';

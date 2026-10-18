@@ -27,6 +27,7 @@ class AgoraRtc final : public Rtc, private IRtcEngineEventHandler, private IVide
     IMediaEngine* media_ = nullptr;
     std::atomic<bool> stopping_{false}, joined_{false};
     bool first_frame_ = false;
+    float volume_ = 0;
     std::string failure_, room_, bot_;
     std::atomic<uid_t> bot_uid_{0};
     int stream_id_ = 0;
@@ -100,6 +101,7 @@ class AgoraRtc final : public Rtc, private IRtcEngineEventHandler, private IVide
                                                                         : MAINTAIN_FRAMERATE);
         encoder.mirrorMode = VIDEO_MIRROR_MODE_DISABLED;
         check_rtc(engine_->setVideoEncoderConfiguration(encoder), "setVideoEncoderConfiguration");
+        check_rtc(engine_->adjustPlaybackSignalVolume(int(volume_ * 100)), "adjustPlaybackSignalVolume");
         ChannelMediaOptions options;
         options.channelProfile = CHANNEL_PROFILE_LIVE_BROADCASTING;
         options.clientRoleType = CLIENT_ROLE_BROADCASTER;
@@ -157,6 +159,7 @@ class AgoraRtc final : public Rtc, private IRtcEngineEventHandler, private IVide
         std::lock_guard<std::mutex> lock(engine_mutex_);
         if (engine_ && !stopping_)
             check_rtc(engine_->adjustPlaybackSignalVolume(int(volume * 100)), "adjustPlaybackSignalVolume");
+        volume_ = volume;
     }
     void configure_encoding(VideoEncodingConfiguration value) override {
         std::lock_guard<std::mutex> lock(engine_mutex_);

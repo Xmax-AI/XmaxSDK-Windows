@@ -27,8 +27,9 @@ void StreamController::join(const Connection& connection, xmax_video_format form
             quality_.down.level = 2;
     }
     quality_.reset_samples();
-    rtc_->join(connection, uplink_encoding(quality_.up.level), microphone, std::move(callbacks), cancel);
+    // Store playback policy before join can discover and subscribe to the bot.
     rtc_->volume(volume_);
+    rtc_->join(connection, uplink_encoding(quality_.up.level), microphone, std::move(callbacks), cancel);
     std::atomic_store(&media_rtc_, rtc_);
 }
 void StreamController::start(const std::string& prompt, const std::string& reference, bool face,
