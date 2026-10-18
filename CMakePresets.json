@@ -1,0 +1,17 @@
+{
+  "version": 5,
+  "configurePresets": [
+    {"name":"core","displayName":"Portable SDK and tests","generator":"Ninja","binaryDir":"${sourceDir}/.build/core","cacheVariables":{"CMAKE_BUILD_TYPE":"Debug","BUILD_TESTING":"ON"}},
+    {"name":"xlab","inherits":"core","displayName":"SDK and Qt X-Lab","binaryDir":"${sourceDir}/.build/xlab","cacheVariables":{"XMAX_BUILD_EXAMPLE":"ON"}},
+    {"name":"windows","displayName":"Windows x64 SDK","generator":"Visual Studio 17 2022","architecture":"x64","binaryDir":"${sourceDir}/.build/windows","cacheVariables":{"BUILD_TESTING":"ON"}}
+  ],
+  "buildPresets": [
+    {"name":"core","configurePreset":"core"},
+    {"name":"xlab","configurePreset":"xlab"},
+    {"name":"windows","configurePreset":"windows","configuration":"Release"}
+  ],
+  "testPresets": [
+    {"name":"core","configurePreset":"core","output":{"outputOnFailure":true}},
+    {"name":"windows","configurePreset":"windows","configuration":"Release","output":{"outputOnFailure":true}}
+  ]
+}

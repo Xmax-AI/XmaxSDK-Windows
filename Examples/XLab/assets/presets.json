@@ -1,0 +1,542 @@
+[
+  {
+    "id": "charx-1",
+    "mode": "charx",
+    "name": "Classical Girl",
+    "thumbnail": "https://platform.xmaxai.com/images/source/charx/charx_image1.jpeg?presetVersion=20260909&imageMogr2/thumbnail/160x160/format/webp/quality/80",
+    "reference": "https://platform.xmaxai.com/images/source/charx/charx_real_image1.png?presetVersion=20260909",
+    "state": "ready",
+    "progress": 1
+  },
+  {
+    "id": "charx-2",
+    "mode": "charx",
+    "name": "Classical Boy",
+    "thumbnail": "https://platform.xmaxai.com/images/source/charx/charx_image2.jpeg?presetVersion=20260909&imageMogr2/thumbnail/160x160/format/webp/quality/80",
+    "reference": "https://platform.xmaxai.com/images/source/charx/charx_real_image2.png?presetVersion=20260909",
+    "state": "ready",
+    "progress": 1
+  },
+  {
+    "id": "charx-3",
+    "mode": "charx",
+    "name": "Modern Girl",
+    "thumbnail": "https://platform.xmaxai.com/images/source/charx/charx_image3.png?presetVersion=20260909&imageMogr2/thumbnail/160x160/format/webp/quality/80",
+    "reference": "https://platform.xmaxai.com/images/source/charx/charx_real_image3.png?presetVersion=20260909",
+    "state": "ready",
+    "progress": 1
+  },
+  {
+    "id": "charx-4",
+    "mode": "charx",
+    "name": "Modern Boy",
+    "thumbnail": "https://platform.xmaxai.com/images/source/charx/charx_image4.png?presetVersion=20260909&imageMogr2/thumbnail/160x160/format/webp/quality/80",
+    "reference": "https://platform.xmaxai.com/images/source/charx/charx_real_image4.png?presetVersion=20260909",
+    "state": "ready",
+    "progress": 1
+  },
+  {
+    "id": "charx-5",
+    "mode": "charx",
+    "name": "Blonde Girl",
+    "thumbnail": "https://platform.xmaxai.com/images/source/charx/charx_image5.png?presetVersion=20260909&imageMogr2/thumbnail/160x160/format/webp/quality/80",
+    "reference": "https://platform.xmaxai.com/images/source/charx/charx_real_image5.png?presetVersion=20260909",
+    "state": "ready",
+    "progress": 1
+  },
+  {
+    "id": "charx-6",
+    "mode": "charx",
+    "name": "Curly-Haired Boy",
+    "thumbnail": "https://platform.xmaxai.com/images/source/charx/charx_image6.png?presetVersion=20260909&imageMogr2/thumbnail/160x160/format/webp/quality/80",
+    "reference": "https://platform.xmaxai.com/images/source/charx/charx_real_image6.jpeg?presetVersion=20260909",
+    "state": "ready",
+    "progress": 1
+  },
+  {
+    "id": "charx-7",
+    "mode": "charx",
+    "name": "Anime Boy",
+    "thumbnail": "https://platform.xmaxai.com/images/source/charx/charx_image7.png?presetVersion=20260909&imageMogr2/thumbnail/160x160/format/webp/quality/80",
+    "reference": "https://platform.xmaxai.com/images/source/charx/charx_real_image7.png?presetVersion=20260909",
+    "state": "ready",
+    "progress": 1
+  },
+  {
+    "id": "charx-8",
+    "mode": "charx",
+    "name": "Anime Girl",
+    "thumbnail": "https://platform.xmaxai.com/images/source/charx/charx_image8.png?presetVersion=20260909&imageMogr2/thumbnail/160x160/format/webp/quality/80",
+    "reference": "https://platform.xmaxai.com/images/source/charx/charx_real_image8.png?presetVersion=20260909",
+    "state": "ready",
+    "progress": 1
+  },
+  {
+    "id": "charx-9",
+    "mode": "charx",
+    "name": "Alien Kitty",
+    "thumbnail": "https://platform.xmaxai.com/images/source/charx/charx_image9.jpeg?presetVersion=20260909&imageMogr2/thumbnail/160x160/format/webp/quality/80",
+    "reference": "https://platform.xmaxai.com/images/source/charx/charx_real_image9.png?presetVersion=20260909",
+    "state": "ready",
+    "progress": 1
+  },
+  {
+    "id": "charx-10",
+    "mode": "charx",
+    "name": "Bronze Figure",
+    "thumbnail": "https://platform.xmaxai.com/images/source/charx/charx_image10.png?presetVersion=20260909&imageMogr2/thumbnail/160x160/format/webp/quality/80",
+    "reference": "https://platform.xmaxai.com/images/source/charx/charx_real_image10.jpeg?presetVersion=20260909",
+    "state": "ready",
+    "progress": 1
+  },
+  {
+    "id": "charx-11",
+    "mode": "charx",
+    "name": "3D Cow",
+    "thumbnail": "https://platform.xmaxai.com/images/source/charx/charx_image11.png?presetVersion=20260909&imageMogr2/thumbnail/160x160/format/webp/quality/80",
+    "reference": "https://platform.xmaxai.com/images/source/charx/charx_real_image11.png?presetVersion=20260909",
+    "state": "ready",
+    "progress": 1
+  },
+  {
+    "id": "charx-12",
+    "mode": "charx",
+    "name": "3D Milk Frog",
+    "thumbnail": "https://platform.xmaxai.com/images/source/charx/charx_image12.png?presetVersion=20260909&imageMogr2/thumbnail/160x160/format/webp/quality/80",
+    "reference": "https://platform.xmaxai.com/images/source/charx/charx_real_image12.jpeg?presetVersion=20260909",
+    "state": "ready",
+    "progress": 1
+  },
+  {
+    "id": "charx-13",
+    "mode": "charx",
+    "name": "3D Kangaroo",
+    "thumbnail": "https://platform.xmaxai.com/images/source/charx/charx_image13.jpg?presetVersion=20260909&imageMogr2/thumbnail/160x160/format/webp/quality/80",
+    "reference": "https://platform.xmaxai.com/images/source/charx/charx_real_image13.jpeg?presetVersion=20260909",
+    "state": "ready",
+    "progress": 1
+  },
+  {
+    "id": "charx-14",
+    "mode": "charx",
+    "name": "Mecha Girl",
+    "thumbnail": "https://platform.xmaxai.com/images/source/charx/charx_image14.png?presetVersion=20260909&imageMogr2/thumbnail/160x160/format/webp/quality/80",
+    "reference": "https://platform.xmaxai.com/images/source/charx/charx_real_image14.png?presetVersion=20260909",
+    "state": "ready",
+    "progress": 1
+  },
+  {
+    "id": "charx-15",
+    "mode": "charx",
+    "name": "Mecha Warrior",
+    "thumbnail": "https://platform.xmaxai.com/images/source/charx/charx_image15.jpg?presetVersion=20260909&imageMogr2/thumbnail/160x160/format/webp/quality/80",
+    "reference": "https://platform.xmaxai.com/images/source/charx/charx_real_image15.png?presetVersion=20260909",
+    "state": "ready",
+    "progress": 1
+  },
+  {
+    "id": "charx-16",
+    "mode": "charx",
+    "name": "Special Ops",
+    "thumbnail": "https://platform.xmaxai.com/images/source/charx/charx_image16.jpeg?presetVersion=20260909&imageMogr2/thumbnail/160x160/format/webp/quality/80",
+    "reference": "https://platform.xmaxai.com/images/source/charx/charx_real_image16.png?presetVersion=20260909",
+    "state": "ready",
+    "progress": 1
+  },
+  {
+    "id": "charx-17",
+    "mode": "charx",
+    "name": "Humanoid Robot",
+    "thumbnail": "https://platform.xmaxai.com/images/source/charx/charx_image17.png?presetVersion=20260909&imageMogr2/thumbnail/160x160/format/webp/quality/80",
+    "reference": "https://platform.xmaxai.com/images/source/charx/charx_real_image17.jpg?presetVersion=20260909",
+    "state": "ready",
+    "progress": 1
+  },
+  {
+    "id": "charx-18",
+    "mode": "charx",
+    "name": "Chill Capybara",
+    "thumbnail": "https://platform.xmaxai.com/images/source/charx/charx_image18.jpeg?presetVersion=20260909&imageMogr2/thumbnail/160x160/format/webp/quality/80",
+    "reference": "https://platform.xmaxai.com/images/source/charx/charx_real_image18.jpg?presetVersion=20260909",
+    "state": "ready",
+    "progress": 1
+  },
+  {
+    "id": "charx-19",
+    "mode": "charx",
+    "name": "Gentle Panda",
+    "thumbnail": "https://platform.xmaxai.com/images/source/charx/charx_image19.png?presetVersion=20260909&imageMogr2/thumbnail/160x160/format/webp/quality/80",
+    "reference": "https://platform.xmaxai.com/images/source/charx/charx_real_image19.png?presetVersion=20260909",
+    "state": "ready",
+    "progress": 1
+  },
+  {
+    "id": "charx-20",
+    "mode": "charx",
+    "name": "Cute Hamster",
+    "thumbnail": "https://platform.xmaxai.com/images/source/charx/charx_image20.png?presetVersion=20260909&imageMogr2/thumbnail/160x160/format/webp/quality/80",
+    "reference": "https://platform.xmaxai.com/images/source/charx/charx_real_image20.jpg?presetVersion=20260909",
+    "state": "ready",
+    "progress": 1
+  },
+  {
+    "id": "charx-21",
+    "mode": "charx",
+    "name": "Illustrated Girl",
+    "thumbnail": "https://platform.xmaxai.com/images/source/charx/charx_image21.png?presetVersion=20260909&imageMogr2/thumbnail/160x160/format/webp/quality/80",
+    "reference": "https://platform.xmaxai.com/images/source/charx/charx_real_image21.png?presetVersion=20260909",
+    "state": "ready",
+    "progress": 1
+  },
+  {
+    "id": "charx-22",
+    "mode": "charx",
+    "name": "Cartoon Boy",
+    "thumbnail": "https://platform.xmaxai.com/images/source/charx/charx_image22.jpeg?presetVersion=20260909&imageMogr2/thumbnail/160x160/format/webp/quality/80",
+    "reference": "https://platform.xmaxai.com/images/source/charx/charx_real_image22.jpeg?presetVersion=20260909",
+    "state": "ready",
+    "progress": 1
+  },
+  {
+    "id": "charx-23",
+    "mode": "charx",
+    "name": "Business Milk Frog",
+    "thumbnail": "https://platform.xmaxai.com/images/source/charx/charx_image23.png?presetVersion=20260909&imageMogr2/thumbnail/160x160/format/webp/quality/80",
+    "reference": "https://platform.xmaxai.com/images/source/charx/charx_real_image23.png?presetVersion=20260909",
+    "state": "ready",
+    "progress": 1
+  },
+  {
+    "id": "charx-24",
+    "mode": "charx",
+    "name": "Corporate Cow",
+    "thumbnail": "https://platform.xmaxai.com/images/source/charx/charx_image24.jpeg?presetVersion=20260909&imageMogr2/thumbnail/160x160/format/webp/quality/80",
+    "reference": "https://platform.xmaxai.com/images/source/charx/charx_real_image24.jpeg?presetVersion=20260909",
+    "state": "ready",
+    "progress": 1
+  },
+  {
+    "id": "clothx-25",
+    "mode": "clothx",
+    "name": "Gilded Goddess",
+    "thumbnail": "https://platform.xmaxai.com/images/source/clothx/clothx_image1.png?presetVersion=20260909&imageMogr2/thumbnail/160x160/format/webp/quality/80",
+    "reference": "https://platform.xmaxai.com/images/source/clothx/clothx_real_image1.jpg?presetVersion=20260909",
+    "state": "ready",
+    "progress": 1
+  },
+  {
+    "id": "clothx-26",
+    "mode": "clothx",
+    "name": "Monochrome Vanguard",
+    "thumbnail": "https://platform.xmaxai.com/images/source/clothx/clothx_image2.png?presetVersion=20260909&imageMogr2/thumbnail/160x160/format/webp/quality/80",
+    "reference": "https://platform.xmaxai.com/images/source/clothx/clothx_real_image2.png?presetVersion=20260909",
+    "state": "ready",
+    "progress": 1
+  },
+  {
+    "id": "clothx-27",
+    "mode": "clothx",
+    "name": "Silver Fantasy Robe",
+    "thumbnail": "https://platform.xmaxai.com/images/source/clothx/clothx_image3.png?presetVersion=20260909&imageMogr2/thumbnail/160x160/format/webp/quality/80",
+    "reference": "https://platform.xmaxai.com/images/source/clothx/clothx_real_image3.jpeg?presetVersion=20260909",
+    "state": "ready",
+    "progress": 1
+  },
+  {
+    "id": "clothx-28",
+    "mode": "clothx",
+    "name": "Navy Sailor Outfit",
+    "thumbnail": "https://platform.xmaxai.com/images/source/clothx/clothx_image4.png?presetVersion=20260909&imageMogr2/thumbnail/160x160/format/webp/quality/80",
+    "reference": "https://platform.xmaxai.com/images/source/clothx/clothx_real_image4.png?presetVersion=20260909",
+    "state": "ready",
+    "progress": 1
+  },
+  {
+    "id": "clothx-29",
+    "mode": "clothx",
+    "name": "Long Coat Set",
+    "thumbnail": "https://platform.xmaxai.com/images/source/clothx/clothx_image5.png?presetVersion=20260909&imageMogr2/thumbnail/160x160/format/webp/quality/80",
+    "reference": "https://platform.xmaxai.com/images/source/clothx/clothx_real_image5.png?presetVersion=20260909",
+    "state": "ready",
+    "progress": 1
+  },
+  {
+    "id": "clothx-30",
+    "mode": "clothx",
+    "name": "Pink Academy",
+    "thumbnail": "https://platform.xmaxai.com/images/source/clothx/clothx_image6.png?presetVersion=20260909&imageMogr2/thumbnail/160x160/format/webp/quality/80",
+    "reference": "https://platform.xmaxai.com/images/source/clothx/clothx_real_image6.jpeg?presetVersion=20260909",
+    "state": "ready",
+    "progress": 1
+  },
+  {
+    "id": "clothx-31",
+    "mode": "clothx",
+    "name": "Bronze Warrior Armor",
+    "thumbnail": "https://platform.xmaxai.com/images/source/clothx/clothx_image7.png?presetVersion=20260909&imageMogr2/thumbnail/160x160/format/webp/quality/80",
+    "reference": "https://platform.xmaxai.com/images/source/clothx/clothx_real_image7.png?presetVersion=20260909",
+    "state": "ready",
+    "progress": 1
+  },
+  {
+    "id": "clothx-32",
+    "mode": "clothx",
+    "name": "Vintage Brown",
+    "thumbnail": "https://platform.xmaxai.com/images/source/clothx/clothx_image8.png?presetVersion=20260909&imageMogr2/thumbnail/160x160/format/webp/quality/80",
+    "reference": "https://platform.xmaxai.com/images/source/clothx/clothx_real_image8.png?presetVersion=20260909",
+    "state": "ready",
+    "progress": 1
+  },
+  {
+    "id": "clothx-33",
+    "mode": "clothx",
+    "name": "Black-Collar Academy",
+    "thumbnail": "https://platform.xmaxai.com/images/source/clothx/clothx_image9.png?presetVersion=20260909&imageMogr2/thumbnail/160x160/format/webp/quality/80",
+    "reference": "https://platform.xmaxai.com/images/source/clothx/clothx_real_image9.jpeg?presetVersion=20260909",
+    "state": "ready",
+    "progress": 1
+  },
+  {
+    "id": "clothx-34",
+    "mode": "clothx",
+    "name": "Blue Plaid Academy",
+    "thumbnail": "https://platform.xmaxai.com/images/source/clothx/clothx_image10.png?presetVersion=20260909&imageMogr2/thumbnail/160x160/format/webp/quality/80",
+    "reference": "https://platform.xmaxai.com/images/source/clothx/clothx_real_image10.jpeg?presetVersion=20260909",
+    "state": "ready",
+    "progress": 1
+  },
+  {
+    "id": "clothx-35",
+    "mode": "clothx",
+    "name": "Black Pinafore",
+    "thumbnail": "https://platform.xmaxai.com/images/source/clothx/clothx_image11.png?presetVersion=20260909&imageMogr2/thumbnail/160x160/format/webp/quality/80",
+    "reference": "https://platform.xmaxai.com/images/source/clothx/clothx_real_image11.jpeg?presetVersion=20260909",
+    "state": "ready",
+    "progress": 1
+  },
+  {
+    "id": "clothx-36",
+    "mode": "clothx",
+    "name": "Coffee Cardigan",
+    "thumbnail": "https://platform.xmaxai.com/images/source/clothx/clothx_image12.png?presetVersion=20260909&imageMogr2/thumbnail/160x160/format/webp/quality/80",
+    "reference": "https://platform.xmaxai.com/images/source/clothx/clothx_real_image12.jpeg?presetVersion=20260909",
+    "state": "ready",
+    "progress": 1
+  },
+  {
+    "id": "clothx-37",
+    "mode": "clothx",
+    "name": "Lilac Slip Dress",
+    "thumbnail": "https://platform.xmaxai.com/images/source/clothx/clothx_image13.png?presetVersion=20260909&imageMogr2/thumbnail/160x160/format/webp/quality/80",
+    "reference": "https://platform.xmaxai.com/images/source/clothx/clothx_real_image13.jpeg?presetVersion=20260909",
+    "state": "ready",
+    "progress": 1
+  },
+  {
+    "id": "clothx-38",
+    "mode": "clothx",
+    "name": "Magenta Techwear",
+    "thumbnail": "https://platform.xmaxai.com/images/source/clothx/clothx_image14.png?presetVersion=20260909&imageMogr2/thumbnail/160x160/format/webp/quality/80",
+    "reference": "https://platform.xmaxai.com/images/source/clothx/clothx_real_image14.png?presetVersion=20260909",
+    "state": "ready",
+    "progress": 1
+  },
+  {
+    "id": "clothx-39",
+    "mode": "clothx",
+    "name": "Luxury Suit",
+    "thumbnail": "https://platform.xmaxai.com/images/source/clothx/clothx_image15.png?presetVersion=20260909&imageMogr2/thumbnail/160x160/format/webp/quality/80",
+    "reference": "https://platform.xmaxai.com/images/source/clothx/clothx_real_image15.png?presetVersion=20260909",
+    "state": "ready",
+    "progress": 1
+  },
+  {
+    "id": "clothx-40",
+    "mode": "clothx",
+    "name": "Navy Officewear",
+    "thumbnail": "https://platform.xmaxai.com/images/source/clothx/clothx_image16.png?presetVersion=20260909&imageMogr2/thumbnail/160x160/format/webp/quality/80",
+    "reference": "https://platform.xmaxai.com/images/source/clothx/clothx_real_image16.png?presetVersion=20260909",
+    "state": "ready",
+    "progress": 1
+  },
+  {
+    "id": "clothx-41",
+    "mode": "clothx",
+    "name": "Burgundy Stripes",
+    "thumbnail": "https://platform.xmaxai.com/images/source/clothx/clothx_image17.png?presetVersion=20260909&imageMogr2/thumbnail/160x160/format/webp/quality/80",
+    "reference": "https://platform.xmaxai.com/images/source/clothx/clothx_real_image17.jpeg?presetVersion=20260909",
+    "state": "ready",
+    "progress": 1
+  },
+  {
+    "id": "clothx-42",
+    "mode": "clothx",
+    "name": "Light Blue Sportswear",
+    "thumbnail": "https://platform.xmaxai.com/images/source/clothx/clothx_image18.png?presetVersion=20260909&imageMogr2/thumbnail/160x160/format/webp/quality/80",
+    "reference": "https://platform.xmaxai.com/images/source/clothx/clothx_real_image18.png?presetVersion=20260909",
+    "state": "ready",
+    "progress": 1
+  },
+  {
+    "id": "clothx-43",
+    "mode": "clothx",
+    "name": "Silver Casualwear",
+    "thumbnail": "https://platform.xmaxai.com/images/source/clothx/clothx_image19.png?presetVersion=20260909&imageMogr2/thumbnail/160x160/format/webp/quality/80",
+    "reference": "https://platform.xmaxai.com/images/source/clothx/clothx_real_image19.png?presetVersion=20260909",
+    "state": "ready",
+    "progress": 1
+  },
+  {
+    "id": "clothx-44",
+    "mode": "clothx",
+    "name": "British Brown Plaid",
+    "thumbnail": "https://platform.xmaxai.com/images/source/clothx/clothx_image20.png?presetVersion=20260909&imageMogr2/thumbnail/160x160/format/webp/quality/80",
+    "reference": "https://platform.xmaxai.com/images/source/clothx/clothx_real_image20.png?presetVersion=20260909",
+    "state": "ready",
+    "progress": 1
+  },
+  {
+    "id": "clothx-45",
+    "mode": "clothx",
+    "name": "Blue and White Retro",
+    "thumbnail": "https://platform.xmaxai.com/images/source/clothx/clothx_image21.png?presetVersion=20260909&imageMogr2/thumbnail/160x160/format/webp/quality/80",
+    "reference": "https://platform.xmaxai.com/images/source/clothx/clothx_real_image21.jpeg?presetVersion=20260909",
+    "state": "ready",
+    "progress": 1
+  },
+  {
+    "id": "clothx-46",
+    "mode": "clothx",
+    "name": "All-Denim Outfit",
+    "thumbnail": "https://platform.xmaxai.com/images/source/clothx/clothx_image22.png?presetVersion=20260909&imageMogr2/thumbnail/160x160/format/webp/quality/80",
+    "reference": "https://platform.xmaxai.com/images/source/clothx/clothx_real_image22.png?presetVersion=20260909",
+    "state": "ready",
+    "progress": 1
+  },
+  {
+    "id": "clothx-47",
+    "mode": "clothx",
+    "name": "Gray Eveningwear",
+    "thumbnail": "https://platform.xmaxai.com/images/source/clothx/clothx_image23.png?presetVersion=20260909&imageMogr2/thumbnail/160x160/format/webp/quality/80",
+    "reference": "https://platform.xmaxai.com/images/source/clothx/clothx_real_image23.png?presetVersion=20260909",
+    "state": "ready",
+    "progress": 1
+  },
+  {
+    "id": "clothx-48",
+    "mode": "clothx",
+    "name": "Black Classical Robe",
+    "thumbnail": "https://platform.xmaxai.com/images/source/clothx/clothx_image24.png?presetVersion=20260909&imageMogr2/thumbnail/160x160/format/webp/quality/80",
+    "reference": "https://platform.xmaxai.com/images/source/clothx/clothx_real_image24.png?presetVersion=20260909",
+    "state": "ready",
+    "progress": 1
+  },
+  {
+    "id": "vibex-49",
+    "mode": "vibex",
+    "name": "American Cartoon",
+    "thumbnail": "https://platform.xmaxai.com/images/source/vibex/vibex_image1.jpg?presetVersion=20260911&imageMogr2/thumbnail/160x160/format/webp/quality/80",
+    "reference": "https://platform.xmaxai.com/images/source/vibex/vibex_real_image1.png?presetVersion=20260911",
+    "state": "ready",
+    "progress": 1
+  },
+  {
+    "id": "vibex-50",
+    "mode": "vibex",
+    "name": "3D Cartoon",
+    "thumbnail": "https://platform.xmaxai.com/images/source/vibex/vibex_image2.jpg?presetVersion=20260911&imageMogr2/thumbnail/160x160/format/webp/quality/80",
+    "reference": "https://platform.xmaxai.com/images/source/vibex/vibex_real_image2.png?presetVersion=20260911",
+    "state": "ready",
+    "progress": 1
+  },
+  {
+    "id": "vibex-51",
+    "mode": "vibex",
+    "name": "School Anime",
+    "thumbnail": "https://platform.xmaxai.com/images/source/vibex/vibex_image3.jpg?presetVersion=20260911&imageMogr2/thumbnail/160x160/format/webp/quality/80",
+    "reference": "https://platform.xmaxai.com/images/source/vibex/vibex_real_image3.png?presetVersion=20260911",
+    "state": "ready",
+    "progress": 1
+  },
+  {
+    "id": "vibex-52",
+    "mode": "vibex",
+    "name": "Urban Anime",
+    "thumbnail": "https://platform.xmaxai.com/images/source/vibex/vibex_image4.jpg?presetVersion=20260911&imageMogr2/thumbnail/160x160/format/webp/quality/80",
+    "reference": "https://platform.xmaxai.com/images/source/vibex/vibex_real_image4.png?presetVersion=20260911",
+    "state": "ready",
+    "progress": 1
+  },
+  {
+    "id": "vibex-53",
+    "mode": "vibex",
+    "name": "Japanese Anime",
+    "thumbnail": "https://platform.xmaxai.com/images/source/vibex/vibex_image5.jpg?presetVersion=20260911&imageMogr2/thumbnail/160x160/format/webp/quality/80",
+    "reference": "https://platform.xmaxai.com/images/source/vibex/vibex_real_image5.png?presetVersion=20260911",
+    "state": "ready",
+    "progress": 1
+  },
+  {
+    "id": "vibex-54",
+    "mode": "vibex",
+    "name": "Realistic Animals",
+    "thumbnail": "https://platform.xmaxai.com/images/source/vibex/vibex_image9.png?presetVersion=20260911&imageMogr2/thumbnail/160x160/format/webp/quality/80",
+    "reference": "https://platform.xmaxai.com/images/source/vibex/vibex_real_image9.png?presetVersion=20260911",
+    "state": "ready",
+    "progress": 1
+  },
+  {
+    "id": "vibex-55",
+    "mode": "vibex",
+    "name": "Designer Toy",
+    "thumbnail": "https://platform.xmaxai.com/images/source/vibex/vibex_image10.png?presetVersion=20260911&imageMogr2/thumbnail/160x160/format/webp/quality/80",
+    "reference": "https://platform.xmaxai.com/images/source/vibex/vibex_real_image10.png?presetVersion=20260911",
+    "state": "ready",
+    "progress": 1
+  },
+  {
+    "id": "vibex-56",
+    "mode": "vibex",
+    "name": "Anthropomorphic",
+    "thumbnail": "https://platform.xmaxai.com/images/source/vibex/vibex_image15.jpeg?presetVersion=20260911&imageMogr2/thumbnail/160x160/format/webp/quality/80",
+    "reference": "https://platform.xmaxai.com/images/source/vibex/vibex_real_image15.png?presetVersion=20260911",
+    "state": "ready",
+    "progress": 1
+  },
+  {
+    "id": "vibex-57",
+    "mode": "vibex",
+    "name": "Surrealism",
+    "thumbnail": "https://platform.xmaxai.com/images/source/vibex/vibex_image17.png?presetVersion=20260911&imageMogr2/thumbnail/160x160/format/webp/quality/80",
+    "reference": "https://platform.xmaxai.com/images/source/vibex/vibex_real_image17.png?presetVersion=20260911",
+    "state": "ready",
+    "progress": 1
+  },
+  {
+    "id": "vibex-58",
+    "mode": "vibex",
+    "name": "Disney Style",
+    "thumbnail": "https://platform.xmaxai.com/images/source/vibex/vibex_image18.png?presetVersion=20260911&imageMogr2/thumbnail/160x160/format/webp/quality/80",
+    "reference": "https://platform.xmaxai.com/images/source/vibex/vibex_real_image18.png?presetVersion=20260911",
+    "state": "ready",
+    "progress": 1
+  },
+  {
+    "id": "vibex-59",
+    "mode": "vibex",
+    "name": "Cel Shading",
+    "thumbnail": "https://platform.xmaxai.com/images/source/vibex/vibex_image19.png?presetVersion=20260911&imageMogr2/thumbnail/160x160/format/webp/quality/80",
+    "reference": "https://platform.xmaxai.com/images/source/vibex/vibex_real_image19.png?presetVersion=20260911",
+    "state": "ready",
+    "progress": 1
+  },
+  {
+    "id": "vibex-60",
+    "mode": "vibex",
+    "name": "Japanese Animation",
+    "thumbnail": "https://platform.xmaxai.com/images/source/vibex/vibex_image21.png?presetVersion=20260911&imageMogr2/thumbnail/160x160/format/webp/quality/80",
+    "reference": "https://platform.xmaxai.com/images/source/vibex/vibex_real_image21.png?presetVersion=20260911",
+    "state": "ready",
+    "progress": 1
+  }
+]

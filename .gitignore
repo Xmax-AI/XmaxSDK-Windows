@@ -1,0 +1,10 @@
+.build/
+build/
+out/
+Vendor/
+.DS_Store
+*.user
+*.suo
+CMakeUserPresets.json
+
+/Docs/

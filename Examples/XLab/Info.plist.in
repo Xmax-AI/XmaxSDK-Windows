@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleExecutable</key><string>${MACOSX_BUNDLE_EXECUTABLE_NAME}</string>
+<key>CFBundleIdentifier</key><string>ai.xmax.xlab.windows-preview</string>
+<key>CFBundleName</key><string>X-Lab</string>
+<key>CFBundlePackageType</key><string>APPL</string>
+<key>NSHighResolutionCapable</key><true/>
+<key>NSCameraUsageDescription</key><string>X-Lab uses your camera as input for realtime video generation.</string>
+<key>NSMicrophoneUsageDescription</key><string>X-Lab optionally sends microphone audio during a session.</string>
+</dict></plist>
