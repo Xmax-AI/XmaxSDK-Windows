@@ -175,11 +175,17 @@ def main() -> None:
     p = sub.add_parser('prepare'); p.add_argument('version'); p.add_argument('--dry-run',action='store_true')
     p = sub.add_parser('merge'); p.add_argument('--dry-run',action='store_true'); p.add_argument('--skip-validation',action='store_true')
     p = sub.add_parser('check-release'); p.add_argument('version')
+    p = sub.add_parser('verify-assets'); p.add_argument('version'); p.add_argument('--artifacts-dir',type=Path,required=True)
     p = sub.add_parser('release'); p.add_argument('version'); p.add_argument('--artifacts-dir',type=Path,required=True); p.add_argument('--publish',action='store_true')
     args = parser.parse_args()
     if args.command=='prepare': prepare(args.version,dry_run=args.dry_run)
     elif args.command=='merge': merge(skip_validation=args.skip_validation,dry_run=args.dry_run)
     elif args.command=='check-release': release_preflight(args.version)
+    elif args.command=='verify-assets':
+        value = version(args.version)
+        if (ROOT/'VERSION').read_text().strip() != value: raise RuntimeError('VERSION differs from artifacts')
+        validate_release_assets(args.artifacts_dir.resolve(), value, git('rev-parse','HEAD'))
+        print('Release candidate ZIPs, DLL exports, source commit and checksums verified; nothing published.')
     else: release(args.version,args.artifacts_dir.resolve(),args.publish)
 
 if __name__ == '__main__':

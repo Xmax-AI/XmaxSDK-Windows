@@ -86,7 +86,7 @@ PowerShell 使用同名 .ps1。准备过程检查本地/远端标签不存在，
 ## 演练 CD（不发布）
 
 在 GitHub Actions 手动执行 `SDK Release`，填写 VERSION 中的版本号，保持 publish=false。
-它会重建并验证完整 Windows 候选包，只上传 Actions Artifact：不创建 tag，不创建 Release，不发布下载附件。
+它会重建并验证完整 Windows 候选包，再在独立任务重新解压检查提交、DLL 导出和 SHA-256，只上传 Actions Artifact：不创建 tag，不创建 Release，不发布下载附件。
 
 ```sh
 gh workflow run release.yml --repo XingMai/XmaxSDK-Windows --ref main -f version=0.2.0 -f publish=false
