@@ -13,3 +13,5 @@ __pycache__/
 *.pyc
 /Examples/DotNetSmoke/bin/
 /Examples/DotNetSmoke/obj/
+
+/aqtinstall.log

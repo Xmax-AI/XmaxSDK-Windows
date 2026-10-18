@@ -65,6 +65,9 @@ def build_windows(build: Path, output: Path, qt_prefix: Path | None, agora_root:
     output.mkdir(parents=True, exist_ok=True)
     (output/'validation.json').unlink(missing_ok=True)
     (output/'SHA256SUMS.txt').unlink(missing_ok=True)
+    revision = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
+    if subprocess.check_output(['git', 'status', '--porcelain'], cwd=ROOT, text=True).strip():
+        raise RuntimeError('Release packaging requires a clean committed source tree')
     cmake = tool('cmake')
     if with_rtc and not agora_root:
         run(['pwsh', '-NoProfile', '-File', ROOT/'scripts/get-agora.ps1'])
@@ -77,7 +80,6 @@ def build_windows(build: Path, output: Path, qt_prefix: Path | None, agora_root:
     run(command)
     run([cmake, '--build', build, '--config', 'Release', '--parallel', '4'])
     version = (ROOT/'VERSION').read_text().strip()
-    revision = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
     output.mkdir(parents=True, exist_ok=True)
     # Use a fresh staging directory. No stale DLLs from earlier builds can enter the ZIP.
     with tempfile.TemporaryDirectory(prefix='xmax-package-', dir=build) as temporary:
@@ -135,6 +137,7 @@ def build_windows(build: Path, output: Path, qt_prefix: Path | None, agora_root:
             shutil.copy2(ROOT/'THIRD_PARTY.md', demo/'THIRD_PARTY.md')
             qt_notices = demo/'licenses/qt'
             qt_notices.mkdir(parents=True)
+            shutil.copytree(ROOT/'third_party/qt-notices', qt_notices, dirs_exist_ok=True)
             for pattern in ('LICENSE*','LGPL*','GPL*'):
                 for notice in qt_prefix.glob(pattern):
                     if notice.is_file(): shutil.copy2(notice, qt_notices/notice.name)
@@ -155,7 +158,9 @@ def build_windows(build: Path, output: Path, qt_prefix: Path | None, agora_root:
             test_environment['QT_PLUGIN_PATH'] = str(qt_prefix/'plugins')
             test_environment['QML_IMPORT_PATH'] = str(qt_prefix/'qml')
         run([tool('ctest'), '--test-dir', build, '-C', 'Release', '--output-on-failure'], env=test_environment)
-        # Validation is written only after *every* check succeeds.
+        # Validation is written only after *every* check succeeds, and only for unchanged committed inputs.
+        if subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip() != revision or subprocess.check_output(['git', 'status', '--porcelain'], cwd=ROOT, text=True).strip():
+            raise RuntimeError('Source tree changed during release packaging')
         report_path.write_text(json.dumps(validation, indent=2)+'\n')
     assets = [sdk_zip]
     if qt_prefix: assets.append(output/validation['demo_archive'])

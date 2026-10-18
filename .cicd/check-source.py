@@ -21,6 +21,11 @@ def main() -> None:
     assert re.fullmatch('[a-f0-9]{64}',dependencies['agora']['sha256'])
     assert dependencies['agora']['url'].startswith('https://download.agora.io/')
     assert dependencies['agora']['version'] in dependencies['agora']['url']
+    notices = ROOT/'third_party/qt-notices'
+    for module, record in json.loads((notices/'sources.json').read_text()).items():
+        assert record['version'] == dependencies['qt']['version']
+        for name, source in record['files'].items():
+            assert hashlib.sha256((notices/module/name).read_bytes()).hexdigest() == source['sha256']
     expected = '9bea4c8066ef4a1c206b2be5a36302f8926f7fdc6087af5d20b417d0cf103ea6'
     assert hashlib.sha256((ROOT/'third_party/nlohmann/json.hpp').read_bytes()).hexdigest() == expected
     for path in [ROOT/'README.md',*(ROOT/'Materials').glob('*.md')]:

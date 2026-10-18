@@ -141,7 +141,7 @@ X-Lab 的 Stop Session 先返回启动页，再在后台关闭 SDK。API Key 与
 
 自动测试不使用真实凭证和摄像头。覆盖依赖方向、各层独立运行、协议分片、帧所有权、采集排空、摄像头切换/失败/取消、连接与生成解耦、调档冷却与信令、SHA-1/HMAC 签名、存储取消/文件提交、C ABI 布局与 C++ RAII，以及 Qt UI 交互。
 
-当前已在 Apple Silicon Mac 构建与运行。Windows 原生分支已用 Windows x64 GNU 交叉工具链编译并链接出 `XmaxSDK.dll`（关闭 Agora）；Agora 适配器对照实际 Windows 4.6.2 头文件通过语法检查。尚未执行 Windows MSVC 构建、真实摄像头、COS 上传或云端生成联调。Windows CI 需推送后运行，不能替代实机性能和设备兼容性验收。
+当前已在 Apple Silicon Mac 构建与运行。Windows 原生分支已用 Windows x64 GNU 交叉工具链编译并链接出 `XmaxSDK.dll`（关闭 Agora）；Agora 适配器对照实际 Windows 4.6.2 头文件通过语法检查。Windows MSVC 的核心、原生设备枚举/窗口接口、Agora + Qt、安装包消费验证由远端 CI 执行。真实摄像头、COS、云端生成和持续性能仍需实机验收。
 
 ## CI/CD 与候选包
 

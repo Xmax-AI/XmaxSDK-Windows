@@ -21,7 +21,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $locked = Get-Content .cicd/dependencies.json -Raw | ConvertFrom-Json
-          python -m pip install cmake "aqtinstall==$($locked.aqtinstall)"
+          python -m pip install "cmake==$($locked.cmake)" "aqtinstall==$($locked.aqtinstall)"
           if ($LASTEXITCODE -ne 0) { throw 'Dependency installation failed' }
           python -m aqt install-qt windows desktop $locked.qt.version $locked.qt.architecture -m qtmultimedia qtimageformats -O .build/qt
           if ($LASTEXITCODE -ne 0) { throw 'Qt installation failed' }
