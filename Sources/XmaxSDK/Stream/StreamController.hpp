@@ -1,12 +1,14 @@
 #pragma once
 #include "Stream/Quality/QualityController.hpp"
+#include "Stream/Quality/QualityHistory.hpp"
 #include "Stream/Room/RoomEvent.hpp"
 #include "Stream/Room/RoomMessageSender.hpp"
 namespace xmax::detail {
 // Lifecycle methods are serialized by Core; push() is safe on a media thread.
 class StreamController {
   public:
-    explicit StreamController(RtcFactory factory = make_rtc) : factory_(std::move(factory)) {}
+    explicit StreamController(RtcFactory factory = make_rtc, std::shared_ptr<QualityHistory> history = {})
+        : factory_(std::move(factory)), history_(std::move(history)) {}
     ~StreamController();
     void allocate();
     void join(const Connection&, xmax_video_format, bool microphone, RtcCallbacks, const Cancel&);
@@ -38,6 +40,7 @@ class StreamController {
     std::string task_;
     float volume_ = 0;
     QualityController quality_;
+    std::shared_ptr<QualityHistory> history_;
     Clock::time_point quality_saved_[2]{};
     xmax_encoding_config encoding_{sizeof(xmax_encoding_config), -1, 0, XMAX_ENCODER_MAINTAIN_FRAMERATE};
     VideoEncodingConfiguration uplink_encoding(int level) const;

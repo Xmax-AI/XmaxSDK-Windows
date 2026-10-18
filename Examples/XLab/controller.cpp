@@ -50,7 +50,7 @@ XLabController::XLabController(bool uiPreview, bool sessionPreview, QObject* par
 }
 XLabController::~XLabController() {
     for (const auto& job : transfers_)
-        xmax_storage_cancel(job.second->storage);
+        job.second->cancel();
     if (handles_)
         xmax_realtime_close(handles_->realtime);
     QThreadPool::globalInstance()->waitForDone();
@@ -218,7 +218,7 @@ void XLabController::stop() {
     emit referencesChanged();
     updating_ = false;
     for (const auto& job : transfers_)
-        xmax_storage_cancel(job.second->storage);
+        job.second->cancel();
     transfers_.clear();
     if (local_sink_)
         local_sink_->setVideoFrame({});
@@ -441,8 +441,15 @@ void XLabController::uploadReference(const QUrl& file, const QString& mode) {
 void XLabController::removeFreeReference() {
     ++intent_;
     for (qsizetype i = uploads_.size(); i-- > 0;)
-        if (uploads_[i].toMap()["mode"] == "free")
+        if (uploads_[i].toMap()["mode"] == "free") {
+            const auto id = uploads_[i].toMap()["id"].toString();
+            const auto job = transfers_.find(id);
+            if (job != transfers_.end()) {
+                job->second->cancel();
+                transfers_.erase(job);
+            }
             uploads_.removeAt(i);
+        }
     selected.clear();
     emit changed();
     emit referencesChanged();
@@ -467,6 +474,8 @@ void XLabController::upload(const QString& id, const QUrl& file, const QString& 
     auto uploaded_url = std::make_shared<QString>();
     async(
         [handles, job, file, uploaded_url] {
+            if (job->cancelled)
+                return QStringLiteral("Upload cancelled.");
             const auto path = file.toLocalFile().toUtf8();
             xmax_uploaded_file uploaded = nullptr;
             const auto result = xmax_storage_upload_file(job->storage, path.constData(), nullptr, &uploaded);

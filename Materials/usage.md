@@ -93,7 +93,7 @@ if (remote) {
 
 两条 Render 管线都保留最新未消费帧，旧连接的回调不会覆盖新连接。无新帧时 C API 返回 `XMAX_NO_EVENT`，C++ 包装返回空 frame。已获取的帧独立持有像素，Realtime 关闭或销毁后仍可读取。
 
-Qt 用 QImage / QVideoFrame 显示 SDK 帧；其他宿主可自行显示 CPU 帧。Windows 还提供 `xmax_frame_render_window(frame, hwnd, XMAX_CONTENT_FIT)`，应由 HWND 所属线程在重绘时调用。支持 FIT / FILL，当前为 GDI CPU 绘制，不提供 D3D11 纹理或自动重绘。WPF 可通过 P/Invoke 获取帧，或通过宿主 HWND 接入；当前没有随 SDK 交付 C# 包装。
+Qt 用 QImage / QVideoFrame 显示 SDK 帧；其他宿主可自行显示 CPU 帧。Windows 还提供 `xmax_frame_render_window(frame, hwnd, XMAX_CONTENT_FIT)`，应由 HWND 所属线程在重绘时调用。支持 FIT / FILL，当前为 GDI CPU 绘制，不提供 D3D11 纹理或自动重绘。WPF 可通过 P/Invoke 获取帧，或通过宿主 HWND 接入。[最小 .NET 消费端](../Examples/DotNetSmoke/Program.cs) 演示 Cdecl、UTF-8、Pack=8 和句柄释放；它用于 ABI 验证，不是完整托管 SDK。
 
 ## 编码、画质与事件
 
@@ -111,7 +111,7 @@ while (realtime.poll(event)) {
 
 编码最小码率 `-1` 使用策略值、`0` 不设最小限制；最大码率 `0` 使用估算值并保证不低于最小值。偏好支持自动、优先帧率和优先画质。
 
-自适应策略上下行独立，从第 2 档开始，最多 5 档；连续 3 次较差网络降档、5 次优良网络升档，包含稳定期、升档探测和退避。上行调整 RTC 编码，下行发送 `change_target_size` 信令。档位保存在当前 Realtime 实例内，1 小时后重连恢复默认；尚未持久化到磁盘。
+自适应策略上下行独立，从第 2 档开始，最多 5 档；连续 3 次较差网络降档、5 次优良网络升档，包含稳定期、升档探测和退避。上行调整 RTC 编码，下行发送 `change_target_size` 信令。成功应用的档位按模型和上下行分别写入用户缓存，跨 Realtime 实例和进程复用，1 小时后恢复默认。损坏、未来时间戳或不可读缓存使用默认档位；缓存写入失败不影响实时会话。
 
 状态快照通过 `state()` 获取，不消耗事件。`QUALITY_CHANGE` 的 direction 区分上下行，quality 表示档位；失败时 code 为负数且保留旧档位。`PERFORMANCE` 的 code 为 1 表示设备受限、0 表示恢复。统计和耗时的 `-1` 表示不可获得。
 

@@ -9,9 +9,11 @@ static void text_copy(char* out, size_t size, const std::string& text) {
     out[count] = 0;
 }
 XmaxRealtimeManager::XmaxRealtimeManager(std::shared_ptr<ApiService> api, RtcFactory factory,
-                                         std::chrono::milliseconds heartbeat, CameraFactory camera)
-    : api_(std::move(api)), service_(api_), stream_(std::move(factory)), media_(std::move(camera)),
-      heartbeat_interval_(heartbeat), coordinator_([this] { this->heartbeat(); }) {
+                                         std::chrono::milliseconds heartbeat, CameraFactory camera,
+                                         std::shared_ptr<QualityHistory> history)
+    : api_(std::move(api)), service_(api_), stream_(std::move(factory), std::move(history)),
+      media_(std::move(camera)), heartbeat_interval_(heartbeat),
+      coordinator_([this] { this->heartbeat(); }, [this](Error error) { fail(std::move(error)); }) {
     require(bool(api_), XMAX_INVALID_ARGUMENT, "API service is required");
     require(heartbeat.count() > 0, XMAX_INVALID_ARGUMENT, "Invalid heartbeat interval");
 }

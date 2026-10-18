@@ -1,7 +1,8 @@
 #include "Core/Realtime/RealtimeCoordinator.hpp"
 #include <algorithm>
 namespace xmax::detail {
-RealtimeCoordinator::RealtimeCoordinator(std::function<void()> tick) : tick_(std::move(tick)) {
+RealtimeCoordinator::RealtimeCoordinator(std::function<void()> tick, std::function<void(Error)> failure)
+    : tick_(std::move(tick)), failure_(std::move(failure)) {
     worker_ = std::thread([this] { run(); });
 }
 RealtimeCoordinator::~RealtimeCoordinator() {
@@ -42,10 +43,26 @@ void RealtimeCoordinator::run() {
                 work_.pop_front();
             }
         }
-        if (job)
-            job();
-        if (Clock::now() >= deadline_)
-            tick_();
+        try {
+            if (job)
+                job();
+            if (Clock::now() >= deadline_)
+                tick_();
+        } catch (...) {
+            deadline_ = Clock::time_point::max();
+            // Internal async callbacks must not terminate the process or strand future sync calls.
+            try {
+                if (failure_)
+                    failure_(Error(XMAX_INTERNAL_ERROR, "An asynchronous SDK operation failed"));
+                else {
+                    xmax_event event{};
+                    event.type = XMAX_EVENT_ERROR;
+                    event.code = XMAX_INTERNAL_ERROR;
+                    emit(event);
+                }
+            } catch (...) {
+            }
+        }
     }
 }
 Cancel RealtimeCoordinator::cancellation(uint64_t epoch) {

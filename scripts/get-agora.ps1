@@ -1,9 +1,10 @@
 param([string]$Destination = "$PSScriptRoot/../.build/vendor/agora")
 $ErrorActionPreference = "Stop"
-$url = "https://download.agora.io/sdk/release/Agora_Native_SDK_for_Windows_v4.6.2_FULL.zip"
-$sha256 = "44d0caabc2b5232b0416df63845d88e45de45681b9d32d99617dbd41ba8e6523"
+$locked = Get-Content "$PSScriptRoot/../.cicd/dependencies.json" -Raw | ConvertFrom-Json
+$url = $locked.agora.url
+$sha256 = $locked.agora.sha256
 New-Item -ItemType Directory -Force -Path $Destination | Out-Null
-$archive = Join-Path $Destination "agora-windows-4.6.2.zip"
+$archive = Join-Path $Destination "agora-windows-$($locked.agora.version).zip"
 if (-not (Test-Path $archive)) { Invoke-WebRequest -Uri $url -OutFile $archive }
 if ((Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant() -ne $sha256) {
     throw "Agora SDK SHA-256 mismatch. Remove the archive and download again."

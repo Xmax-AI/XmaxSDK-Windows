@@ -2,6 +2,26 @@
 
 所有命令均在工程根目录 `Windows/XmaxSDK` 执行。
 
+## 接入 Windows 二进制包
+
+候选包由 GitHub Actions 的 Windows 构建生成；正式 Release 通过验收后再发布。
+SDK 包包含 `bin/XmaxSDK.dll`、Agora DLL、`lib/XmaxSDK.lib`、`include/xmax`、CMake package、符号与消费样例。
+Qt 仅在独立 XLab 包中，SDK 包不需要 Qt。
+
+1. 校验 SHA256SUMS，解压整个 SDK 包。
+2. 安装 Microsoft Visual C++ v14 x64 Redistributable；运行时将 bin 中所需 DLL 放在应用可加载位置。
+3. C/C++ 工程使用下文的 find_package；将解压后的根目录设为 CMAKE_PREFIX_PATH。
+4. 可构建包内 samples/consumer 验证 C/C++，或使用 samples/DotNetSmoke 验证 P/Invoke。
+5. Windows 摄像头依赖 Media Foundation 和系统摄像头权限；N/KN 或未安装媒体功能的系统需先安装对应媒体组件。
+
+```powershell
+cmake -S samples/consumer -B consumer-build -G "Visual Studio 17 2022" -A x64 "-DCMAKE_PREFIX_PATH=$PWD"
+cmake --build consumer-build --config Release
+ctest --test-dir consumer-build -C Release --output-on-failure
+# .NET 8 SDK：
+dotnet run --project samples/DotNetSmoke --configuration Release "-p:XmaxNativeDir=$PWD/bin"
+```
+
 ## 构建 SDK
 
 需要 CMake 3.24+、C++17 编译器和平台 SDK。Windows 使用 Visual Studio 2022 的 C++ 桌面开发工具及 Windows SDK；便携开发预设使用 Ninja。
@@ -71,3 +91,5 @@ Mac 构建提供 AVFoundation 摄像头实现，可开发公共 C++ 逻辑和 Qt
 当前还通过 Windows x64 GNU 目标交叉构建生成了关闭 Agora 的 DLL，并检查了 C 导出；Agora 4.6.2 适配器已用真实 Windows 头编译为对象文件。正式发布仍应使用 MSVC 构建并在 Windows 验证原生设备、WinHTTP、Agora 连接和生成，交叉编译不代替这些验收。
 
 继续阅读 [使用说明](usage.md)。
+
+发版准备、Windows 验包与不发布的 CD 演练见 [CI/CD 说明](../.cicd/README.md)。

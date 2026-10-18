@@ -11,7 +11,8 @@ class XmaxRealtimeManager {
   public:
     explicit XmaxRealtimeManager(std::shared_ptr<ApiService>, RtcFactory = make_rtc,
                                  std::chrono::milliseconds heartbeat = std::chrono::seconds(10),
-                                 CameraFactory = make_camera_capture);
+                                 CameraFactory = make_camera_capture,
+                                 std::shared_ptr<QualityHistory> history = {});
     ~XmaxRealtimeManager();
     void prepare(xmax_video_format);
     void start(std::string prompt, std::string reference, bool face, bool microphone);

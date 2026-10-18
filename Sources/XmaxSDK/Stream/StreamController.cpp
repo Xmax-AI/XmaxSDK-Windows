@@ -17,10 +17,15 @@ void StreamController::join(const Connection& connection, xmax_video_format form
     require(bool(rtc_), XMAX_INVALID_STATE, "Allocate an RTC backend before joining");
     connection_ = connection;
     format_ = format;
-    if (Clock::now() - quality_saved_[0] >= std::chrono::hours(1))
-        quality_.up.level = 2;
-    if (Clock::now() - quality_saved_[1] >= std::chrono::hours(1))
-        quality_.down.level = 2;
+    if (history_) {
+        quality_.up.level = history_->read(false);
+        quality_.down.level = history_->read(true);
+    } else {
+        if (Clock::now() - quality_saved_[0] >= std::chrono::hours(1))
+            quality_.up.level = 2;
+        if (Clock::now() - quality_saved_[1] >= std::chrono::hours(1))
+            quality_.down.level = 2;
+    }
     quality_.reset_samples();
     rtc_->join(connection, uplink_encoding(quality_.up.level), microphone, std::move(callbacks), cancel);
     rtc_->volume(volume_);
@@ -160,6 +165,8 @@ std::vector<xmax_event> StreamController::observe_quality(int direction, int net
             rtc_->configure_encoding(uplink_encoding(*proposal));
         policy.complete(*proposal, true, now);
         quality_saved_[direction] = Clock::now();
+        if (history_)
+            history_->write(policy.level, direction != 0);
     } catch (const Error& error) {
         policy.complete(*proposal, false, now);
         event.code = error.code;

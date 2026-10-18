@@ -12,7 +12,9 @@ class XmaxClient {
         return api_->request(method, path, body, cancel);
     }
     std::unique_ptr<XmaxRealtimeManager> create_realtime() const {
-        return std::make_unique<XmaxRealtimeManager>(api_);
+        auto history = std::make_shared<QualityHistory>(api_->config().model, make_preference_store());
+        return std::make_unique<XmaxRealtimeManager>(api_, make_rtc, std::chrono::seconds(10),
+                                                     make_camera_capture, std::move(history));
     }
     bool has_rtc() const { return rtc_available(); }
     uint64_t capabilities() const {

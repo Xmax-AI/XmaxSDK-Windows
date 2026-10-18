@@ -8,3 +8,8 @@ Vendor/
 CMakeUserPresets.json
 
 /Docs/
+
+__pycache__/
+*.pyc
+/Examples/DotNetSmoke/bin/
+/Examples/DotNetSmoke/obj/

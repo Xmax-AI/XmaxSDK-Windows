@@ -197,6 +197,19 @@ static void quality_policy() {
     stream.adaptive(false);
     CHECK(stream.observe_quality(0, 4, stamp + .003, cancel).empty());
 }
+static void async_exception_boundary() {
+    std::atomic<int> failures{0};
+    RealtimeCoordinator coordinator([] {},
+                                    [&](Error error) {
+                                        CHECK(error.code == XMAX_INTERNAL_ERROR);
+                                        ++failures;
+                                    });
+    coordinator.enqueue([] { throw std::runtime_error("Internal asynchronous failure"); });
+    coordinator.sync([&] { CHECK(failures == 1); });
+    expect_error(XMAX_INVALID_STATE,
+                 [&] { coordinator.sync([] { throw Error(XMAX_INVALID_STATE, "Caller error"); }); });
+    coordinator.sync([&] { CHECK(failures == 1); });
+}
 int main() {
     int failures = 0;
     for (auto test : std::vector<std::pair<const char*, void (*)()>>{
@@ -204,7 +217,8 @@ int main() {
              {"camera rollback and cancellation", camera_rollback_and_cancel},
              {"separate connection and generation", separate_connect_and_generation},
              {"CPU conversion and contain", conversion},
-             {"adaptive quality policy", quality_policy}}) {
+             {"adaptive quality policy", quality_policy},
+             {"async exception containment", async_exception_boundary}}) {
         try {
             test.second();
             std::cout << "PASS " << test.first << '\n';

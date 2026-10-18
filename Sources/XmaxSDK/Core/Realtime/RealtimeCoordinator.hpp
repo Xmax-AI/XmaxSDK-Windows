@@ -9,7 +9,7 @@ namespace xmax::detail {
 // Serial lifecycle execution, cancellation generations, state and bounded application events.
 class RealtimeCoordinator {
   public:
-    explicit RealtimeCoordinator(std::function<void()> tick);
+    explicit RealtimeCoordinator(std::function<void()> tick, std::function<void(Error)> failure = {});
     ~RealtimeCoordinator();
     void shutdown();
     void sync(std::function<void()>);
@@ -27,6 +27,7 @@ class RealtimeCoordinator {
 
   private:
     std::function<void()> tick_;
+    std::function<void(Error)> failure_;
     std::thread worker_;
     std::mutex work_mutex_, event_mutex_;
     std::condition_variable wake_;

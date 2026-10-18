@@ -1,56 +1,59 @@
-name: SDK and X-Lab
-on: [push, pull_request, workflow_dispatch]
+name: SDK CI
+on:
+  push:
+    branches: ['main', 'develop', 'feature/**', 'fix/**']
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: sdk-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
-  sdk:
-    strategy:
-      matrix:
-        os: [macos-14, windows-2022]
-    runs-on: ${{ matrix.os }}
+  source:
+    name: Source checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          python-version: '3.11'
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+      - run: python .cicd/check-source.py
+      - run: python .cicd/test-workflow.py
+      - name: Validate GitHub Actions syntax
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 -shellcheck= -pyflakes=
+  macos:
+    name: macOS SDK
+    needs: source
+    runs-on: macos-14
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
       - run: python -m pip install cmake ninja
-      - name: Build and test portable SDK
-        shell: bash
-        run: |
-          if [[ "$RUNNER_OS" == "Windows" ]]; then
-            cmake --preset windows
-            cmake --build --preset windows
-            ctest --preset windows
-          else
-            cmake --preset core
-            cmake --build --preset core
-            ctest --preset core
-          fi
-  windows-example:
-    runs-on: windows-2022
+      - run: python .cicd/pipeline.py verify --build-dir .build/ci-macos
+  sanitizers:
+    name: macOS sanitizers
+    needs: source
+    runs-on: macos-14
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          python-version: '3.11'
-      - run: python -m pip install cmake aqtinstall==3.3.0
-      - name: Install Qt and native RTC dependencies
-        shell: pwsh
-        run: |
-          python -m aqt install-qt windows desktop 6.8.3 win64_msvc2022_64 -m qtmultimedia qtimageformats -O .build/qt
-          ./scripts/get-agora.ps1
-      - name: Build Windows DLL and example with Agora
-        shell: pwsh
-        run: |
-          $qt = "$PWD/.build/qt/6.8.3/msvc2022_64"
-          $agora = "$PWD/.build/vendor/agora/Agora_Native_SDK_for_Windows_FULL/sdk"
-          cmake --preset windows -DXMAX_BUILD_EXAMPLE=ON -DXMAX_WITH_AGORA=ON "-DXMAX_AGORA_ROOT=$agora" "-DCMAKE_PREFIX_PATH=$qt"
-          cmake --build --preset windows
-          & "$qt/bin/windeployqt.exe" --release --qmldir Examples/XLab/qml .build/windows/Examples/XLab/Release/XLab.exe
-          ctest --preset windows
-      - uses: actions/upload-artifact@v4
-        if: always()
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          name: windows-xlab-and-ui-screenshots
-          path: |
-            .build/windows/Examples/XLab/Release/
-            .build/windows/screenshots/
-            .build/windows/Testing/Temporary/LastTest.log
+          python-version: '3.12'
+      - run: python -m pip install cmake ninja
+      - run: python .cicd/pipeline.py verify --sanitizers --build-dir .build/ci-sanitized
+  windows:
+    name: Windows SDK and package
+    needs: source
+    uses: ./.github/workflows/windows-package.yml

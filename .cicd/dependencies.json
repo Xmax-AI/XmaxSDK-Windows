@@ -1,0 +1,9 @@
+{
+  "agora": {
+    "version": "4.6.2",
+    "url": "https://download.agora.io/sdk/release/Agora_Native_SDK_for_Windows_v4.6.2_FULL.zip",
+    "sha256": "44d0caabc2b5232b0416df63845d88e45de45681b9d32d99617dbd41ba8e6523"
+  },
+  "qt": {"version": "6.8.3", "architecture": "win64_msvc2022_64"},
+  "aqtinstall": "3.3.0"
+}

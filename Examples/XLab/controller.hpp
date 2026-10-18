@@ -5,6 +5,7 @@
 #include <QVariantList>
 #include <QVariantMap>
 #include <QVideoSink>
+#include <atomic>
 #include <map>
 #include <memory>
 #include <xmax/xmax.h>
@@ -19,6 +20,11 @@ struct SdkHandles {
 struct SdkUploadJob {
     xmax_storage storage = nullptr;
     double shown_progress = -1;
+    std::atomic<bool> cancelled{false};
+    void cancel() {
+        cancelled = true;
+        xmax_storage_cancel(storage);
+    }
     ~SdkUploadJob() { xmax_storage_destroy(storage); }
 };
 class XLabController final : public QObject {

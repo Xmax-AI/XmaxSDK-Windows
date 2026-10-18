@@ -1,6 +1,7 @@
 #include "Core/Storage/XmaxStorageManager.hpp"
 #include "Foundation/Crypto/Sha1.hpp"
 #include "Foundation/Runtime/RuntimeInfo.hpp"
+#include "Stream/Quality/QualityHistory.hpp"
 #include "TestSupport.hpp"
 #include <filesystem>
 #include <fstream>
@@ -125,6 +126,27 @@ static void upload_file_and_atomic_download() {
     for (const auto& entry : std::filesystem::directory_iterator(folder.path))
         CHECK(entry.path().filename().u8string().find(".part-") == std::string::npos);
 }
+static void quality_history() {
+    Folder folder;
+    auto store = make_preference_store(folder.path);
+    QualityHistory cn("x2.1.1-preview-cn", store), us("x2.1.1-preview-us", store);
+    CHECK(cn.read(false, 1000) == 2);
+    cn.write(4, false, 1000);
+    cn.write(3, true, 1001);
+    CHECK(cn.read(false, 1002) == 4 && cn.read(true, 1002) == 3);
+    CHECK(us.read(false, 1002) == 2);
+    QualityHistory restarted("x2.1.1-preview-cn", make_preference_store(folder.path));
+    CHECK(restarted.read(false, 1002) == 4);
+    CHECK(restarted.read(false, 999) == 2 && restarted.read(false, 4600) == 2);
+    store->write("quality-agora-x2.1.1-preview-cn-uplink", "{corrupt");
+    CHECK(restarted.read(false, 1002) == 2);
+    store->write("quality-agora-x2.1.1-preview-cn-uplink", R"({"level":99,"time":1000})");
+    CHECK(restarted.read(false, 1002) == 2);
+    store->write("../escape", "invalid");
+    CHECK(!store->read("../escape"));
+    for (const auto& entry : std::filesystem::directory_iterator(folder.path))
+        CHECK(entry.path().filename().u8string().find(".pending-") != 0);
+}
 static void cancel_transfer() {
     auto http = std::make_shared<StorageHttp>();
     http->block = true;
@@ -151,7 +173,8 @@ int main() {
              {"SHA1 and HMAC standard vectors", crypto_vectors},
              {"upload and image safety", upload_and_safety},
              {"file upload and atomic download", upload_file_and_atomic_download},
-             {"cancellation and busy admission", cancel_transfer}}) {
+             {"cancellation and busy admission", cancel_transfer},
+             {"persistent quality history and expiry", quality_history}}) {
         try {
             test.second();
             std::cout << "PASS " << test.first << '\n';
