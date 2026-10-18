@@ -92,8 +92,47 @@ class GitFlowTests(unittest.TestCase):
         with self.assertRaises(subprocess.CalledProcessError):workflow.merge(self.f.root,True)
     def test_validation_failure_does_not_push(self):
         old=self.f.git('ls-remote','origin','refs/heads/main')
-        with self.assertRaisesRegex(RuntimeError,'fixture'):workflow.merge(self.f.root)
+        with patch.object(workflow,'ROOT',self.f.root),patch.object(workflow,'verify',side_effect=RuntimeError('validation failed')):
+            with self.assertRaisesRegex(RuntimeError,'validation failed'):workflow.merge(self.f.root)
         self.assertEqual(old,self.f.git('ls-remote','origin','refs/heads/main'))
+    def release_context(self, *, existing=False, network=False, tag_mismatch=False):
+        self.f.git('switch','main');self.f.git('tag','0.2.0')
+        head=self.f.git('rev-parse','HEAD')
+        original=subprocess.run
+        def api(path):
+            return {'object':{'type':'commit','sha':'wrong' if tag_mismatch and '/tags/' in path else head}}
+        def command(args,*a,**kw):
+            if args[0]=='gh':
+                return subprocess.CompletedProcess(args,0 if existing else 1,'{}','network failed' if network else 'HTTP 404')
+            return original(args,*a,**kw)
+        context=contextlib.ExitStack()
+        context.enter_context(patch.object(workflow,'origin'))
+        context.enter_context(patch.object(workflow,'gh_json',side_effect=api))
+        context.enter_context(patch.object(workflow.subprocess,'run',side_effect=command))
+        return context,head
+    def test_release_preflight_success(self):
+        context,head=self.release_context()
+        with context:self.assertEqual(workflow.release_preflight('0.2.0',self.f.root)[0],head)
+    def test_release_rejects_existing_release(self):
+        context,_=self.release_context(existing=True)
+        with context:
+            with self.assertRaisesRegex(RuntimeError,'already exists'):workflow.release_preflight('0.2.0',self.f.root)
+    def test_release_network_error_is_not_treated_as_missing_release(self):
+        context,_=self.release_context(network=True)
+        with context:
+            with self.assertRaisesRegex(RuntimeError,'Unable to check'):workflow.release_preflight('0.2.0',self.f.root)
+    def test_release_rejects_tag_mismatch(self):
+        context,_=self.release_context(tag_mismatch=True)
+        with context:
+            with self.assertRaisesRegex(RuntimeError,'tag differs'):workflow.release_preflight('0.2.0',self.f.root)
+    def test_release_rejects_incomplete_notes(self):
+        context,_=self.release_context()
+        with context:
+            (self.f.root/'.cicd/release-notes/0.2.0.md').write_text('TODO')
+            self.f.git('add','.');self.f.git('commit','-m','incomplete notes')
+            with patch.object(workflow,'gh_json',return_value={'object':{'type':'commit','sha':self.f.git('rev-parse','HEAD')}}):
+                self.f.git('tag','-f','0.2.0')
+                with self.assertRaisesRegex(RuntimeError,'Notes'):workflow.release_preflight('0.2.0',self.f.root)
     def test_release_requires_main(self):
         with patch.object(workflow,'origin'):
             with self.assertRaisesRegex(RuntimeError,'main'):workflow.release_preflight('0.2.0',self.f.root)
@@ -116,6 +155,47 @@ class ArtifactTests(unittest.TestCase):
         stage=self.root/'SDK';stage.mkdir();(stage/'file').write_bytes(b'\x00\x01media')
         artifacts.write_manifest(stage,{'version':'0.2.0','commit':'abc','with_agora':True})
         archive=self.root/'sdk.zip';artifacts.archive(stage,archive);return stage,archive
+    def assets(self):
+        def binary(exports):
+            data=bytearray(16384);data[:2]=b'MZ';struct.pack_into('<I',data,0x3c,0x80)
+            data[0x80:0x84]=b'PE\0\0';struct.pack_into('<HH',data,0x84,0x8664,1)
+            struct.pack_into('<H',data,0x94,240);optional=0x98
+            struct.pack_into('<H',data,optional,0x20b)
+            section=optional+240;struct.pack_into('<IIII',data,section+8,8192,0x1000,8192,0x200)
+            if exports:
+                struct.pack_into('<II',data,optional+112,0x1000,40)
+                struct.pack_into('<I',data,0x200+24,len(exports));struct.pack_into('<I',data,0x200+32,0x1100)
+                cursor=0x500
+                for i,name in enumerate(sorted(exports)):
+                    struct.pack_into('<I',data,0x300+i*4,cursor-0x200+0x1000)
+                    encoded=name.encode()+b'\0';data[cursor:cursor+len(encoded)]=encoded;cursor+=len(encoded)
+            return bytes(data)
+        sdk=self.root/'XmaxSDK-0.2.0-windows-x64';(sdk/'bin').mkdir(parents=True)
+        (sdk/'bin/XmaxSDK.dll').write_bytes(binary(artifacts.public_exports(artifacts.ROOT/'include/xmax/xmax.h')))
+        checked=artifacts.audit(sdk/'bin/XmaxSDK.dll',runtime=False);checked['runtime_checked']=True
+        report={'version':'0.2.0','commit':'abc','sdk_abi':checked,**{key:True for key in ['windows_msvc','installed_c_consumer','installed_cpp_consumer','dotnet_consumer','ui_smoke','with_agora']}}
+        demo=self.root/'XLab-0.2.0-windows-x64';demo.mkdir()
+        (demo/'XmaxSDK.dll').write_bytes((sdk/'bin/XmaxSDK.dll').read_bytes());(demo/'XLab.exe').write_bytes(binary(set()))
+        for kind,stage in [('sdk',sdk),('demo',demo)]:
+            artifacts.write_manifest(stage,{'version':'0.2.0','commit':'abc','with_agora':True})
+            archive=self.root/(stage.name+'.zip');artifacts.archive(stage,archive)
+            report[kind+'_archive']=archive.name;report[kind+'_sha256']=artifacts.sha256(archive)
+        (self.root/'validation.json').write_text(json.dumps(report))
+        (self.root/'SHA256SUMS.txt').write_text(''.join(report[k+'_sha256']+'  '+report[k+'_archive']+'\n' for k in ['sdk','demo']))
+        return report
+    def test_complete_release_assets(self):
+        self.assets();self.assertEqual(len(workflow.validate_release_assets(self.root,'0.2.0','abc')),4)
+    def test_release_rejects_modified_archive(self):
+        report=self.assets()
+        with (self.root/report['sdk_archive']).open('ab') as f:f.write(b'tampered')
+        with self.assertRaisesRegex(RuntimeError,'Archive changed'):workflow.validate_release_assets(self.root,'0.2.0','abc')
+    def test_release_rejects_changed_checksums(self):
+        self.assets();(self.root/'SHA256SUMS.txt').write_text('invalid')
+        with self.assertRaisesRegex(RuntimeError,'SHA256SUMS'):workflow.validate_release_assets(self.root,'0.2.0','abc')
+    def test_release_rejects_unvalidated_dll(self):
+        report=self.assets();report['sdk_abi']['sha256']='0'*64
+        (self.root/'validation.json').write_text(json.dumps(report))
+        with self.assertRaisesRegex(RuntimeError,'runtime-validated'):workflow.validate_release_assets(self.root,'0.2.0','abc')
     def test_round_trip(self):
         _,archive=self.package();unpacked=artifacts.extract(archive,self.root/'out')
         self.assertEqual((unpacked/'file').read_bytes(),b'\x00\x01media')

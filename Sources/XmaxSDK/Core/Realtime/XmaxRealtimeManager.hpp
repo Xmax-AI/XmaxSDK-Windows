@@ -52,6 +52,11 @@ class XmaxRealtimeManager {
     };
     std::optional<Context> context_;
     xmax_event launch_timing_{};
+    struct Publication {
+        std::atomic<int64_t> first_us{-1};
+        int64_t started_us = -1; // Lifecycle executor only.
+    };
+    std::shared_ptr<Publication> publication_;
     Clock::time_point launch_started_;
     std::chrono::milliseconds heartbeat_interval_;
     RealtimeCoordinator coordinator_;
@@ -63,6 +68,7 @@ class XmaxRealtimeManager {
     void connect_impl(const Cancel&, uint64_t epoch, bool microphone);
     void generate_impl(const Context&, const Cancel&);
     void bind_local();
+    bool update_publish_timing();
     std::function<void(Error)> media_failure(uint64_t token);
 };
 } // namespace xmax::detail

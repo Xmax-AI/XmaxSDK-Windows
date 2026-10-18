@@ -20,7 +20,7 @@ Shell 与 PowerShell 包装都调用同一个 Python 实现，避免两套逻辑
 
 `.github/workflows/build.yml` 在 main/develop/feature/fix 推送、PR 和手动触发时运行：
 
-1. Source checks：版本、ABI 基线、依赖 SHA、文档链接、ignore 规则、28 项隔离流程测试、actionlint。
+1. Source checks：版本、ABI 基线、依赖 SHA、文档链接、ignore 规则、隔离流程测试、actionlint。
 2. macOS SDK：公共 C++ 与 C ABI 测试，安装后独立 C/C++ 消费端。
 3. macOS sanitizers：ASan / UBSan 覆盖全部核心测试。
 4. Windows SDK and package：真正的 Windows 2022 / VS2022 x64 构建，无 RTC 构建先验证核心独立性，再构建 Agora + Qt、打包并解压消费。

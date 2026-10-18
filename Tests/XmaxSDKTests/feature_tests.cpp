@@ -197,6 +197,48 @@ static void quality_policy() {
     stream.adaptive(false);
     CHECK(stream.observe_quality(0, 4, stamp + .003, cancel).empty());
 }
+static void publication_timing() {
+    auto http = std::make_shared<FakeHttp>();
+    auto rtc = std::make_shared<FakeRtc>();
+    Config config;
+    config.key = "test";
+    XmaxRealtimeManager sdk(std::make_shared<ApiService>(config, http), [rtc] { return rtc; });
+    sdk.prepare({1920, 1024, 30});
+    sdk.start("test", "", false, false);
+    xmax_event event{};
+    bool initial = false;
+    while (sdk.poll(event))
+        if (event.type == XMAX_EVENT_TIMING) {
+            CHECK(event.publish_ms == -1);
+            initial = true;
+        }
+    CHECK(initial && bool(rtc->callbacks.published));
+    const auto old_publication = rtc->callbacks.published;
+    rtc->callbacks.published();
+    sdk.state_snapshot();
+    bool measured = false;
+    while (sdk.poll(event))
+        if (event.type == XMAX_EVENT_TIMING) {
+            CHECK(event.publish_ms >= 0);
+            measured = true;
+        }
+    CHECK(measured);
+    rtc->callbacks.published();
+    sdk.state_snapshot();
+    CHECK(!sdk.poll(event));
+    sdk.disconnect(false);
+    sdk.generate(nullptr);
+    old_publication();
+    sdk.state_snapshot();
+    bool restarted = false;
+    while (sdk.poll(event))
+        if (event.type == XMAX_EVENT_TIMING) {
+            CHECK(event.publish_ms == -1);
+            restarted = true;
+        }
+    CHECK(restarted);
+    sdk.disconnect(true);
+}
 static void async_exception_boundary() {
     std::atomic<int> failures{0};
     RealtimeCoordinator coordinator([] {},
@@ -218,7 +260,8 @@ int main() {
              {"separate connection and generation", separate_connect_and_generation},
              {"CPU conversion and contain", conversion},
              {"adaptive quality policy", quality_policy},
-             {"async exception containment", async_exception_boundary}}) {
+             {"async exception containment", async_exception_boundary},
+             {"actual publication timing and stale callback isolation", publication_timing}}) {
         try {
             test.second();
             std::cout << "PASS " << test.first << '\n';

@@ -7,7 +7,7 @@ import re
 import subprocess
 import sys
 import tempfile
-from artifacts import ROOT, REPOSITORY, extract, sha256
+from artifacts import ROOT, REPOSITORY, audit, extract, pe_metadata, sha256
 from pipeline import run, verify
 
 SEMVER = re.compile(r'(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)')
@@ -145,6 +145,14 @@ def validate_release_assets(directory: Path, value: str, head: str) -> list[Path
             metadata = json.loads((unpacked/'manifest.json').read_text())
             if metadata.get('commit') != head or metadata.get('version') != value or not metadata.get('with_agora'):
                 raise RuntimeError('Archive manifest source/flavor mismatch')
+            if kind == 'sdk':
+                checked = audit(unpacked/'bin/XmaxSDK.dll', runtime=False)
+                if checked['sha256'] != report['sdk_abi']['sha256']:
+                    raise RuntimeError('Packaged DLL differs from runtime-validated DLL')
+            else:
+                pe_metadata(unpacked/'XLab.exe')
+                if sha256(unpacked/'XmaxSDK.dll') != report['sdk_abi']['sha256']:
+                    raise RuntimeError('Demo DLL differs from SDK DLL')
         assets.append(asset)
     checksum = directory/'SHA256SUMS.txt'
     expected_checksums = ''.join(f'{sha256(asset)}  {asset.name}\n' for asset in assets)

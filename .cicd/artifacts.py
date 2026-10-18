@@ -2,6 +2,7 @@
 from __future__ import annotations
 import argparse
 import ctypes
+import _ctypes
 import hashlib
 import json
 import os
@@ -90,7 +91,8 @@ def audit(binary: Path, root: Path = ROOT, runtime: bool = True, rtc: bool | Non
     result = {'abi_version': 1, 'exports': sorted(exports), 'imports': dependencies,
               'sha256': sha256(binary), 'runtime_checked': False}
     if runtime:
-        directory = os.add_dll_directory(str(binary.parent)) if os.name == 'nt' else None
+        directory = os.add_dll_directory(str(binary.parent.resolve())) if os.name == 'nt' else None
+        library = None
         try:
             library = ctypes.CDLL(str(binary.resolve()))
             library.xmax_version.restype = ctypes.c_char_p
@@ -124,6 +126,12 @@ def audit(binary: Path, root: Path = ROOT, runtime: bool = True, rtc: bool | Non
             finally:
                 library.xmax_client_destroy(client)
         finally:
+            # ctypes keeps native DLLs loaded; explicitly unload after destroying all SDK objects.
+            # Windows cannot remove the fresh staging directory while its DLL is mapped.
+            if library is not None and library._handle:
+                if os.name == 'nt': _ctypes.FreeLibrary(library._handle)
+                else: _ctypes.dlclose(library._handle)
+                library._handle = 0
             if directory:
                 directory.close()
     return result

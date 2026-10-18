@@ -124,6 +124,10 @@ def build_windows(build: Path, output: Path, qt_prefix: Path | None, agora_root:
             for dll in (stage/'bin').glob('*.dll'): shutil.copy2(dll, demo/dll.name)
             run([qt_prefix/'bin/windeployqt.exe', '--release', '--compiler-runtime',
                  '--qmldir', ROOT/'Examples/XLab/qml', demo/'XLab.exe'])
+            # Offscreen is a test platform, so ensure it is present even if windeployqt selects only qwindows.
+            platforms = demo/'platforms'
+            platforms.mkdir(exist_ok=True)
+            shutil.copy2(qt_prefix/'plugins/platforms/qoffscreen.dll', platforms/'qoffscreen.dll')
             # CTest invokes the build-tree example; run the extracted distribution as well.
             environment = dict(os.environ, QT_QPA_PLATFORM='offscreen', QT_QUICK_BACKEND='software')
             run([demo/'XLab.exe', '--smoke-test', '--screenshot-dir', build/'screenshots'], env=environment)
@@ -145,7 +149,12 @@ def build_windows(build: Path, output: Path, qt_prefix: Path | None, agora_root:
             installed_demo = extract(demo_zip, workspace/'demo-unpacked')
             run([installed_demo/'XLab.exe', '--smoke-test'], env=environment)
             validation.update(ui_smoke=True, demo_archive=demo_zip.name, demo_sha256=sha256(demo_zip))
-        run([tool('ctest'), '--test-dir', build, '-C', 'Release', '--output-on-failure'])
+        test_environment = dict(os.environ)
+        if qt_prefix:
+            test_environment['PATH'] = str(qt_prefix/'bin') + os.pathsep + test_environment.get('PATH', '')
+            test_environment['QT_PLUGIN_PATH'] = str(qt_prefix/'plugins')
+            test_environment['QML_IMPORT_PATH'] = str(qt_prefix/'qml')
+        run([tool('ctest'), '--test-dir', build, '-C', 'Release', '--output-on-failure'], env=test_environment)
         # Validation is written only after *every* check succeeds.
         report_path.write_text(json.dumps(validation, indent=2)+'\n')
     assets = [sdk_zip]

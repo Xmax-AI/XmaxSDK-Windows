@@ -209,6 +209,10 @@ class AgoraRtc final : public Rtc, private IRtcEngineEventHandler, private IVide
     }
     void onError(int, const char*) override { failure("Agora reported an RTC error"); }
     void onConnectionLost() override { failure("RTC connection was lost"); }
+    void onFirstLocalVideoFramePublished(VIDEO_SOURCE_TYPE, int) override {
+        if (!stopping_ && callbacks_.published)
+            callbacks_.published();
+    }
     void onUserJoined(uid_t uid, int) override {
         if (stopping_)
             return;
@@ -297,7 +301,7 @@ class AgoraRtc final : public Rtc, private IRtcEngineEventHandler, private IVide
     bool getRotationApplied() override { return true; }
     bool getMirrorApplied() override { return false; }
     bool onRenderVideoFrame(const char* channel, uid_t uid, VideoFrame& video) override {
-        if (stopping_ || room_ != channel || bot_uid_ == 0 || uid != bot_uid_)
+        if (stopping_ || !channel || room_ != channel || bot_uid_ == 0 || uid != bot_uid_)
             return true;
         try {
             require(video.type == media_base::VIDEO_PIXEL_BGRA && video.width > 0 && video.height > 0 &&
@@ -320,6 +324,9 @@ class AgoraRtc final : public Rtc, private IRtcEngineEventHandler, private IVide
             v.strides[0] = stride;
             v.plane_sizes[0] = stride * size_t(video.height);
             auto frame = Frame::copy(v);
+            // RTC video is opaque; decoders may leave the otherwise unused BGRA alpha byte at zero.
+            for (size_t i = 3; i < frame.planes[0].size(); i += 4)
+                frame.planes[0][i] = 255;
             if (callbacks_.frame)
                 callbacks_.frame(std::move(frame));
             {

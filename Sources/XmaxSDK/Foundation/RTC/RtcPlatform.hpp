@@ -13,6 +13,7 @@ struct RtcCallbacks {
     std::function<void(Frame)> frame;
     std::function<void(xmax_event)> event;
     std::function<void(Error)> failure;
+    std::function<void()> published; // Actual first local video publication, not merely a successful push.
 };
 class Rtc {
   public:

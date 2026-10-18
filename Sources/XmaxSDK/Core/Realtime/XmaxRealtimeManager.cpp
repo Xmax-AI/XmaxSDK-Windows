@@ -3,6 +3,9 @@
 #include <algorithm>
 #include <cstring>
 namespace xmax::detail {
+static int64_t monotonic_us() {
+    return std::chrono::duration_cast<std::chrono::microseconds>(Clock::now().time_since_epoch()).count();
+}
 static void text_copy(char* out, size_t size, const std::string& text) {
     const auto count = std::min(size - 1, text.size());
     std::memcpy(out, text.data(), count);
@@ -120,7 +123,21 @@ void XmaxRealtimeManager::connect_impl(const Cancel& cancel, uint64_t epoch, boo
     launch_timing_.session_ms =
         std::chrono::duration<double, std::milli>(Clock::now() - launch_started_).count();
     const auto joining = Clock::now();
+    publication_ = std::make_shared<Publication>();
     RtcCallbacks callbacks;
+    callbacks.published = [this, epoch, publication = publication_] {
+        if (coordinator_.epoch() != epoch)
+            return;
+        int64_t missing = -1;
+        if (!publication->first_us.compare_exchange_strong(missing, monotonic_us()))
+            return;
+        coordinator_.enqueue([this, epoch, publication] {
+            if (coordinator_.epoch() == epoch && publication_ == publication &&
+                coordinator_.state() == XMAX_GENERATING && launch_timing_.publish_ms < 0 &&
+                update_publish_timing())
+                coordinator_.emit(launch_timing_);
+        });
+    };
     callbacks.frame = [this, epoch](Frame frame) {
         if (coordinator_.epoch() == epoch)
             render_.receive(std::move(frame), epoch);
@@ -151,6 +168,7 @@ void XmaxRealtimeManager::connect_impl(const Cancel& cancel, uint64_t epoch, boo
     require(!cancel(), XMAX_CANCELLED, "Operation cancelled");
     render_.bind(epoch);
     input_epoch_ = epoch;
+    publication_->started_us = monotonic_us();
     media_.external().start([this, cancel](const Frame& frame) {
         if (!cancel())
             stream_.push(frame);
@@ -194,10 +212,20 @@ void XmaxRealtimeManager::generate_impl(const Context& context, const Cancel& ca
         std::chrono::duration<double, std::milli>(Clock::now() - generation).count();
     launch_timing_.total_ms =
         std::chrono::duration<double, std::milli>(Clock::now() - launch_started_).count();
+    update_publish_timing();
     coordinator_.emit(launch_timing_);
     change_state(XMAX_GENERATING);
     coordinator_.deadline(Clock::now() + heartbeat_interval_);
     context_ = context;
+}
+bool XmaxRealtimeManager::update_publish_timing() {
+    if (!publication_ || publication_->started_us < 0)
+        return false;
+    const auto first = publication_->first_us.load();
+    if (first < 0)
+        return false;
+    launch_timing_.publish_ms = std::max(0.0, double(first - publication_->started_us) / 1000);
+    return true;
 }
 void XmaxRealtimeManager::start(std::string prompt, std::string reference, bool face, bool microphone) {
     const auto epoch = coordinator_.epoch();
@@ -341,6 +369,7 @@ bool XmaxRealtimeManager::cleanup(bool close) {
     if (!service_.active().id.empty())
         change_state(XMAX_DISCONNECTING);
     stream_.stop();
+    publication_.reset();
     bool server_closed = true;
     const auto session_id = service_.active().id;
     try {
