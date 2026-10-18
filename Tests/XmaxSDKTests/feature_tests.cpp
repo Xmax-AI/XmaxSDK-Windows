@@ -197,6 +197,23 @@ static void quality_policy() {
     stream.adaptive(false);
     CHECK(stream.observe_quality(0, 4, stamp + .003, cancel).empty());
 }
+static void long_signaling_keepalive() {
+    auto http = std::make_shared<FakeHttp>();
+    auto rtc = std::make_shared<FakeRtc>();
+    Config config;
+    config.key = "test";
+    XmaxRealtimeManager sdk(
+        std::make_shared<ApiService>(config, http), [rtc] { return rtc; }, std::chrono::milliseconds(100));
+    sdk.prepare({1920, 1024, 30});
+    sdk.start(std::string(10000, 'p'), "", false, false);
+    CHECK(http->count("PUT /session/session-1/heartbeat") >= 2);
+    bool room_heartbeat = false;
+    for (const auto& packet : rtc->messages)
+        if (json::parse(packet).value("event", "") == "heartbeat")
+            room_heartbeat = true;
+    CHECK(room_heartbeat && sdk.state_snapshot().state == XMAX_GENERATING);
+    sdk.disconnect(true);
+}
 static void publication_timing() {
     auto http = std::make_shared<FakeHttp>();
     auto rtc = std::make_shared<FakeRtc>();
@@ -261,7 +278,8 @@ int main() {
              {"CPU conversion and contain", conversion},
              {"adaptive quality policy", quality_policy},
              {"async exception containment", async_exception_boundary},
-             {"actual publication timing and stale callback isolation", publication_timing}}) {
+             {"actual publication timing and stale callback isolation", publication_timing},
+             {"dual keepalive during long signaling", long_signaling_keepalive}}) {
         try {
             test.second();
             std::cout << "PASS " << test.first << '\n';

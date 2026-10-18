@@ -6,7 +6,7 @@ namespace xmax::detail {
 // Serial room signaling: UTF-8 fragmentation and a sliding-window transport budget.
 class RoomMessageSender {
   public:
-    void send(Rtc&, const json&, const Cancel&);
+    void send(Rtc&, const json&, const Cancel&, const std::function<void()>& maintain = {});
     void reset() { sent_.clear(); }
 
   private:

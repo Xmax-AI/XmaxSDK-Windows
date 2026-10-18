@@ -32,18 +32,18 @@ void StreamController::join(const Connection& connection, xmax_video_format form
     std::atomic_store(&media_rtc_, rtc_);
 }
 void StreamController::start(const std::string& prompt, const std::string& reference, bool face,
-                             const Cancel& cancel) {
+                             const Cancel& cancel, const std::function<void()>& maintain) {
     task_ = task_id();
     rtc_->begin_generation();
-    sender_.send(*rtc_, generation_message("start", prompt, reference, face), cancel);
+    sender_.send(*rtc_, generation_message("start", prompt, reference, face), cancel, maintain);
 }
 void StreamController::wait_remote(const Cancel& cancel, const std::function<void()>& keepalive) {
     rtc_->wait_remote(cancel, keepalive);
 }
 void StreamController::update(const std::string& prompt, const std::string& reference, bool face,
-                              const Cancel& cancel) {
+                              const Cancel& cancel, const std::function<void()>& maintain) {
     require(rtc_ && !task_.empty(), XMAX_INVALID_STATE, "No generation is active");
-    sender_.send(*rtc_, generation_message("change_condition", prompt, reference, face), cancel);
+    sender_.send(*rtc_, generation_message("change_condition", prompt, reference, face), cancel, maintain);
 }
 void StreamController::heartbeat(const Cancel& cancel) {
     require(bool(rtc_), XMAX_INVALID_STATE, "No RTC room is connected");

@@ -194,19 +194,20 @@ void XmaxRealtimeManager::connect(bool microphone) {
     });
 }
 void XmaxRealtimeManager::generate_impl(const Context& context, const Cancel& cancel) {
+    const auto maintain = [this, cancel] {
+        if (Clock::now() >= coordinator_.deadline())
+            keepalive(cancel);
+    };
     if (coordinator_.state() == XMAX_GENERATING) {
-        stream_.update(context.prompt, context.reference, context.face, cancel);
+        stream_.update(context.prompt, context.reference, context.face, cancel, maintain);
         context_ = context;
         return;
     }
     require(coordinator_.state() == XMAX_CONNECTED, XMAX_INVALID_STATE, "No realtime connection is active");
     const auto generation = Clock::now();
-    stream_.start(context.prompt, context.reference, context.face, cancel);
+    stream_.start(context.prompt, context.reference, context.face, cancel, maintain);
     coordinator_.deadline(Clock::now() + heartbeat_interval_);
-    stream_.wait_remote(cancel, [this, cancel] {
-        if (Clock::now() >= coordinator_.deadline())
-            keepalive(cancel);
-    });
+    stream_.wait_remote(cancel, maintain);
     require(!cancel(), XMAX_CANCELLED, "Operation cancelled");
     launch_timing_.first_frame_ms =
         std::chrono::duration<double, std::milli>(Clock::now() - generation).count();

@@ -12,9 +12,11 @@ class StreamController {
     ~StreamController();
     void allocate();
     void join(const Connection&, xmax_video_format, bool microphone, RtcCallbacks, const Cancel&);
-    void start(const std::string& prompt, const std::string& reference, bool face, const Cancel&);
+    void start(const std::string& prompt, const std::string& reference, bool face, const Cancel&,
+               const std::function<void()>& maintain = {});
     void wait_remote(const Cancel&, const std::function<void()>& keepalive);
-    void update(const std::string& prompt, const std::string& reference, bool face, const Cancel&);
+    void update(const std::string& prompt, const std::string& reference, bool face, const Cancel&,
+                const std::function<void()>& maintain = {});
     void heartbeat(const Cancel&);
     void stop() noexcept;
     void push(const Frame&);
