@@ -97,9 +97,15 @@ cmake --build --preset windows
 
 安装 Qt 6.8+ macOS 构建后，可以运行相同的 C++ 示例。当前 macOS 构建用于公共逻辑和 UI 验证，没有打包 Agora macOS C++ 后端。
 
+不带参数启动为正常模式：点击 Start Camera 时，空白 API Key 会拦截并打开输入框；填入 Key 后，当前 Mac 构建会提示实时视频不可用并留在首页。
+`--preview` / `--preview-session` 是明确的 UI 预览入口，不使用 API Key、不开摄像头、不连接生成服务；标题、按钮和视频面板均标注预览状态。
+
 ```sh
 cmake --preset xlab -DCMAKE_PREFIX_PATH=/path/to/Qt/6.8.3/macos
 cmake --build --preset xlab
+# 正常启动，验证 API Key 拦截与当前构建的能力提示：
+bash scripts/run-xlab.sh
+# 仅检查布局与交互：
 bash scripts/run-xlab.sh --preview
 # 直接检查会话页面：
 bash scripts/run-xlab.sh --preview-session
@@ -109,8 +115,11 @@ bash scripts/run-xlab.sh --preview-session
 
 ```sh
 bash scripts/verify.sh --example
-bash scripts/run-xlab.sh --preview
+bash scripts/run-xlab.sh
 ```
+
+预设缩略图和生成参考图与当前 Web 示例一致，使用 `https://cdn.22duck.cn/images/source/`；缩略图读取 PNG/WebP，成功加载后缓存到本机。加载中显示进度，失败时显示警告图标与具体提示，点击可重试。
+图片域名不可达时无法显示实际缩略图，不影响预设的生成参考地址。自动化还单独验证无 Key 拦截、PNG/WebP 解码和失败重试；UI 预览通过不代表真实会话验收通过。
 
 预览模式不打开摄像头、不创建付费会话、不伪造生成结果或指标。参考图缩略图仍通过 HTTPS 加载。它可以检查模式、提示词、统计显隐、工具栏、弹层和停止交互。
 

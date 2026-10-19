@@ -43,9 +43,12 @@ Item {
                                 border.color: controller.selected === cell.entry.id ? "#2f46e2" : hit.containsMouse ? "#c7d0f8" : "#f3f4f6"
                                 border.width: cell.upload ? 1 : 2
                                 RoundedImage {
+                                    id: thumbnail
                                     anchors.fill: parent; anchors.margins: 2
                                     source: cell.upload || !list.visible ? "" : cell.entry.thumbnail || ""
                                 }
+                                BusyIndicator { anchors.centerIn: parent; width: 24; height: 24; running: thumbnail.status === RoundedImage.Loading; visible: running }
+                                Icon { visible: !cell.upload && thumbnail.status === RoundedImage.Error; anchors.centerIn: parent; width: 22; height: 22; kind: "warning"; tint: "#6b7380" }
                                 Icon { visible: cell.upload; anchors.centerIn: parent; width: 22; height: 22; kind: "plus"; tint: "#6b7380" }
                                 Rectangle {
                                     anchors.fill: parent; radius: 32
@@ -62,13 +65,13 @@ Item {
                             MouseArea {
                                 id: hit; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
                                 enabled: !controller.busy
-                                onClicked: { if (cell.upload) list.requestUpload(); else controller.selectReference(cell.entry.id) }
+                                onClicked: { if (cell.upload) list.requestUpload(); else { if (thumbnail.status === RoundedImage.Error) thumbnail.retry(); controller.selectReference(cell.entry.id) } }
                                 Accessible.role: Accessible.Button
                                 Accessible.name: cell.upload ? "Upload reference image" : cell.entry.name || ""
                             }
                             ToolTip.visible: hit.containsMouse
                             ToolTip.delay: 600
-                            ToolTip.text: cell.upload ? "Upload your own reference image" : cell.entry.error || cell.entry.name || ""
+                            ToolTip.text: cell.upload ? "Upload your own reference image" : cell.entry.error || thumbnail.errorString || cell.entry.name || ""
                         }
                     }
                 }

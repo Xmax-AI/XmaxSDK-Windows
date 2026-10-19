@@ -16,10 +16,13 @@ Rectangle {
     Rectangle { id: mask; anchors.fill: parent; radius: 24; color: "white"; visible: false; layer.enabled: true }
     VideoOutput { id: video; anchors.fill: parent; fillMode: VideoOutput.PreserveAspectFit }
     Text {
-        anchors.centerIn: parent
-        visible: panel.result && !controller.remoteReady
-        text: controller.preview ? "Waiting for connection…" : "Generating…"
-        color: "#8cffffff"; font.pixelSize: 14
+        anchors.verticalCenter: parent.verticalCenter
+        x: controller.statisticsVisible ? 280 : 24
+        width: parent.width - x - 24
+        horizontalAlignment: Text.AlignHCenter; wrapMode: Text.Wrap
+        visible: controller.preview || (panel.result && !controller.remoteReady)
+        text: controller.preview ? (panel.result ? "UI Preview\nGeneration is disabled" : "UI Preview\nCamera is disabled") : "Generating…"
+        color: "#b3ffffff"; font.pixelSize: 14
     }
     Column {
         visible: controller.statisticsVisible

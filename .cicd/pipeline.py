@@ -133,6 +133,7 @@ def build_windows(build: Path, output: Path, qt_prefix: Path | None, agora_root:
             # CTest invokes the build-tree example; run the extracted distribution as well.
             environment = dict(os.environ, QT_QPA_PLATFORM='offscreen', QT_QUICK_BACKEND='software')
             run([demo/'XLab.exe', '--smoke-test', '--screenshot-dir', build/'screenshots'], env=environment)
+            run([demo/'XLab.exe', '--smoke-test-key-gate'], env=environment)
             shutil.copy2(ROOT/'Examples/XLab/assets/DMSans-OFL.txt', demo/'DMSans-OFL.txt')
             shutil.copy2(ROOT/'THIRD_PARTY.md', demo/'THIRD_PARTY.md')
             qt_notices = demo/'licenses/qt'
@@ -151,6 +152,7 @@ def build_windows(build: Path, output: Path, qt_prefix: Path | None, agora_root:
             archive(demo, demo_zip)
             installed_demo = extract(demo_zip, workspace/'demo-unpacked')
             run([installed_demo/'XLab.exe', '--smoke-test'], env=environment)
+            run([installed_demo/'XLab.exe', '--smoke-test-key-gate'], env=environment)
             validation.update(ui_smoke=True, demo_archive=demo_zip.name, demo_sha256=sha256(demo_zip))
         test_environment = dict(os.environ)
         if qt_prefix:

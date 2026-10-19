@@ -132,6 +132,7 @@ void XLabController::start() {
     if (key_.isEmpty()) {
         error = "API Key is required — click the key button in the top-right corner to enter it.";
         emit changed();
+        emit apiKeyRequired();
         return;
     }
     auto handles = std::make_shared<SdkHandles>();
@@ -143,8 +144,14 @@ void XLabController::start() {
     int32_t available = 0;
     if (error.isEmpty())
         error = sdkError(xmax_client_has_rtc(handles->client, &available));
-    if (error.isEmpty() && !available)
-        error = "This build has no RTC backend. Enable the Agora adapter to start a live session.";
+    if (error.isEmpty() && !available) {
+#ifdef Q_OS_MACOS
+        error = "Live video is unavailable in this macOS development build. Use the Windows demo for a live "
+                "session.";
+#else
+        error = "Live video is unavailable in this build. Use the Windows demo with RTC support.";
+#endif
+    }
     if (!error.isEmpty()) {
         emit changed();
         return;

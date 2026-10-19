@@ -88,6 +88,7 @@ class XLabController final : public QObject {
     QString error, prompt, selected;
     QVariantMap metrics;
   signals:
+    void apiKeyRequired();
     void changed();
     void sinksChanged();
     void referencesChanged();

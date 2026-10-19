@@ -9,7 +9,7 @@ ApplicationWindow {
     id: window
     objectName: "xlabWindow"
     width: 1360; height: 850; minimumWidth: 1180; minimumHeight: 760
-    visible: true; title: "X-Lab — XmaxSDK"
+    visible: true; title: controller.preview ? "X-Lab — UI Preview (no live session)" : "X-Lab — XmaxSDK"
     color: "white"
     readonly property var controller: xlab
     readonly property var modes: ["charx", "clothx", "vibex", "free"]
@@ -31,10 +31,16 @@ ApplicationWindow {
                 x: 28; width: parent.width - 56; height: 60
                 y: controller.active ? Math.max(24, (page.height - workspace.height - 104) / 2) : 24
                 Image {
+                    id: brand
                     anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter
                     height: Math.min(52,Math.max(34,window.width * 0.008 + 24)); width: height * 552 / 172
                     source: "../assets/xmax-wordmark.png"; fillMode: Image.PreserveAspectFit
                     Accessible.name: "Xmax"
+                }
+                Pill {
+                    visible: controller.preview
+                    anchors.left: brand.right; anchors.leftMargin: 16; anchors.verticalCenter: parent.verticalCenter
+                    passive: true; accent: true; text: "UI Preview · camera off"
                 }
                 Row {
                     visible: !controller.active
@@ -104,8 +110,8 @@ ApplicationWindow {
                         }
                     }
                     Pill { objectName: "interpolationButton"; glyph: "bolt"; text: "2x"; ToolTip.text: "Frame interpolation"; onClicked: controller.interpolation() }
-                    Pill { text: controller.elapsed; passive: true; enabled: false; opacity: 1; implicitWidth: 72 }
-                    Pill { objectName: "stopButton"; glyph: "stop"; text: "Stop Session"; destructive: true; onClicked: controller.stop() }
+                    Pill { text: controller.preview ? "Preview" : controller.elapsed; passive: true; enabled: false; opacity: 1; implicitWidth: 72 }
+                    Pill { objectName: "stopButton"; glyph: "stop"; text: controller.preview ? "Exit Preview" : "Stop Session"; destructive: true; onClicked: controller.stop() }
                 }
             }
 
@@ -133,7 +139,7 @@ ApplicationWindow {
                         anchors.centerIn: parent; spacing: 20
                         Pill {
                             objectName: "startButton"; anchors.horizontalCenter: parent.horizontalCenter
-                            primary: true; text: controller.closing ? "Stopping…" : controller.busy ? "Starting…" : "Start Camera"; glyph: "camera"
+                            primary: true; text: controller.closing ? "Stopping…" : controller.busy ? "Starting…" : controller.preview ? "Preview UI" : "Start Camera"; glyph: "camera"
                             enabled: !controller.busy; onClicked: controller.start()
                         }
                         Rectangle {
@@ -226,8 +232,9 @@ ApplicationWindow {
                             Pill { visible: window.freeReferences.length === 0; glyph: "plus"; width: 44; height: 44; ToolTip.text: "Upload reference image"; onClicked: window.openImporter("free") }
                             Item {
                                 visible: window.freeReferences.length > 0; width: 44; height: 44
-                                RoundedImage { anchors.fill: parent; source: window.freeReferences.length ? window.freeReferences[0].thumbnail : "" }
-                                MouseArea { anchors.fill: parent; onClicked: { if (window.freeReferences.length) controller.selectReference(window.freeReferences[0].id) } }
+                                RoundedImage { id: freeThumbnail; anchors.fill: parent; source: window.freeReferences.length ? window.freeReferences[0].thumbnail : "" }
+                                Icon { visible: freeThumbnail.status === RoundedImage.Error; anchors.centerIn: parent; width: 18; height: 18; kind: "warning"; tint: "#6b7380" }
+                                MouseArea { anchors.fill: parent; onClicked: { if (freeThumbnail.status === RoundedImage.Error) freeThumbnail.retry(); if (window.freeReferences.length) controller.selectReference(window.freeReferences[0].id) } }
                                 Rectangle {
                                     anchors.fill: parent; radius: 22; visible: window.freeReferences.length > 0 && window.freeReferences[0].state !== "ready"; color: "#99000000"
                                     Text { anchors.centerIn: parent; text: window.freeReferences.length && window.freeReferences[0].state === "error" ? "Retry" : window.freeReferences.length ? Math.round((window.freeReferences[0].progress || 0) * 100) + "%" : ""; color: "white"; font.pixelSize: 10 }
@@ -267,6 +274,10 @@ ApplicationWindow {
                 }
             }
         }
+    }
+    Connections {
+        target: controller
+        function onApiKeyRequired() { keyPopup.open(); keyInput.forceActiveFocus() }
     }
     Rectangle {
         visible: controller.error.length > 0

@@ -55,7 +55,7 @@ python .cicd/pipeline.py build-windows --qt-prefix C:/Qt/6.8.3/msvc2022_64
 - `validation.json`：版本、提交、Windows 构建与消费端验证记录。
 - 每个 ZIP 内另有 manifest.json，逐文件记录 SHA-256 与源码提交。
 
-构建流程从全新 staging 安装，再将 SDK ZIP 解压到新目录，对解压后的 DLL 运行版本、能力和导出检查，构建 C/C++ 与 .NET P/Invoke 消费端。Demo 部署后及再次解压后都执行 UI smoke test。所有步骤成功才写 validation.json。
+构建流程从全新 staging 安装，再将 SDK ZIP 解压到新目录，对解压后的 DLL 运行版本、能力和导出检查，构建 C/C++ 与 .NET P/Invoke 消费端。Demo 部署后及再次解压后都执行 UI smoke test 和真实模式的空 Key 拦截测试，并检查 WebP 解码插件存在。Qt 行为测试使用本地 PNG/WebP 验证解码、圆形绘制、缓存和失败重试，不依赖在线图片服务。测试的用户设置隔离在临时目录，不读取或改写真实 API Key。所有步骤成功才写 validation.json。
 
 已验证候选包通过 Actions Artifact 下载，保留 14 天；这不是 GitHub Release。
 

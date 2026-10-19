@@ -4,11 +4,15 @@
 #include <QFontDatabase>
 #include <QGuiApplication>
 #include <QImageReader>
+#include <QNetworkProxyFactory>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQuickItem>
 #include <QQuickStyle>
 #include <QQuickWindow>
+#include <QSettings>
+#include <QStandardPaths>
+#include <QTemporaryDir>
 #include <QTimer>
 #ifdef XLAB_TEST_SUPPORT
 #include <QTest>
@@ -17,11 +21,22 @@ int main(int argc, char** argv) {
     QGuiApplication app(argc, argv);
     QCoreApplication::setOrganizationName("XMAX.AI");
     QCoreApplication::setApplicationName("XLab");
+    QNetworkProxyFactory::setUseSystemConfiguration(true);
     QQuickStyle::setStyle("Basic");
     QImageReader::setAllocationLimit(128);
     const auto args = app.arguments();
-    const bool smoke = args.contains("--smoke-test");
-    const bool preview = smoke || args.contains("--preview") || args.contains("--preview-session");
+    const bool keyGate = args.contains("--smoke-test-key-gate");
+    const bool smoke = args.contains("--smoke-test") || keyGate;
+    const bool preview =
+        !keyGate && (smoke || args.contains("--preview") || args.contains("--preview-session"));
+    QTemporaryDir testSettings;
+    if (smoke) {
+        if (!testSettings.isValid())
+            return 5;
+        QStandardPaths::setTestModeEnabled(true);
+        QSettings::setDefaultFormat(QSettings::IniFormat);
+        QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, testSettings.path());
+    }
     auto value = [&args](const QString& flag) {
         auto i = args.indexOf(flag);
         return i >= 0 && i + 1 < args.size() ? args[i + 1] : QString();
@@ -87,6 +102,26 @@ int main(int argc, char** argv) {
             const auto dir = value("--screenshot-dir");
             if (!dir.isEmpty())
                 QDir().mkpath(dir);
+            verify(QImageReader::supportedImageFormats().contains("webp"),
+                   "WebP thumbnail decoder is missing from this deployment");
+            if (keyGate) {
+                click("startButton");
+                verify(!controller.active && !controller.busy, "Empty key must not start a live session");
+                verify(controller.error.contains("API Key"), "Missing key must report an error");
+                verify(window->findChild<QQuickItem*>("keyInput")->hasActiveFocus(),
+                       "Missing key must open and focus the API Key editor");
+                controller.setApiKey(" \t ");
+                QTest::keyClick(window, Qt::Key_Escape);
+                click("startButton");
+                verify(!controller.active && !controller.busy && controller.apiKey().isEmpty(),
+                       "Whitespace key must not start a live session");
+                if (!dir.isEmpty())
+                    verify(window->grabWindow().save(dir + "/key-required.png"),
+                           "Cannot capture API Key gate");
+                qInfo() << (ok ? "X-Lab API Key gate test passed" : "X-Lab API Key gate test failed");
+                app.exit(ok ? 0 : 3);
+                return;
+            }
             click("modelButton");
             QTest::keyClick(window, Qt::Key_Escape);
             window->contentItem()->forceActiveFocus();

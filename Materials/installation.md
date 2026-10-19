@@ -79,6 +79,9 @@ target_link_libraries(MyApp PRIVATE Xmax::SDK)
 ```sh
 cmake --preset xlab -DCMAKE_PREFIX_PATH=/path/to/Qt/6.8.3/macos
 cmake --build --preset xlab
+# 正常模式：空 Key 会打开输入框；当前 Mac 构建没有 RTC 后端，会明确提示。
+bash scripts/run-xlab.sh
+# 仅预览 UI，不校验 Key、不开摄像头、不连接生成服务：
 bash scripts/run-xlab.sh --preview
 # 直接预览会话页面
 bash scripts/run-xlab.sh --preview-session
@@ -87,6 +90,9 @@ bash scripts/run-xlab.sh --preview-session
 当前工作区复用已安装的本地工具和 Qt，也可运行 `bash scripts/verify.sh --example`。这些依赖缓存位于忽略的 `.build`，源码分发不包含缓存。
 
 Mac 构建提供 AVFoundation 摄像头实现，可开发公共 C++ 逻辑和 Qt UI；当前没有集成 macOS Agora C++ 后端。默认测试使用采集和传输替身，不打开设备或使用真实凭证。
+
+`--preview` / `--preview-session` 的标题、启动按钮与视频面板均标注 UI Preview。预览不会输出摄像头画面或生成结果。
+在线预设缩略图支持本地缓存，加载失败显示警告，可悬停查看原因并点击重试；图片域名无法访问时不能显示实际缩略图。
 
 当前还通过 Windows x64 GNU 目标交叉构建生成了关闭 Agora 的 DLL，并检查了 C 导出；Agora 4.6.2 适配器已用真实 Windows 头编译为对象文件。正式发布仍应使用 MSVC 构建并在 Windows 验证原生设备、WinHTTP、Agora 连接和生成，交叉编译不代替这些验收。
 
