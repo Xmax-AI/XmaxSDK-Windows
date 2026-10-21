@@ -16,7 +16,7 @@ import sys
 import zipfile
 
 ROOT = Path(__file__).resolve().parent.parent
-REPOSITORY = 'XingMai/XmaxSDK-Windows'
+REPOSITORY = 'Xmax-AI/XmaxSDK-Windows'
 
 def sha256(path: Path) -> str:
     digest = hashlib.sha256()

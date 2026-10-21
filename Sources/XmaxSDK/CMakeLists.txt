@@ -18,6 +18,8 @@ function(xmax_module name)
 endfunction()
 
 xmax_module(xmax_foundation
+  Foundation/Logging/XmaxLogger.cpp
+  Foundation/Logging/RtcStatsLogger.cpp
   Foundation/Media/VideoFrame.cpp
   Foundation/Media/FrameConverter.cpp
   Foundation/Render/WindowRenderer.cpp
@@ -55,7 +57,7 @@ else()
   target_sources(xmax_foundation PRIVATE Foundation/RTC/UnavailableRtcPlatform.cpp)
 endif()
 
-xmax_module(xmax_service Service/Network/ApiService.cpp Service/Realtime/RealtimeSessionService.cpp Service/Storage/StorageService.cpp)
+xmax_module(xmax_service Service/Network/Config.cpp Service/Network/ApiService.cpp Service/Realtime/RealtimeSessionService.cpp Service/Storage/StorageService.cpp)
 target_link_libraries(xmax_service PUBLIC xmax_foundation)
 xmax_module(xmax_stream Stream/StreamController.cpp Stream/Encoding/EncodingBitratePolicy.cpp
   Stream/Quality/QualityController.cpp
@@ -68,7 +70,16 @@ target_link_libraries(xmax_render PUBLIC xmax_foundation)
 xmax_module(xmax_core Core/Realtime/RealtimeCoordinator.cpp Core/Realtime/XmaxRealtimeManager.cpp)
 target_link_libraries(xmax_core PUBLIC xmax_service xmax_stream xmax_media xmax_render)
 
-add_library(XmaxSDK SHARED CAPI/xmax_c_api.cpp)
+# Header files are part of each module so IDE search and navigation include public models.
+foreach(layer IN ITEMS Foundation Service Stream Media Render Core)
+  string(TOLOWER "${layer}" module)
+  file(GLOB_RECURSE module_headers CONFIGURE_DEPENDS "${XMAX_SRC}/${layer}/*.hpp")
+  target_sources(xmax_${module} PRIVATE ${module_headers})
+  source_group(TREE "${XMAX_SRC}" FILES ${module_headers})
+endforeach()
+
+file(GLOB_RECURSE public_headers CONFIGURE_DEPENDS "${XMAX_REPO_ROOT}/include/xmax/*.h" "${XMAX_REPO_ROOT}/include/xmax/*.hpp")
+add_library(XmaxSDK SHARED CAPI/xmax_c_api.cpp ${public_headers})
 add_library(Xmax::SDK ALIAS XmaxSDK)
 target_include_directories(XmaxSDK PUBLIC $<BUILD_INTERFACE:${XMAX_REPO_ROOT}/include> $<INSTALL_INTERFACE:include> PRIVATE "${XMAX_SRC}" "${XMAX_REPO_ROOT}/third_party")
 target_link_libraries(XmaxSDK PRIVATE xmax_core)
@@ -124,6 +135,10 @@ configure_package_config_file("${XMAX_REPO_ROOT}/cmake/XmaxSDKConfig.cmake.in" "
 write_basic_package_version_file("${CMAKE_CURRENT_BINARY_DIR}/XmaxSDKConfigVersion.cmake" VERSION ${PROJECT_VERSION} COMPATIBILITY SameMajorVersion)
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/XmaxSDKConfig.cmake" "${CMAKE_CURRENT_BINARY_DIR}/XmaxSDKConfigVersion.cmake" DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/XmaxSDK)
 if(BUILD_TESTING)
+  # Opt-in measurements; never open cameras or assert host-dependent timings in CTest.
+  add_executable(xmax_media_benchmark ${XMAX_REPO_ROOT}/Tests/XmaxSDKTests/media_benchmark.cpp)
+  target_include_directories(xmax_media_benchmark PRIVATE "${XMAX_SRC}")
+  target_link_libraries(xmax_media_benchmark PRIVATE xmax_media)
   if(WIN32)
     add_executable(xmax_windows_platform_tests ${XMAX_REPO_ROOT}/Tests/XmaxSDKTests/windows_platform_tests.cpp)
     target_compile_definitions(xmax_windows_platform_tests PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
@@ -140,13 +155,17 @@ if(BUILD_TESTING)
   target_include_directories(xmax_layer_tests PRIVATE "${XMAX_SRC}" "${XMAX_REPO_ROOT}/third_party")
   target_link_libraries(xmax_layer_tests PRIVATE xmax_service xmax_stream xmax_media xmax_render)
   add_test(NAME layers COMMAND xmax_layer_tests)
-  foreach(suite IN ITEMS feature storage)
+  foreach(suite IN ITEMS feature storage logging frame_conversion alignment)
     add_executable(xmax_${suite}_tests ${XMAX_REPO_ROOT}/Tests/XmaxSDKTests/${suite}_tests.cpp)
     target_include_directories(xmax_${suite}_tests PRIVATE "${XMAX_SRC}" "${XMAX_REPO_ROOT}/third_party")
     target_link_libraries(xmax_${suite}_tests PRIVATE xmax_core)
+    if(MSVC)
+      target_compile_options(xmax_${suite}_tests PRIVATE /utf-8)
+    endif()
     add_test(NAME ${suite} COMMAND xmax_${suite}_tests)
     set_tests_properties(${suite} PROPERTIES TIMEOUT 30)
   endforeach()
+  target_link_libraries(xmax_alignment_tests PRIVATE XmaxSDK)
   add_executable(xmax_c_consumer ${XMAX_REPO_ROOT}/Tests/XmaxSDKTests/c_consumer.c)
   target_link_libraries(xmax_c_consumer PRIVATE XmaxSDK)
   add_test(NAME c_abi COMMAND xmax_c_consumer)

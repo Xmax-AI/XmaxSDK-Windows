@@ -1,0 +1,11 @@
+BasedOnStyle: InheritParentConfig
+AlignAfterOpenBracket: BlockIndent
+AllowAllParametersOfDeclarationOnNextLine: false
+BinPackParameters: OnePerLine
+BreakFunctionDefinitionParameters: true
+AllowShortEnumsOnASingleLine: false
+EmptyLineAfterAccessModifier: Always
+KeepEmptyLines:
+  AtStartOfBlock: true
+MaxEmptyLinesToKeep: 1
+SortIncludes: Never

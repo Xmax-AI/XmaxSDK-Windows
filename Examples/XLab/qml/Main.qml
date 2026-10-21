@@ -45,9 +45,10 @@ ApplicationWindow {
                 Row {
                     visible: !controller.active
                     anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter; spacing: 12
+                    CameraPicker { visible: !controller.preview; controller: window.controller }
                     Pill {
                         id: modelButton; objectName: "modelButton"
-                        text: controller.model === "x2.1.1-preview-cn" ? "X2.1.1-preview-cn" : "X2.1.1-preview-us"
+                        text: controller.model.replace("x2", "X2")
                         glyph: "chevron"; trailingGlyph: true; enabled: !controller.busy
                         onClicked: modelPopup.open()
                         Popup {
@@ -56,7 +57,7 @@ ApplicationWindow {
                             background: Rectangle { color: "white"; radius: 12; border.color: "#e5e7eb" }
                             contentItem: Column {
                                 Repeater {
-                                    model: ["x2.1.1-preview-cn", "x2.1.1-preview-us"]
+                                    model: ["x2.1"]
                                     delegate: ItemDelegate {
                                         required property string modelData
                                         width: 224; height: 36; text: modelData.replace("x2", "X2")
@@ -181,7 +182,7 @@ ApplicationWindow {
                 spacing: 0
                 Row {
                     width: parent.width; spacing: 24
-                    VideoPanel { id: localVideo; objectName: "localPanel"; width: (parent.width - 24) / 2; height: width * 1024 / 1920; controller: window.controller; title: "Local"; Component.onCompleted: controller.localSink = sink }
+                    VideoPanel { id: localVideo; objectName: "localPanel"; width: (parent.width - 24) / 2; height: width * 1024 / 1920; controller: window.controller; title: controller.cameraName ? "Local · " + controller.cameraName : "Local"; Component.onCompleted: controller.localSink = sink }
                     VideoPanel { id: remoteVideo; width: (parent.width - 24) / 2; height: width * 1024 / 1920; controller: window.controller; title: "Result"; result: true; Component.onCompleted: controller.remoteSink = sink }
                 }
                 Item { width: 1; height: 34 }

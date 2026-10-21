@@ -22,8 +22,9 @@ C++17 核心、稳定 C ABI 和 Qt 6 / QML X-Lab 示例。当前开发版本为 
 - 可选 Agora Windows 4.6.2 原生适配：自定义视频输入、麦克风、目标 bot 帧过滤、音量、质量统计。
 - Windows 使用 WinHTTP；macOS 开发构建使用系统 libcurl。默认不连接任何服务。
 - CMake 安装与 `find_package(XmaxSDK)`；独立 C/C++ 消费端测试。
+- XmaxLogger：默认关闭的业务/性能日志开关、分类与四种级别、中英文诊断、Windows 调试输出和 C/C++ 日志轮询；API、RTC 与存储诊断保留底层错误并处理凭证脱敏。
 
-当前采用 CPU 帧路径。Windows 插帧后端、D3D11 纹理零拷贝、外部音频输入和轨迹交互尚未实现；启用插帧返回 `XMAX_UNSUPPORTED`，能力标志不会宣称支持。画质历史按模型和上下行分别持久化到用户缓存，保留一小时；缓存不可写时回退到默认策略。静态图片和文件视频解码未提供独立输入接口，可通过宿主解码后提交外部帧。
+当前采用 CPU 帧路径。D3D11 纹理零拷贝和外部音频输入尚未实现；本项目不提供远端插帧后端；启用插帧返回 `XMAX_UNSUPPORTED`，能力标志不会宣称支持。画质历史按模型和上下行分别持久化到用户缓存，保留一小时；缓存不可写时回退到默认策略。输入以摄像头和外部视频帧为主，不内置图片、视频文件解码。轨迹交互由 SDK 处理坐标映射、任务隔离和信令发送，界面可选择默认 HWND 效果或自行绘制。
 
 ## 工程结构
 
@@ -35,11 +36,11 @@ XmaxSDK/
   include/xmax/     C ABI 与 C++ RAII 头文件
   Sources/XmaxSDK/
     CAPI/            C 句柄、参数转换和异常边界
-    Core/            Client、Realtime / Storage Manager、生命周期协调器
+    Core/            Client、连接/生成管理、时序与错误、Storage Manager、生命周期协调器
     Service/         API、Session、媒体规格、STS 与存储协议
     Stream/          RTC 房间、生成信令、分片限速、编码与自适应画质
     Media/           摄像头与外部视频控制、时间戳、帧提交和排空
-    Render/          本地/远端预览、绑定隔离、最新帧交付
+    Render/          本地/远端预览、绑定隔离、最新帧交付、轨迹缓存与效果
     Foundation/      帧转换、原生采集、窗口绘制、HTTP、加密、RTC 适配
   Tests/XmaxSDKTests/ 协议、分层、生命周期及独立消费端测试
   Examples/XLab/      QML 界面、字体、Logo 和 60 个预设
@@ -130,9 +131,9 @@ bash scripts/run-xlab.sh
 ```cpp
 #include <xmax/xmax.hpp>
 
-xmax::client client(apiKey);
-auto realtime = client.create_realtime();
-realtime.prepare_camera(); // SDK 启动本地摄像头；默认 1920x1024@30，不创建云端会话
+xmax::client client(xmax::XmaxConfiguration{apiKey, xmax::XmaxEnvironment::china});
+auto realtime = client.create_realtime(xmax::RealtimeConfiguration{xmax::RealtimeModel::x2_1});
+realtime.prepare_camera(); // SDK 启动本地摄像头；x2.1 默认 1080x1920@30，不创建云端会话
 // start 会阻塞到首个目标结果帧或超时，应从后台线程调用。
 realtime.start("视频中角色替换成参考图中角色", referenceURL);
 // 也可以先 realtime.connect()，再 realtime.generate(prompt, referenceURL)。
@@ -140,7 +141,7 @@ realtime.start("视频中角色替换成参考图中角色", referenceURL);
 
 客户端销毁后，已创建的 Realtime / Storage 仍持有自己的配置。`disconnect()` 结束服务端和 RTC 会话，保留本地媒体、预览与生成条件；`close()` 同时释放本地媒体并清除条件。二者均为阻塞操作，可从另一线程取消进行中的启动。HTTP 取消受 WinHTTP 网络阶段超时约束。
 
-需要自有采集时，调用 `prepare({1920,1024,30})`，由宿主持续提交外部帧。模型输入规格为 `1920x1024` 或 `1024x1920`、`1...60 fps`。帧宽高必须等于协商规格，时间戳为严格递增的单调微秒时间；push 返回后可复用像素。替换外部输入前，宿主应停止旧源并等待提交结束。
+需要自有采集时，调用 `prepare({1920,1080,30})`，由宿主持续提交外部帧。摄像头则直接交付设备实际尺寸的帧，由 RTC 按编码目标处理比例和分辨率，SDK 不再逐帧缩放或补黑边。摄像头编码预设支持 `1920x1080`、`1080x1920`、`1408x1408`、`1152x1536`、`1536x1152`，帧率为 `1...60 fps`；旧的两组尺寸仍可用于外部输入。外部输入不受摄像头预设限制，须满足偶数尺寸、2100000 总像素和 1 至 60 fps 约束；提交帧宽高必须等于绑定规格，时间戳为严格递增的单调微秒时间；push 返回后可复用像素。替换外部输入前，宿主应停止旧源并等待提交结束。
 
 `poll_event()`、`acquire_frame()` 与 `acquire_local_frame()` 非阻塞。帧由独立句柄持有，读完调用 `xmax_frame_release()`；C++ RAII 自动释放。旧帧被最新帧替换，避免积压。状态快照与配置查询经过生命周期队列，可能等待其他操作完成。销毁句柄前须停止并等待使用该句柄的宿主线程。
 
@@ -154,7 +155,7 @@ X-Lab 的 Stop Session 先返回启动页，再在后台关闭 SDK。API Key 与
 
 ## CI/CD 与候选包
 
-远端仓库为 [XingMai/XmaxSDK-Windows](https://github.com/XingMai/XmaxSDK-Windows)。
+远端仓库为 [Xmax-AI/XmaxSDK-Windows](https://github.com/Xmax-AI/XmaxSDK-Windows)。
 [.cicd 流程说明](.cicd/README.md) 包含版本准备、原子快进集成、Windows MSVC 打包、解压消费端验证和发布演练。
 
 日常 CI 覆盖 macOS 核心/ASan/UBSan、Windows 核心、Agora + Qt、C ABI 导出、安装包 C/C++ 消费端和 .NET P/Invoke。

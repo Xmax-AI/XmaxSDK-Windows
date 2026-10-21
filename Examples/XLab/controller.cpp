@@ -32,6 +32,9 @@ QString ms(double n) {
 XLabController::XLabController(bool uiPreview, bool sessionPreview, QObject* parent)
     : QObject(parent), preview(uiPreview) {
     key_ = preview ? QString() : QSettings().value("xmax.xlab.apiKey").toString();
+    camera_id_ = preview ? QString() : QSettings().value("xmax.xlab.cameraId").toString();
+    if (!preview)
+        refreshCameras();
     QFile f(":/qt/qml/XLab/assets/presets.json");
     if (f.open(QFile::ReadOnly))
         presets_ = QJsonDocument::fromJson(f.readAll()).array().toVariantList();
@@ -65,11 +68,67 @@ void XLabController::setApiKey(const QString& key) {
     emit changed();
 }
 void XLabController::setModel(const QString& model) {
-    if (active || busy || (model != "x2.1.1-preview-cn" && model != "x2.1.1-preview-us"))
+    if (active || busy || model != "x2.1")
         return;
     model_ = model;
     emit changed();
 }
+QString XLabController::cameraName() const {
+    for (const auto& entry : cameras_) {
+        const auto camera = entry.toMap();
+        if (camera["id"].toString() == camera_id_)
+            return camera["name"].toString();
+    }
+    return {};
+}
+
+void XLabController::setCameraId(const QString& id) {
+    if (active || busy || preview)
+        return;
+    bool found = id.isEmpty();
+    for (const auto& entry : cameras_)
+        found |= entry.toMap()["id"].toString() == id;
+    if (!found || camera_id_ == id)
+        return;
+    camera_id_ = id;
+    QSettings().setValue("xmax.xlab.cameraId", camera_id_);
+    emit camerasChanged();
+}
+
+void XLabController::refreshCameras() {
+    if (active || busy || preview)
+        return;
+    error.clear();
+    SdkHandles handles;
+    const xmax_client_config config{sizeof(config), XMAX_ABI_VERSION, "", nullptr, 15000};
+    auto message = sdkError(xmax_client_create(&config, &handles.client));
+    xmax_camera_list list = nullptr;
+    if (message.isEmpty())
+        message = sdkError(xmax_client_list_cameras(handles.client, &list));
+    const std::unique_ptr<xmax_camera_list_impl, decltype(&xmax_camera_list_release)> owned(
+        list, xmax_camera_list_release);
+    QVariantList cameras;
+    for (size_t i = 0; message.isEmpty() && i < xmax_camera_list_count(list); ++i) {
+        xmax_camera_info info{};
+        info.struct_size = sizeof(info);
+        message = sdkError(xmax_camera_list_get(list, i, &info));
+        if (message.isEmpty())
+            cameras.push_back(QVariantMap{{"id", QString::fromUtf8(info.id)},
+                                         {"name", QString::fromUtf8(info.name)}});
+    }
+    if (!message.isEmpty()) {
+        cameras_.clear();
+        error = message;
+    } else {
+        cameras_ = std::move(cameras);
+        // A remembered but unavailable device must never silently become another camera.
+        if (camera_id_.isEmpty() && cameras_.size() == 1)
+            camera_id_ = cameras_.first().toMap()["id"].toString();
+    }
+    emit camerasChanged();
+    emit changed();
+}
+
 void XLabController::setMode(const QString& mode) {
     if (mode_ == mode)
         return;
@@ -137,6 +196,12 @@ void XLabController::start() {
     }
     auto handles = std::make_shared<SdkHandles>();
     const auto key = key_.toUtf8(), model = model_.toUtf8();
+    // Match the macOS XLab's opt-in business and performance diagnostics.
+    error = sdkError(xmax_logger_configure(XMAX_LOG_ALL, XMAX_LOG_CHINESE));
+    if (!error.isEmpty()) {
+        emit changed();
+        return;
+    }
     xmax_client_config config{sizeof(config), XMAX_ABI_VERSION, key.constData(), model.constData(), 15000};
     error = sdkError(xmax_client_create(&config, &handles->client));
     if (error.isEmpty())
@@ -156,6 +221,16 @@ void XLabController::start() {
         emit changed();
         return;
     }
+    refreshCameras();
+    if (!error.isEmpty())
+        return;
+    if (cameraName().isEmpty()) {
+        error = cameras_.isEmpty()
+                    ? "No camera is available. Connect a camera and click Refresh."
+                    : "Select a camera before starting. Choose your physical camera for live video.";
+        emit changed();
+        return;
+    }
     handles_ = handles;
     ++lifecycle_;
     ++intent_;
@@ -167,10 +242,11 @@ void XLabController::start() {
     pending_.clear();
     const auto epoch = lifecycle_;
     const bool mic = microphone;
+    const auto camera = camera_id_.toUtf8();
     emit changed();
     async(
-        [handles, mic] {
-            const xmax_camera_config config{sizeof(config), nullptr, {1920, 1024, 30}, mic};
+        [handles, mic, camera] {
+            const xmax_camera_config config{sizeof(config), camera.constData(), {1920, 1024, 30}, mic};
             return sdkError(xmax_realtime_prepare_camera(handles->realtime, &config));
         },
         [this, epoch](QString message) {

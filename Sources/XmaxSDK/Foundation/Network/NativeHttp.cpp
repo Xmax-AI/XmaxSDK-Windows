@@ -1,3 +1,13 @@
+//
+//  NativeHttp.cpp
+//  XmaxSDK
+//
+//  Author: 翁跃庭 (Yueting Weng)
+//  GitHub: https://github.com/Xmax-AI/XmaxSDK-Windows
+//
+//  Copyright (c) 2026 XMAX.AI PTE. LTD.
+//
+
 #include "Foundation/Network/HttpTransport.hpp"
 #include <algorithm>
 #include <exception>
@@ -9,101 +19,232 @@
 #endif
 namespace xmax::detail {
 #ifdef _WIN32
-struct InternetHandle {
-    HINTERNET handle = nullptr;
-    explicit InternetHandle(HINTERNET h) : handle(h) {
-        require(h != nullptr, XMAX_NETWORK_ERROR, "WinHTTP initialization failed");
+
+/**
+ * 在 WinHTTP 操作失败后立即保存系统错误码与对应诊断。
+ *
+ * @param[in] success WinHTTP 操作是否成功；失败时立即读取 GetLastError。
+ * @param[in] operation 当前 WinHTTP 操作的诊断名称。
+ */
+static void http_checked(
+    BOOL success,
+    const char* operation
+) {
+    if (success)
+        return;
+
+    const DWORD code = GetLastError(); // Capture before formatting or logging can change it.
+    wchar_t buffer[1024]{};
+    const auto length = FormatMessageW(
+        FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, nullptr, code, 0, buffer,
+        DWORD(std::size(buffer)), nullptr
+    );
+    std::string detail;
+
+    if (length) {
+        const auto count = WideCharToMultiByte(CP_UTF8, 0, buffer, int(length), nullptr, 0, nullptr, nullptr);
+        detail.resize(size_t(count));
+        WideCharToMultiByte(CP_UTF8, 0, buffer, int(length), detail.data(), count, nullptr, nullptr);
+
+        while (!detail.empty() && (detail.back() == '\r' || detail.back() == '\n'))
+            detail.pop_back();
     }
+
+    throw Error(
+        XMAX_NETWORK_ERROR, std::string(operation) + " failed (WinHTTP " + std::to_string(code) + ")" +
+                                (detail.empty() ? "" : ": " + detail)
+    );
+}
+
+/**
+ * 以独占所有权管理 WinHTTP 句柄，销毁时关闭有效句柄。
+ */
+struct InternetHandle {
+
+    /**
+     * 本对象独占拥有的 WinHTTP 句柄。
+     */
+    HINTERNET handle = nullptr;
+
+    /**
+     * 接管有效的 WinHTTP 句柄，句柄为空时报告初始化失败。
+     *
+     * @param[in] h 由本对象接管的 WinHTTP 句柄，不得为空。
+     */
+    explicit InternetHandle(
+        HINTERNET h
+    )
+        : handle(h) {
+        http_checked(h != nullptr, "WinHTTP initialization");
+    }
+
+    /**
+     * 关闭本对象拥有的 WinHTTP 句柄。
+     */
     ~InternetHandle() {
         if (handle)
             WinHttpCloseHandle(handle);
     }
-    operator HINTERNET() const { return handle; }
+
+    /**
+     * 借用 WinHTTP 句柄，不关闭句柄或转移所有权。
+     *
+     * @return 借用的 WinHTTP 句柄，仅在本对象销毁前有效。
+     */
+    operator HINTERNET() const {
+        return handle;
+    }
 };
-static std::wstring wide(const std::string& s) {
+
+/**
+ * 将有效 UTF-8 请求文本转换为 Windows UTF-16。
+ *
+ * @param[in] s 待转换的有效 UTF-8 文本。
+ */
+static std::wstring wide(
+    const std::string& s
+) {
     if (s.empty())
         return {};
+
     int n = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, s.data(), int(s.size()), nullptr, 0);
     require(n > 0, XMAX_INVALID_ARGUMENT, "Invalid UTF-8 request value");
+
     std::wstring out(size_t(n), L'\0');
     MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, s.data(), int(s.size()), out.data(), n);
+
     return out;
 }
+
+/**
+ * 使用原生传输执行 HTTPS 请求，限制响应大小并支持协作式取消。
+ */
 class NativeHttp final : public Http {
-    HttpResponse request(const HttpRequest& input, const Cancel& cancel) override {
+
+    /**
+     * 执行 HTTPS 请求，支持取消、响应大小限制、传输进度和流式接收。
+     *
+     * @param[in] input 本次请求的 URL、超时、响应大小限制和流式接收回调。
+     * @param[in] cancel 协作式取消判断函数，原生传输在执行期间周期检查。
+     * @return HTTP 状态码、响应头和非流式响应体；传输失败时抛出 SDK 异常。
+     */
+    HttpResponse request(
+        const HttpRequest& input,
+        const Cancel& cancel
+    ) override {
         const auto url = wide(input.url);
         URL_COMPONENTS parts{};
         parts.dwStructSize = sizeof(parts);
         parts.dwHostNameLength = DWORD(-1);
         parts.dwUrlPathLength = DWORD(-1);
         parts.dwExtraInfoLength = DWORD(-1);
-        require(WinHttpCrackUrl(url.c_str(), DWORD(url.size()), 0, &parts), XMAX_INVALID_ARGUMENT,
-                "Invalid API URL");
+        require(
+            WinHttpCrackUrl(url.c_str(), DWORD(url.size()), 0, &parts), XMAX_INVALID_ARGUMENT,
+            "Invalid API URL"
+        );
+
         const std::wstring host(parts.lpszHostName, parts.dwHostNameLength);
         std::wstring target(parts.lpszUrlPath, parts.dwUrlPathLength);
+
         if (parts.dwExtraInfoLength)
             target.append(parts.lpszExtraInfo, parts.dwExtraInfoLength);
-        InternetHandle session(WinHttpOpen(wide(std::string("XmaxSDK/") + XMAX_VERSION).c_str(),
-                                           WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME,
-                                           WINHTTP_NO_PROXY_BYPASS, 0));
+
+        InternetHandle session(WinHttpOpen(
+            wide(std::string("XmaxSDK/") + XMAX_VERSION).c_str(), WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
+            WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0
+        ));
         int timeout = int(input.timeout_ms);
         WinHttpSetTimeouts(session, timeout, timeout, timeout, timeout);
+
         InternetHandle connection(WinHttpConnect(session, host.c_str(), parts.nPort, 0));
-        InternetHandle req(WinHttpOpenRequest(connection, wide(input.method).c_str(), target.c_str(), nullptr,
-                                              WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES,
-                                              WINHTTP_FLAG_SECURE));
+        InternetHandle req(WinHttpOpenRequest(
+            connection, wide(input.method).c_str(), target.c_str(), nullptr, WINHTTP_NO_REFERER,
+            WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE
+        ));
         DWORD redirect = WINHTTP_OPTION_REDIRECT_POLICY_NEVER;
         WinHttpSetOption(req, WINHTTP_OPTION_REDIRECT_POLICY, &redirect, sizeof(redirect));
+
         std::string header_text;
+
         for (const auto& header : input.headers)
             header_text += header.first + ": " + header.second + "\r\n";
+
         const auto headers = wide(header_text);
         const auto& data = input.body;
         require(!cancel(), XMAX_CANCELLED, "Operation cancelled");
-        require(WinHttpSendRequest(req, headers.c_str(), DWORD(headers.size()), WINHTTP_NO_REQUEST_DATA, 0,
-                                   DWORD(data.size()), 0),
-                XMAX_NETWORK_ERROR, "HTTPS send failed");
+        http_checked(
+            WinHttpSendRequest(
+                req, headers.c_str(), DWORD(headers.size()), WINHTTP_NO_REQUEST_DATA, 0, DWORD(data.size()), 0
+            ),
+            "HTTPS send"
+        );
+
         size_t sent = 0;
+
         while (sent < data.size()) {
             require(!cancel(), XMAX_CANCELLED, "Operation cancelled");
+
             const auto count = DWORD(std::min(size_t(65536), data.size() - sent));
             DWORD written = 0;
-            require(WinHttpWriteData(req, data.data() + sent, count, &written) && written > 0,
-                    XMAX_NETWORK_ERROR, "HTTPS upload failed");
+            http_checked(WinHttpWriteData(req, data.data() + sent, count, &written), "HTTPS upload");
+            require(written > 0, XMAX_NETWORK_ERROR, "HTTPS upload made no progress");
             sent += written;
+
             if (input.progress)
                 input.progress(sent, data.size());
         }
-        require(WinHttpReceiveResponse(req, nullptr), XMAX_NETWORK_ERROR, "HTTPS response failed");
+
+        http_checked(WinHttpReceiveResponse(req, nullptr), "HTTPS response");
+
         DWORD status = 0, size = sizeof(status);
-        require(WinHttpQueryHeaders(req, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
-                                    WINHTTP_HEADER_NAME_BY_INDEX, &status, &size, WINHTTP_NO_HEADER_INDEX),
-                XMAX_NETWORK_ERROR, "Cannot read HTTP status");
+        require(
+            WinHttpQueryHeaders(
+                req, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_HEADER_NAME_BY_INDEX,
+                &status, &size, WINHTTP_NO_HEADER_INDEX
+            ),
+            XMAX_NETWORK_ERROR, "Cannot read HTTP status"
+        );
+
         HttpResponse response;
         response.status = long(status);
+
         for (const auto& item : std::vector<std::pair<DWORD, const wchar_t*>>{
-                 {WINHTTP_QUERY_ETAG, L"ETag"}, {WINHTTP_QUERY_CONTENT_LENGTH, L"Content-Length"}}) {
+                 {WINHTTP_QUERY_ETAG, L"ETag"}, {WINHTTP_QUERY_CONTENT_LENGTH, L"Content-Length"}
+             }) {
             DWORD bytes = 0;
-            WinHttpQueryHeaders(req, item.first, WINHTTP_HEADER_NAME_BY_INDEX, nullptr, &bytes,
-                                WINHTTP_NO_HEADER_INDEX);
+            WinHttpQueryHeaders(
+                req, item.first, WINHTTP_HEADER_NAME_BY_INDEX, nullptr, &bytes, WINHTTP_NO_HEADER_INDEX
+            );
+
             if (!bytes)
                 continue;
+
             std::wstring value(bytes / sizeof(wchar_t), L'\0');
-            if (WinHttpQueryHeaders(req, item.first, WINHTTP_HEADER_NAME_BY_INDEX, value.data(), &bytes,
-                                    WINHTTP_NO_HEADER_INDEX)) {
+
+            if (WinHttpQueryHeaders(
+                    req, item.first, WINHTTP_HEADER_NAME_BY_INDEX, value.data(), &bytes,
+                    WINHTTP_NO_HEADER_INDEX
+                )) {
                 value.resize(bytes / sizeof(wchar_t));
+
                 while (!value.empty() && value.back() == 0)
                     value.pop_back();
-                const int count = WideCharToMultiByte(CP_UTF8, 0, value.data(), int(value.size()), nullptr, 0,
-                                                      nullptr, nullptr);
+
+                const int count = WideCharToMultiByte(
+                    CP_UTF8, 0, value.data(), int(value.size()), nullptr, 0, nullptr, nullptr
+                );
                 std::string text(size_t(count), '\0');
-                WideCharToMultiByte(CP_UTF8, 0, value.data(), int(value.size()), text.data(), count, nullptr,
-                                    nullptr);
-                response.headers.emplace_back(item.first == WINHTTP_QUERY_ETAG ? "ETag" : "Content-Length",
-                                              std::move(text));
+                WideCharToMultiByte(
+                    CP_UTF8, 0, value.data(), int(value.size()), text.data(), count, nullptr, nullptr
+                );
+                response.headers.emplace_back(
+                    item.first == WINHTTP_QUERY_ETAG ? "ETag" : "Content-Length", std::move(text)
+                );
             }
         }
+
         uint64_t total = 0, consumed = 0;
+
         for (const auto& header : response.headers)
             if (header.first == "Content-Length") {
                 try {
@@ -111,15 +252,20 @@ class NativeHttp final : public Http {
                 } catch (...) {
                 }
             }
+
         require(total <= input.response_limit, XMAX_NETWORK_ERROR, "HTTP response exceeds the byte limit");
+
         char buffer[16384];
         DWORD received = 0;
+
         do {
             require(!cancel(), XMAX_CANCELLED, "Operation cancelled");
-            require(WinHttpReadData(req, buffer, sizeof(buffer), &received), XMAX_NETWORK_ERROR,
-                    "HTTP response read failed");
-            require(consumed + received <= input.response_limit, XMAX_NETWORK_ERROR,
-                    "HTTP response exceeds the byte limit");
+            http_checked(WinHttpReadData(req, buffer, sizeof(buffer), &received), "HTTP response read");
+            require(
+                consumed + received <= input.response_limit, XMAX_NETWORK_ERROR,
+                "HTTP response exceeds the byte limit"
+            );
+
             if (received) {
                 if (input.receive)
                     input.receive(buffer, received);
@@ -130,31 +276,78 @@ class NativeHttp final : public Http {
                     input.progress(consumed, total);
             }
         } while (received);
+
         require(total == 0 || consumed == total, XMAX_NETWORK_ERROR, "Incomplete HTTP response body");
+
         return response;
     }
 };
 #else
+
+/**
+ * 使用原生传输执行 HTTPS 请求，限制响应大小并支持协作式取消。
+ */
 class NativeHttp final : public Http {
-    HttpResponse request(const HttpRequest& input, const Cancel& cancel) override {
+
+    /**
+     * 执行 HTTPS 请求，支持取消、响应大小限制、传输进度和流式接收。
+     *
+     * @param[in] input 本次请求的 URL、超时、响应大小限制和流式接收回调。
+     * @param[in] cancel 协作式取消判断函数，原生传输在执行期间周期检查。
+     * @return HTTP 状态码、响应头和非流式响应体；传输失败时抛出 SDK 异常。
+     */
+    HttpResponse request(
+        const HttpRequest& input,
+        const Cancel& cancel
+    ) override {
         static const int initialized = [] { return curl_global_init(CURL_GLOBAL_DEFAULT); }();
         require(initialized == CURLE_OK, XMAX_NETWORK_ERROR, "Cannot initialize HTTPS transport");
+
         std::unique_ptr<CURL, decltype(&curl_easy_cleanup)> handle(curl_easy_init(), curl_easy_cleanup);
         require(bool(handle), XMAX_NETWORK_ERROR, "Cannot create HTTPS request");
+
         const auto& url = input.url;
         const auto& data = input.body;
+
+        /**
+         * 保存单次流式传输的接收状态与异常，用于在原生回调边界外报告失败。
+         */
         struct Transfer {
+
+            /**
+             * 当前传输借用的请求描述，在同步请求返回前保持有效。
+             */
             const HttpRequest& input;
+
+            /**
+             * 当前传输借用的取消判断函数，在同步请求返回前保持有效。
+             */
             const Cancel& cancel;
+
+            /**
+             * 当前原生传输正在汇总的 HTTP 响应。
+             */
             HttpResponse response;
+
+            /**
+             * 当前传输已接收的响应字节数，用于大小限制和进度计算。
+             */
             uint64_t received = 0;
+
+            /**
+             * 原生传输回调捕获的异常，返回 C++ 调用栈后重新抛出。
+             */
             std::exception_ptr failure;
+
         } transfer{input, cancel, {}, 0, {}};
+
         curl_slist* list = nullptr;
+
         for (const auto& header : input.headers) {
             const auto line = header.first + ": " + header.second;
             list = curl_slist_append(list, line.c_str());
         }
+
         std::unique_ptr<curl_slist, decltype(&curl_slist_free_all)> headers(list, curl_slist_free_all);
         curl_easy_setopt(handle.get(), CURLOPT_URL, url.c_str());
         curl_easy_setopt(handle.get(), CURLOPT_CUSTOMREQUEST, input.method.c_str());
@@ -162,10 +355,12 @@ class NativeHttp final : public Http {
         curl_easy_setopt(handle.get(), CURLOPT_NOSIGNAL, 1L);
         curl_easy_setopt(handle.get(), CURLOPT_TIMEOUT_MS, long(input.timeout_ms));
         curl_easy_setopt(handle.get(), CURLOPT_FOLLOWLOCATION, 0L);
+
         if (!data.empty()) {
             curl_easy_setopt(handle.get(), CURLOPT_POSTFIELDS, data.data());
             curl_easy_setopt(handle.get(), CURLOPT_POSTFIELDSIZE, long(data.size()));
         }
+
         curl_easy_setopt(handle.get(), CURLOPT_WRITEDATA, &transfer);
         curl_easy_setopt(
             handle.get(), CURLOPT_WRITEFUNCTION,
@@ -173,9 +368,11 @@ class NativeHttp final : public Http {
                 auto& value = *static_cast<Transfer*>(context);
                 const auto length = size * count;
                 try {
-                    require(length <= value.input.response_limit &&
-                                value.received <= value.input.response_limit - length,
-                            XMAX_NETWORK_ERROR, "HTTP response exceeds the byte limit");
+                    require(
+                        length <= value.input.response_limit &&
+                            value.received <= value.input.response_limit - length,
+                        XMAX_NETWORK_ERROR, "HTTP response exceeds the byte limit"
+                    );
                     if (value.input.receive)
                         value.input.receive(bytes, length);
                     else
@@ -186,7 +383,8 @@ class NativeHttp final : public Http {
                     value.failure = std::current_exception();
                     return 0;
                 }
-            });
+            }
+        );
         curl_easy_setopt(handle.get(), CURLOPT_HEADERDATA, &transfer);
         curl_easy_setopt(
             handle.get(), CURLOPT_HEADERFUNCTION,
@@ -209,7 +407,8 @@ class NativeHttp final : public Http {
                     value.failure = std::current_exception();
                     return 0;
                 }
-            });
+            }
+        );
         curl_easy_setopt(handle.get(), CURLOPT_NOPROGRESS, 0L);
         curl_easy_setopt(handle.get(), CURLOPT_XFERINFODATA, &transfer);
         curl_easy_setopt(
@@ -231,19 +430,35 @@ class NativeHttp final : public Http {
                     value.failure = std::current_exception();
                     return 1;
                 }
-            });
+            }
+        );
+
         const auto result = curl_easy_perform(handle.get());
         require(!cancel(), XMAX_CANCELLED, "Operation cancelled");
+
         if (transfer.failure)
             std::rethrow_exception(transfer.failure);
-        require(result == CURLE_OK, XMAX_NETWORK_ERROR, "Xmax HTTPS request failed");
+
+        require(
+            result == CURLE_OK, XMAX_NETWORK_ERROR,
+            "HTTPS request failed (libcurl " + std::to_string(int(result)) +
+                "): " + curl_easy_strerror(result)
+        );
+
         long status = 0;
         curl_easy_getinfo(handle.get(), CURLINFO_RESPONSE_CODE, &status);
         transfer.response.status = status;
+
         return std::move(transfer.response);
     }
 };
 #endif
+
+/**
+ * 创建当前平台的 HTTPS 字节传输器。
+ *
+ * @return 可共享的当前平台 HTTP 传输器。
+ */
 std::shared_ptr<Http> make_http() {
     return std::make_shared<NativeHttp>();
 }

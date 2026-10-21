@@ -7,6 +7,9 @@ static_assert(!std::is_copy_constructible_v<xmax::frame> &&
 static_assert(!std::is_copy_constructible_v<xmax::storage> &&
               std::is_nothrow_move_assignable_v<xmax::storage>);
 int main() {
+    if (xmax::logger::configuration().first != XMAX_LOG_NONE)
+        return 20;
+    xmax::logger::configure(XMAX_LOG_BUSINESS, XMAX_LOG_ENGLISH);
     xmax::client client("");
     if (!(client.capabilities().flags & XMAX_CAP_STORAGE))
         return 3;
@@ -17,6 +20,12 @@ int main() {
     moved_files.cancel();
     auto session = client.create_realtime();
     session.prepare({1920, 1024, 30});
+    xmax_log_record log{};
+    if (!xmax::logger::poll(log) || log.sequence == 0)
+        return 21;
+    xmax::logger::configure(XMAX_LOG_NONE);
+    if (xmax::logger::poll(log))
+        return 22;
     auto moved = std::move(session);
     if (session || moved.state().state != XMAX_READY || moved.format().height != 1024)
         return 5;

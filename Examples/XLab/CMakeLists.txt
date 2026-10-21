@@ -9,7 +9,7 @@ endif()
 qt_standard_project_setup(REQUIRES 6.8)
 qt_add_executable(XLab main.cpp controller.cpp controller.hpp rounded_image.cpp rounded_image.hpp)
 qt_add_qml_module(XLab URI XLab VERSION 1.0
-  QML_FILES qml/Main.qml qml/Pill.qml qml/Icon.qml qml/Checkerboard.qml qml/VideoPanel.qml qml/ReferenceList.qml
+  QML_FILES qml/Main.qml qml/Pill.qml qml/Icon.qml qml/CameraPicker.qml qml/Checkerboard.qml qml/VideoPanel.qml qml/ReferenceList.qml
   RESOURCES assets/presets.json assets/xmax-wordmark.png assets/DMSans.ttf assets/DMSans-OFL.txt)
 target_link_libraries(XLab PRIVATE Xmax::SDK Qt6::Quick Qt6::QuickControls2 Qt6::Multimedia Qt6::Concurrent Qt6::Network)
 if(BUILD_TESTING)
@@ -27,6 +27,11 @@ if(BUILD_TESTING)
   endif()
   add_test(NAME xlab_behavior COMMAND xlab_behavior_tests)
   set_tests_properties(xlab_ui xlab_key_gate xlab_behavior PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QUICK_BACKEND=software" TIMEOUT 45)
+  if(WIN32 AND DEFINED ENV{SystemRoot})
+    # Offscreen does not discover the native Windows font database automatically.
+    file(TO_CMAKE_PATH "$ENV{SystemRoot}/Fonts" XLAB_SYSTEM_FONTS)
+    set_property(TEST xlab_ui xlab_key_gate xlab_behavior APPEND PROPERTY ENVIRONMENT "QT_QPA_FONTDIR=${XLAB_SYSTEM_FONTS}")
+  endif()
 endif()
 set_target_properties(XLab PROPERTIES WIN32_EXECUTABLE TRUE MACOSX_BUNDLE TRUE MACOSX_BUNDLE_GUI_IDENTIFIER "ai.xmax.xlab.windows-preview")
 if(APPLE)

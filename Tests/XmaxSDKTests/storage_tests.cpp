@@ -121,7 +121,12 @@ static void upload_file_and_atomic_download() {
     expect_error(XMAX_IO_ERROR, [&] { storage.download("https://files.test/a", destination.u8string()); });
     http->fail = true;
     const auto failed = folder.path / "failed.png";
-    expect_error(XMAX_NETWORK_ERROR, [&] { storage.download("https://files.test/a", failed.u8string()); });
+    try {
+        storage.download("https://files.test/a", failed.u8string());
+        CHECK(false);
+    } catch (const Error& error) {
+        CHECK(error.code == XMAX_DOWNLOAD_ERROR && error.http_status == 503);
+    }
     CHECK(!std::filesystem::exists(failed));
     for (const auto& entry : std::filesystem::directory_iterator(folder.path))
         CHECK(entry.path().filename().u8string().find(".part-") == std::string::npos);
@@ -129,18 +134,18 @@ static void upload_file_and_atomic_download() {
 static void quality_history() {
     Folder folder;
     auto store = make_preference_store(folder.path);
-    QualityHistory cn("x2.1.1-preview-cn", store), us("x2.1.1-preview-us", store);
-    CHECK(cn.read(false, 1000) == 2);
-    cn.write(4, false, 1000);
-    cn.write(3, true, 1001);
-    CHECK(cn.read(false, 1002) == 4 && cn.read(true, 1002) == 3);
-    CHECK(us.read(false, 1002) == 2);
-    QualityHistory restarted("x2.1.1-preview-cn", make_preference_store(folder.path));
+    QualityHistory current("x2.1", store), isolated("test-model", store);
+    CHECK(current.read(false, 1000) == 2);
+    current.write(4, false, 1000);
+    current.write(3, true, 1001);
+    CHECK(current.read(false, 1002) == 4 && current.read(true, 1002) == 3);
+    CHECK(isolated.read(false, 1002) == 2);
+    QualityHistory restarted("x2.1", make_preference_store(folder.path));
     CHECK(restarted.read(false, 1002) == 4);
     CHECK(restarted.read(false, 999) == 2 && restarted.read(false, 4600) == 2);
-    store->write("quality-agora-x2.1.1-preview-cn-uplink", "{corrupt");
+    store->write("quality-agora-x2.1-uplink", "{corrupt");
     CHECK(restarted.read(false, 1002) == 2);
-    store->write("quality-agora-x2.1.1-preview-cn-uplink", R"({"level":99,"time":1000})");
+    store->write("quality-agora-x2.1-uplink", R"({"level":99,"time":1000})");
     CHECK(restarted.read(false, 1002) == 2);
     store->write("../escape", "invalid");
     CHECK(!store->read("../escape"));

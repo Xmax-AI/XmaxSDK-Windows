@@ -20,12 +20,13 @@ static void api_transport_boundary() {
     auto http = std::make_shared<ByteHttp>();
     Config config;
     config.key = "test-key";
-    config.model = "x2.1.1-preview-us";
+    config.model = "x2.1";
+    config.environment = XMAX_ENVIRONMENT_GLOBAL;
     config.timeout_ms = 2345;
     ApiService api(config, http);
     const json body{{"prompt", "你好✨"}};
     CHECK(api.request("POST", "/media", &body, [] { return false; })["value"] == 42);
-    CHECK(http->received.url == "https://api.xmax.ai/open/api/v1/media");
+    CHECK(http->received.url == "https://api.xmax.cloud/open/api/v1/media");
     CHECK(http->received.method == "POST" && http->received.timeout_ms == 2345);
     CHECK(json::parse(http->received.body) == body);
     CHECK(std::find(http->received.headers.begin(), http->received.headers.end(),
@@ -49,7 +50,7 @@ static void service_rollback_ownership() {
     config.key = "test";
     RealtimeSessionService service(std::make_shared<ApiService>(config, http));
     http->malformed = true;
-    expect_error(XMAX_API_ERROR, [&] { service.create([] { return false; }); });
+    expect_error(XMAX_SESSION_ERROR, [&] { service.create([] { return false; }); });
     CHECK(service.active().id == "session-1");
     service.close();
     service.close();
@@ -68,7 +69,7 @@ static void stream_without_core() {
     const auto cancel = [] { return false; };
     stream.join({"app", "room", "user", "token", "bot"}, {1920, 1080, 30}, true, {}, cancel);
     CHECK(rtc->encoding.format.width == 1536 && rtc->encoding.format.height == 864 && rtc->encoding.format.fps == 24);
-    CHECK(rtc->encoding.minimum_bitrate == 100);
+    CHECK(rtc->encoding.minimum_bitrate == 500);
     CHECK(rtc->microphone && rtc->remote_volume == 0.4f);
     stream.start("角色✨", "https://ref", true, cancel);
     const auto task = stream.task();

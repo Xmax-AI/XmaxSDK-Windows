@@ -12,6 +12,69 @@
 class BehaviorTests : public QObject {
     Q_OBJECT
   private slots:
+    void init() {
+        QSettings().remove("xmax.xlab.cameraId");
+    }
+
+    void cameraSelectionIsExplicitAndRemembered() {
+        XLabController controller;
+        const auto cameras = controller.cameras();
+        if (cameras.isEmpty())
+            QSKIP("No cameras attached; device selection is validated on the Windows VM");
+        if (cameras.size() > 1) {
+            QVERIFY(controller.cameraId().isEmpty());
+            QVERIFY(controller.cameraName().isEmpty());
+        } else {
+            QCOMPARE(controller.cameraId(), cameras.first().toMap()["id"].toString());
+        }
+        const auto chosen = cameras.last().toMap();
+        controller.setCameraId(chosen["id"].toString());
+        QCOMPARE(controller.cameraName(), chosen["name"].toString());
+        controller.refreshCameras();
+        QCOMPARE(controller.cameraId(), chosen["id"].toString());
+        controller.setCameraId("not-an-enumerated-camera");
+        QCOMPARE(controller.cameraId(), chosen["id"].toString());
+        XLabController reopened;
+        QCOMPARE(reopened.cameraId(), chosen["id"].toString());
+        QCOMPARE(reopened.cameraName(), chosen["name"].toString());
+        reopened.active = true;
+        reopened.setCameraId({});
+        QCOMPARE(reopened.cameraId(), chosen["id"].toString());
+        reopened.active = false;
+        reopened.busy = true;
+        reopened.setCameraId({});
+        QCOMPARE(reopened.cameraId(), chosen["id"].toString());
+        reopened.busy = false;
+    }
+
+    void unavailableSavedCameraNeverFallsBack() {
+        QSettings().setValue("xmax.xlab.cameraId", "disconnected-test-camera");
+        XLabController controller;
+        QCOMPARE(controller.cameraId(), QString("disconnected-test-camera"));
+        QVERIFY(controller.cameraName().isEmpty());
+        controller.refreshCameras();
+        QCOMPARE(controller.cameraId(), QString("disconnected-test-camera"));
+        QVERIFY(controller.cameraName().isEmpty());
+        controller.setApiKey("test-key");
+        controller.start();
+        QVERIFY(!controller.active && !controller.busy);
+        QVERIFY2(
+            controller.error.contains("camera") || controller.error.contains("Live video is unavailable"),
+            qPrintable(controller.error));
+    }
+
+    void previewDoesNotEnumerateOrChangeCamera() {
+        QSettings().setValue("xmax.xlab.cameraId", "saved-camera");
+        XLabController controller(true);
+        QVERIFY(controller.cameras().isEmpty());
+        QVERIFY(controller.cameraId().isEmpty());
+        controller.refreshCameras();
+        controller.setCameraId("preview-camera");
+        QVERIFY(controller.cameras().isEmpty());
+        QVERIFY(controller.cameraId().isEmpty());
+        QCOMPARE(QSettings().value("xmax.xlab.cameraId").toString(), QString("saved-camera"));
+    }
+
     void presetAddressesUseCurrentCdn() {
         XLabController controller(true);
         int count = 0;
@@ -60,7 +123,7 @@ class BehaviorTests : public QObject {
     }
 
     void unavailableRtcStaysOnLanding() {
-        const xmax_client_config config{sizeof(config), XMAX_ABI_VERSION, "test-key", "x2.1.1-preview-cn",
+        const xmax_client_config config{sizeof(config), XMAX_ABI_VERSION, "test-key", "x2.1",
                                         1000};
         xmax_client client = nullptr;
         QCOMPARE(xmax_client_create(&config, &client), XMAX_OK);

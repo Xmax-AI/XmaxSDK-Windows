@@ -36,6 +36,9 @@ class XLabController final : public QObject {
     Q_PROPERTY(bool busy MEMBER busy NOTIFY changed)
     Q_PROPERTY(bool closing MEMBER closing NOTIFY changed)
     Q_PROPERTY(bool preview MEMBER preview CONSTANT)
+    Q_PROPERTY(QVariantList cameras READ cameras NOTIFY camerasChanged)
+    Q_PROPERTY(QString cameraId READ cameraId WRITE setCameraId NOTIFY camerasChanged)
+    Q_PROPERTY(QString cameraName READ cameraName NOTIFY camerasChanged)
     Q_PROPERTY(bool statisticsVisible MEMBER statisticsVisible NOTIFY changed)
     Q_PROPERTY(QString error MEMBER error NOTIFY changed)
     Q_PROPERTY(QString mode READ mode WRITE setMode NOTIFY changed)
@@ -55,6 +58,26 @@ class XLabController final : public QObject {
     void setApiKey(const QString&);
     QString model() const { return model_; }
     void setModel(const QString&);
+
+    /// @brief Return SDK camera identities and names without opening a capture device.
+    QVariantList cameras() const {
+        return cameras_;
+    }
+
+    /// @brief Return the selected identity, or empty when an explicit choice is required.
+    QString cameraId() const {
+        return camera_id_;
+    }
+
+    /// @brief Select an enumerated camera while stopped and remember it for the next launch.
+    void setCameraId(const QString&);
+
+    /// @brief Return the selected device name for the selector and local video label.
+    QString cameraName() const;
+
+    /// @brief Refresh SDK devices while stopped without opening capture or a cloud session.
+    Q_INVOKABLE void refreshCameras();
+
     QString mode() const { return mode_; }
     void setMode(const QString&);
     QVariantList references() const;
@@ -92,11 +115,14 @@ class XLabController final : public QObject {
     void changed();
     void sinksChanged();
     void referencesChanged();
+    void camerasChanged();
 
   private:
-    QString key_, model_ = "x2.1.1-preview-cn", mode_ = "charx";
+    QString key_, model_ = "x2.1", mode_ = "charx";
     float volume_ = 0;
     QVariantList presets_, uploads_;
+    QVariantList cameras_;
+    QString camera_id_;
     std::shared_ptr<SdkHandles> handles_;
     QVideoSink* local_sink_ = nullptr;
     QVideoSink* remote_sink_ = nullptr;

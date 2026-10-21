@@ -7,8 +7,10 @@ import subprocess
 import sys
 from artifacts import ROOT, public_exports
 from workflow import version
+from structure import validate as validate_structure
 
 def main() -> None:
+    validate_structure(ROOT)
     current = version((ROOT/'VERSION').read_text().strip())
     for name in ['README.md','Materials/usage.md']:
         text = (ROOT/name).read_text(encoding='utf-8')

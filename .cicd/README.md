@@ -1,6 +1,6 @@
 # Windows CI/CD 与发版
 
-远端为 `XingMai/XmaxSDK-Windows`。三个流程入口对应 macOS 工程的职责：
+远端为 `Xmax-AI/XmaxSDK-Windows`。三个流程入口对应 macOS 工程的职责：
 `ci-prepare` 准备版本、`ci-merge` 验证并集成、`cd-github-release` 构建产物后检查并发布。
 Shell 与 PowerShell 包装都调用同一个 Python 实现，避免两套逻辑漂移。
 
@@ -89,7 +89,7 @@ PowerShell 使用同名 .ps1。准备过程检查本地/远端标签不存在，
 它会重建并验证完整 Windows 候选包，再在独立任务重新解压检查提交、DLL 导出和 SHA-256，只上传 Actions Artifact：不创建 tag，不创建 Release，不发布下载附件。
 
 ```sh
-gh workflow run release.yml --repo XingMai/XmaxSDK-Windows --ref main -f version=0.2.0 -f publish=false
+gh workflow run release.yml --repo Xmax-AI/XmaxSDK-Windows --ref main -f version=0.2.0 -f publish=false
 ```
 
 ## 正式发布（本次未执行）

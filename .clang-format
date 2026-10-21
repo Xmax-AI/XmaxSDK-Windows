@@ -1,7 +1,8 @@
 BasedOnStyle: LLVM
 IndentWidth: 4
 ColumnLimit: 110
-AllowShortFunctionsOnASingleLine: Inline
+AllowShortFunctionsOnASingleLine: None
+SeparateDefinitionBlocks: Always
 AllowShortIfStatementsOnASingleLine: Never
 AllowShortLoopsOnASingleLine: false
 PointerAlignment: Left

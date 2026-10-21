@@ -17,10 +17,10 @@ static void protocol() {
     auto http = std::make_shared<FakeHttp>();
     ApiService api(c, http);
     Connection room{"a", "r", "u", "t", "b"};
-    auto value = generation_event("start", room, "task", {1920, 1024, 30}, "角色\"\\\n", "https://ref", true);
+    auto value = generation_event("start", room, "task", {1920, 1080, 30}, "角色\"\\\n", "https://ref", true);
     CHECK(value["runtime"]["platform"] == "windows");
     CHECK(value["uid"] == value["session_uid"]);
-    CHECK(value["params"]["size"] == json::array({1920, 1024}));
+    CHECK(value["params"]["size"] == json::array({1920, 1080}));
     CHECK(value["params"]["face_replace"] == true);
     auto changed = generation_event("change_condition", room, "task", {1280, 720, 30}, "p", "", false);
     CHECK(!changed["params"].contains("mirror"));
@@ -134,7 +134,7 @@ static void malformed_and_unavailable() {
     c.key = "test";
     XmaxRealtimeManager s(std::make_shared<ApiService>(c, h), [rtc] { return rtc; });
     s.prepare({1920, 1024, 30});
-    expect_error(XMAX_API_ERROR, [&] { s.start("p", "", false, false); });
+    expect_error(XMAX_SESSION_ERROR, [&] { s.start("p", "", false, false); });
     CHECK(h->count("DELETE /session/session-1") == 1);
     CHECK(rtc->joins == 0);
     auto unused = std::make_shared<FakeHttp>();
@@ -209,7 +209,7 @@ static void startup_heartbeat_and_close_failure() {
         if (event.type == XMAX_EVENT_ERROR && std::string(event.session_id) == "session-1")
             reported = true;
     CHECK(reported);
-    expect_error(XMAX_API_ERROR, [] { parse_connection({{"sessionUid", "s"}, {"modelExtra", "{broken"}}); });
+    expect_error(XMAX_SESSION_ERROR, [] { parse_connection({{"sessionUid", "s"}, {"modelExtra", "{broken"}}); });
 }
 int main() {
     int failures = 0;

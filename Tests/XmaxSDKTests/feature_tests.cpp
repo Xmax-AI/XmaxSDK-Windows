@@ -56,6 +56,7 @@ static void camera_lifecycle() {
         [capture] { return std::make_unique<FakeCamera>(capture); });
     sdk.prepare_camera("one", {1920, 1024, 30}, true);
     CHECK(sdk.state_snapshot().state == XMAX_READY && http->calls.empty());
+    CHECK(sdk.format().width == 1920 && sdk.format().height == 1080);
     auto held = sdk.acquire_local_frame();
     CHECK(held && held->planes[0][0] == 42);
     CHECK(!sdk.requesting());
@@ -63,6 +64,7 @@ static void camera_lifecycle() {
     CHECK(rtc->microphone && rtc->joins == 1);
     CHECK(sdk.state_snapshot().state == XMAX_CONNECTED);
     sdk.start("first", "https://ref", true, false);
+    CHECK(json::parse(rtc->messages.front())["params"]["size"] == json::array({1920, 1080}));
     const auto first_task = std::string(sdk.state_snapshot().task_id);
     capture->callbacks.frame(captured(2));
     CHECK(rtc->pushes == 1);
@@ -114,7 +116,8 @@ static void separate_connect_and_generation() {
     Config config;
     config.key = "test";
     XmaxRealtimeManager sdk(std::make_shared<ApiService>(config, http), [rtc] { return rtc; });
-    expect_error(XMAX_INVALID_ARGUMENT, [&] { sdk.prepare({1280, 720, 30}); });
+    sdk.prepare({1280, 720, 30});
+    CHECK(sdk.format().width == 1280);
     sdk.prepare({1920, 1024, 30});
     sdk.connect(false);
     CHECK(rtc->messages_count() == 0 && sdk.state_snapshot().state == XMAX_CONNECTED);
@@ -127,7 +130,9 @@ static void separate_connect_and_generation() {
     sdk.encoding({sizeof(xmax_encoding_config), 0, 2500, XMAX_ENCODER_MAINTAIN_QUALITY});
     CHECK(rtc->encoding.maximum_bitrate == 2500 && rtc->encoding.minimum_bitrate == 0);
     expect_error(XMAX_INVALID_ARGUMENT, [&] { sdk.encoding({sizeof(xmax_encoding_config), 500, 100, 0}); });
-    expect_error(XMAX_INVALID_ARGUMENT, [&] { sdk.encoding({sizeof(xmax_encoding_config), -1, 50, 0}); });
+    sdk.encoding({sizeof(xmax_encoding_config), -1, 50, 0});
+    CHECK(rtc->encoding.minimum_bitrate == 50 && rtc->encoding.maximum_bitrate == 50);
+    sdk.encoding({sizeof(xmax_encoding_config), 0, 2500, XMAX_ENCODER_MAINTAIN_QUALITY});
     CHECK(rtc->encoding.maximum_bitrate == 2500);
     sdk.encoding({sizeof(xmax_encoding_config), 10000, 0, XMAX_ENCODER_AUTO});
     CHECK(rtc->encoding.maximum_bitrate >= rtc->encoding.minimum_bitrate);
@@ -151,12 +156,9 @@ static void conversion() {
     source.planes[1].assign(4, 128);
     auto rgb = bgra_frame(source);
     CHECK(rgb.planes[0][0] >= 254 && rgb.planes[0][3] == 255);
-    auto fit = fit_frame(rgb, {4, 4, 30});
-    CHECK(fit.width == 4 && fit.height == 4 && fit.timestamp_us == 7);
-    CHECK(fit.planes[0][0] == 0 && fit.planes[0][fit.strides[0]] >= 254);
+    CHECK(rgb.width == 4 && rgb.height == 2 && rgb.timestamp_us == 7);
     source.planes[1].clear();
     expect_error(XMAX_INVALID_ARGUMENT, [&] { bgra_frame(source); });
-    expect_error(XMAX_INVALID_ARGUMENT, [&] { fit_frame(Frame{}, {4, 4, 30}); });
 }
 static void quality_policy() {
     QualityDirection policy;

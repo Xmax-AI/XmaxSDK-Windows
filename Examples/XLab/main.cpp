@@ -105,6 +105,30 @@ int main(int argc, char** argv) {
             verify(QImageReader::supportedImageFormats().contains("webp"),
                    "WebP thumbnail decoder is missing from this deployment");
             if (keyGate) {
+                auto picker = window->findChild<QQuickItem*>("cameraButton");
+                verify(picker && picker->isVisible(), "Live startup must show the camera selector");
+                if (picker) {
+                    const auto position = picker->mapToScene(QPointF());
+                    verify(position.x() > window->width() / 2 && position.y() < 100,
+                           "Camera selector must stay in the top-right header like macOS XmaxCamera");
+                }
+                if (picker && !controller.cameras().isEmpty()) {
+                    if (controller.cameras().size() > 1)
+                        verify(controller.cameraId().isEmpty(),
+                               "Multiple cameras must require an explicit choice");
+                    click("cameraButton");
+                    const auto option = "cameraOption_" + QByteArray::number(controller.cameras().size() - 1);
+                    click(option.constData());
+                    verify(controller.cameraId() == controller.cameras().last().toMap()["id"].toString(),
+                           "Camera selector must pass the chosen SDK device identity");
+                    click("cameraButton");
+                    click("cameraRefresh");
+                    verify(!controller.cameraName().isEmpty(), "Refresh must retain the selected camera");
+                    if (!dir.isEmpty())
+                        verify(window->grabWindow().save(dir + "/camera-picker.png"),
+                               "Cannot capture the header camera picker");
+                    QTest::keyClick(window, Qt::Key_Escape);
+                }
                 click("startButton");
                 verify(!controller.active && !controller.busy, "Empty key must not start a live session");
                 verify(controller.error.contains("API Key"), "Missing key must report an error");

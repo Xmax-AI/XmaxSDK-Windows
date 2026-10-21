@@ -1,3 +1,13 @@
+//
+//  RuntimeInfo.cpp
+//  XmaxSDK
+//
+//  Author: 翁跃庭 (Yueting Weng)
+//  GitHub: https://github.com/Xmax-AI/XmaxSDK-Windows
+//
+//  Copyright (c) 2026 XMAX.AI PTE. LTD.
+//
+
 #include "Foundation/Runtime/RuntimeInfo.hpp"
 #include <iomanip>
 #include <sstream>
@@ -10,6 +20,10 @@
 #include <sys/utsname.h>
 #endif
 namespace xmax::detail {
+
+/**
+ * 构造创建服务端会话所需的 SDK、系统与设备元数据。
+ */
 json runtime_info() {
     std::string os = "unknown", device = "unknown";
 #ifdef _WIN32
@@ -19,34 +33,51 @@ json runtime_info() {
     os = "Windows";
 #else
     utsname info{};
+
     if (uname(&info) == 0) {
         os = info.release;
         device = info.machine;
     }
 #endif
-    // This is the Windows product's protocol identity, including portable tests.
+
+    // 服务端使用 Windows 产品的固定协议标识识别本 SDK。
     return {
-        {"platform", "windows"}, {"os_version", os}, {"sdk_version", XMAX_VERSION}, {"device_model", device}};
+        {"platform", "windows"}, {"os_version", os}, {"sdk_version", XMAX_VERSION}, {"device_model", device}
+    };
 }
+
+/**
+ * 生成用于信令关联和分片传输的随机标识。
+ */
 std::string random_id() {
     uint8_t bytes[16];
 #ifdef _WIN32
-    require(BCryptGenRandom(nullptr, bytes, sizeof(bytes), BCRYPT_USE_SYSTEM_PREFERRED_RNG) == 0,
-            XMAX_INTERNAL_ERROR, "Random number generation failed");
+    require(
+        BCryptGenRandom(nullptr, bytes, sizeof(bytes), BCRYPT_USE_SYSTEM_PREFERRED_RNG) == 0,
+        XMAX_INTERNAL_ERROR, "Random number generation failed"
+    );
 #else
     arc4random_buf(bytes, sizeof(bytes));
 #endif
+
     std::ostringstream out;
+
     for (auto byte : bytes)
         out << std::hex << std::setw(2) << std::setfill('0') << unsigned(byte);
+
     return out.str();
 }
+
+/**
+ * 生成符合生成信令格式的任务标识。
+ */
 std::string task_id() {
     const auto hex = random_id();
     const std::string alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
     std::string encoded;
     unsigned accumulator = 0;
     int bits = 0;
+
     for (size_t i = 0; i < hex.size(); i += 2) {
         accumulator = (accumulator << 8) | unsigned(std::stoul(hex.substr(i, 2), nullptr, 16));
         bits += 8;
@@ -55,8 +86,10 @@ std::string task_id() {
             encoded += alphabet[(accumulator >> bits) & 63];
         }
     }
+
     if (bits)
         encoded += alphabet[(accumulator << (6 - bits)) & 63];
+
     return "task-" + encoded + "?os=windows";
 }
 } // namespace xmax::detail

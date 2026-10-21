@@ -60,7 +60,7 @@ Rectangle {
     }
     Text { visible: panel.result; anchors.top: parent.top; anchors.right: parent.right; anchors.margins: 16; text: "✦ Xmax"; color: "#ccffffff"; font.pixelSize: 13; font.weight: Font.DemiBold }
     Rectangle {
-        x: 14; y: parent.height - 35; width: tag.width + 16; height: 23; color: "#59000000"; radius: 8
-        Text { id: tag; anchors.centerIn: parent; text: panel.title; color: "#a6ffffff"; font.pixelSize: 12 }
+        x: 14; y: parent.height - 35; width: Math.min(tag.implicitWidth + 16, parent.width - 28); height: 23; color: "#59000000"; radius: 8
+        Text { id: tag; anchors.centerIn: parent; width: parent.width - 16; text: panel.title; elide: Text.ElideRight; color: "#a6ffffff"; font.pixelSize: 12; font.family: Qt.platform.os === "windows" ? "Microsoft YaHei UI" : Qt.application.font.family }
     }
 }

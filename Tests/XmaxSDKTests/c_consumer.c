@@ -23,6 +23,13 @@ typedef char original_event_layout[sizeof(xmax_event) == 856 ? 1 : -1];
         }                                                                                                    \
     } while (0)
 int main(void) {
+    uint32_t log_options = 99;
+    xmax_log_language log_language = XMAX_LOG_ENGLISH;
+    CHECK(xmax_logger_get_config(&log_options, &log_language) == XMAX_OK && log_options == XMAX_LOG_NONE);
+    CHECK(sizeof(xmax_log_record) == 4160);
+    CHECK(xmax_logger_configure(XMAX_LOG_ALL, XMAX_LOG_ENGLISH) == XMAX_OK);
+    CHECK(xmax_logger_configure(8, XMAX_LOG_ENGLISH) == XMAX_INVALID_ARGUMENT);
+    CHECK(xmax_logger_get_config(NULL, &log_language) == XMAX_INVALID_ARGUMENT);
     xmax_client client = NULL;
     xmax_realtime realtime = NULL;
     xmax_client_config c = {0};
@@ -45,9 +52,17 @@ int main(void) {
     xmax_client_destroy(client); /* Children own their configuration and transport. */
     xmax_video_format f = {1920, 1024, 30};
     CHECK(xmax_realtime_prepare_external(realtime, &f) == XMAX_OK);
+    xmax_log_record log_record = {0};
+    CHECK(xmax_logger_poll(&log_record) == XMAX_INVALID_ARGUMENT);
+    log_record.struct_size = sizeof(log_record);
+    CHECK(xmax_logger_poll(&log_record) == XMAX_OK);
+    CHECK(log_record.timestamp_us > 0 && log_record.message[0] && log_record.category[0]);
+    CHECK(xmax_logger_configure(XMAX_LOG_NONE, XMAX_LOG_ENGLISH) == XMAX_OK);
+    CHECK(xmax_logger_poll(&log_record) == XMAX_NO_EVENT);
     xmax_event e = {0};
     e.struct_size = sizeof(e);
     CHECK(xmax_realtime_get_state(realtime, &e) == XMAX_OK && e.state == XMAX_READY);
+    CHECK(xmax_realtime_poll_event(realtime, &e) == XMAX_OK && e.state == XMAX_PREPARING);
     CHECK(xmax_realtime_poll_event(realtime, &e) == XMAX_OK && e.state == XMAX_READY);
     CHECK(xmax_realtime_poll_event(realtime, &e) == XMAX_NO_EVENT);
     xmax_video_format actual = {0};
@@ -62,9 +77,9 @@ int main(void) {
     CHECK(xmax_realtime_set_interpolation(realtime, 1) == XMAX_UNSUPPORTED);
     CHECK(xmax_realtime_set_interpolation(realtime, 0) == XMAX_OK);
     xmax_encoding_config encoding = {sizeof(encoding), -1, 50, XMAX_ENCODER_AUTO};
-    CHECK(xmax_realtime_set_encoding(realtime, &encoding) == XMAX_INVALID_ARGUMENT);
+    CHECK(xmax_realtime_set_encoding(realtime, &encoding) == XMAX_OK);
     CHECK(xmax_realtime_generate(realtime, NULL) == XMAX_INVALID_ARGUMENT);
-    CHECK(xmax_realtime_connect(realtime, 0) == XMAX_INVALID_ARGUMENT); /* Empty key; no network. */
+    CHECK(xmax_realtime_connect(realtime, 0) == XMAX_INVALID_API_KEY); /* Empty key; no network. */
     const size_t stride = 1920 * 4, size = stride * 1024;
     uint8_t* pixels = (uint8_t*)calloc(size, 1);
     CHECK(pixels != NULL);
