@@ -47,7 +47,8 @@ public sealed partial class MainWindow : Window
     private readonly Pill previewBadge = new() { Text = "UI Preview · camera off", Accent = true, Margin = new(16, 0, 0, 0), IsHitTestVisible = false };
     internal readonly Pill StartButton = new() { Text = "Start Camera", Glyph = "camera", Primary = true, Height = 52, FontSize = 16, HorizontalAlignment = HorizontalAlignment.Center };
     private readonly Pill cameraButton = new() { Text = "Select Camera", Glyph = "camera", MaxWidth = 218, FontSize = 12 };
-    private readonly Pill modelButton = new() { Text = "X2.1", Glyph = "chevron", TrailingGlyph = true, Padding = new(18, 0, 12, 0), ContentSpacing = 6 };
+    private readonly Pill modelButton = new() { Text = "X2.1.1-preview-cn", Glyph = "chevron", TrailingGlyph = true, Padding = new(18, 0, 12, 0), ContentSpacing = 6 };
+    private readonly Pill sessionModelLabel = new() { Passive = true, IsHitTestVisible = false };
     private readonly Pill keyButton = new() { Glyph = "key", LabelVerticalOffset = 2.75 };
     private readonly Pill statisticsButton = new() { Glyph = "statistics", Secondary = true };
     private readonly Pill volumeButton = new() { Glyph = "muted", Secondary = true };
@@ -135,6 +136,7 @@ public sealed partial class MainWindow : Window
         previewBadge.Visibility = previewFooter.Visibility = Model.IsPreview ? Visibility.Visible : Visibility.Collapsed;
         cameraButton.Visibility = Model.IsPreview ? Visibility.Collapsed : Visibility.Visible;
         cameraButton.Text = Model.SelectedCamera?.Name ?? "Select Camera";
+        modelButton.Text = sessionModelLabel.Text = Model.ModelDisplayName;
         keyButton.Text = Model.KeyLabel;
         cameraButton.IsEnabled = modelButton.IsEnabled = keyButton.IsEnabled = StartButton.IsEnabled = Model.CanEdit && !closing && !Model.HasRecordingToSave && !Model.IsFinishingRecording;
         recordButton.Text = Model.RecordLabel;

@@ -1,6 +1,7 @@
 using System.IO;
 using System.Text.Json;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Automation.Provider;
 using Microsoft.UI.Xaml.Media;
@@ -76,6 +77,29 @@ public sealed partial class MainWindow
         while (!condition()) { if (DateTime.UtcNow >= deadline) throw new TimeoutException("WinUI verification did not reach the expected state."); await Task.Delay(30); }
     }
     private static void Check(bool condition, string message) { if (!condition) throw new InvalidOperationException(message); }
+    private async Task VerifyModelsAsync()
+    {
+        string original = Model.SelectedModel;
+        try
+        {
+            foreach (string identifier in MainViewModel.Models.Reverse())
+            {
+                OpenModels();
+                var surface = (Border)popups.Single().Child;
+                var list = (StackPanel)surface.Child;
+                Check(list.Children.Count == 2, "The model menu must include domestic and overseas models.");
+                var option = list.Children.OfType<Button>().Single(button => Microsoft.UI.Xaml.Automation.AutomationProperties.GetName(button) == identifier);
+                await UntilAsync(() => option.IsLoaded);
+                if (identifier.EndsWith("-us")) await SaveScreenshotAsync("model-menu", surface);
+                var peer = FrameworkElementAutomationPeer.CreatePeerForElement(option)!;
+                ((IInvokeProvider)peer.GetPattern(PatternInterface.Invoke)).Invoke();
+                await UntilAsync(() => Model.SelectedModel == identifier && popups.Count == 0);
+                Check(modelButton.Text == Model.ModelDisplayName && sessionModelLabel.Text == Model.ModelDisplayName, "Model labels did not follow selection.");
+                Check(Model.Session is null, "Selecting a model started a session.");
+            }
+        }
+        finally { ClosePopups(); Model.SelectedModel = original; }
+    }
     private async Task ClickReferenceAsync(ReferenceItem item)
     {
         Model.SelectedMode = item.Mode; root.UpdateLayout();
@@ -102,6 +126,7 @@ public sealed partial class MainWindow
             await Task.Delay(650);
             if (mode == "--smoke-test-ui")
             {
+                await VerifyModelsAsync();
                 await SaveScreenshotAsync("aligned-landing");
                 foreach (var (width, height, name) in new[] { (1920,1080,"wide"), (1180,800,"minimum") })
                 {

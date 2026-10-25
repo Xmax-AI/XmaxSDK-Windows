@@ -18,10 +18,30 @@ class BehaviorTests : public QObject {
         QSettings().remove("xmax.xlab.videoMirrored");
     }
 
+    void modelSelectionMatchesMacOSAndDoesNotStartCapture() {
+        XLabController controller(true);
+        QCOMPARE(controller.model(), QString("x2.1.1-preview-cn"));
+        controller.setModel("x2.1.1-preview-us");
+        QCOMPARE(controller.model(), QString("x2.1.1-preview-us"));
+        controller.setModel("x2.1");
+        QCOMPARE(controller.model(), QString("x2.1.1-preview-us"));
+        controller.busy = true;
+        controller.setModel("x2.1.1-preview-cn");
+        QCOMPARE(controller.model(), QString("x2.1.1-preview-us"));
+        controller.busy = false;
+        controller.active = true;
+        controller.setModel("x2.1.1-preview-cn");
+        QCOMPARE(controller.model(), QString("x2.1.1-preview-us"));
+        controller.active = false;
+        controller.setModel("x2.1.1-preview-cn");
+        QCOMPARE(controller.model(), QString("x2.1.1-preview-cn"));
+        QVERIFY(!controller.handles_);
+    }
+
     void volumeChangesAreCoalescedAndKeepTheLatestValue() {
         XLabController controller(true);
         auto handles = std::make_shared<SdkHandles>();
-        const xmax_client_config config{sizeof(config), XMAX_ABI_VERSION, "test", "x2.1", 100};
+        const xmax_client_config config{sizeof(config), XMAX_ABI_VERSION, "test", "x2.1.1-preview-cn", 100};
         QCOMPARE(xmax_client_create(&config, &handles->client), XMAX_OK);
         QCOMPARE(xmax_realtime_create(handles->client, &handles->realtime), XMAX_OK);
         controller.handles_ = handles;
@@ -55,7 +75,7 @@ class BehaviorTests : public QObject {
     void stoppingIgnoresPendingVolumeCompletion() {
         XLabController controller(true);
         auto handles = std::make_shared<SdkHandles>();
-        const xmax_client_config config{sizeof(config), XMAX_ABI_VERSION, "test", "x2.1", 100};
+        const xmax_client_config config{sizeof(config), XMAX_ABI_VERSION, "test", "x2.1.1-preview-cn", 100};
         QCOMPARE(xmax_client_create(&config, &handles->client), XMAX_OK);
         QCOMPARE(xmax_realtime_create(handles->client, &handles->realtime), XMAX_OK);
         controller.handles_ = handles;
@@ -194,7 +214,7 @@ class BehaviorTests : public QObject {
     }
 
     void unavailableRtcStaysOnLanding() {
-        const xmax_client_config config{sizeof(config), XMAX_ABI_VERSION, "test-key", "x2.1",
+        const xmax_client_config config{sizeof(config), XMAX_ABI_VERSION, "test-key", "x2.1.1-preview-cn",
                                         1000};
         xmax_client client = nullptr;
         QCOMPARE(xmax_client_create(&config, &client), XMAX_OK);

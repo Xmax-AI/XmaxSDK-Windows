@@ -421,7 +421,7 @@ typedef struct xmax_client_config {
     const char* api_key;
 
     /**
-     * The realtime model identifier; only x2.1 is supported and NULL selects the default.
+     * The realtime model identifier; x2.1.1-preview-cn and x2.1.1-preview-us are supported and NULL selects the default.
      */
     const char* model;
 
@@ -927,8 +927,8 @@ typedef struct xmax_camera_config {
     const char* device_id;
 
     /**
-     * The RTC encoding target; an all-zero format selects the model's camera default (1024x1920 at 30 fps
-     * for x2.1). Frame views report actual capture dimensions.
+     * The RTC encoding target; an all-zero format selects the model's camera default (1920x1024 at 30 fps
+     * for both preview models). Frame views report actual capture dimensions.
      */
     xmax_video_format format;
 
@@ -1356,7 +1356,7 @@ typedef struct xmax_realtime_config {
     uint32_t struct_size;
 
     /**
-     * The model identifier copied at creation; NULL selects x2.1.
+     * The model identifier copied at creation; NULL selects x2.1.1-preview-cn.
      */
     const char* model;
 
@@ -1373,7 +1373,7 @@ typedef struct xmax_realtime_options {
     uint32_t struct_size;
 
     /**
-     * The copied model identifier; NULL selects x2.1.
+     * The copied model identifier; NULL selects x2.1.1-preview-cn.
      */
     const char* model;
 
@@ -1693,7 +1693,7 @@ typedef struct xmax_interaction_frame {
 /**
  * Returns the model's supported formats, pixel limits, and defaults.
  *
- * @param[in] model The model identifier; NULL selects x2.1.
+ * @param[in] model The model identifier; NULL selects x2.1.1-preview-cn.
  * @param[in,out] info The destination structure, with struct_size initialized.
  *
  * @return XMAX_OK on success, or a negative error code on failure.

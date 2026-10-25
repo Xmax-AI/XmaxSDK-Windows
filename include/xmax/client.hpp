@@ -34,13 +34,13 @@ class client : public detail::owner<xmax_client, xmax_client_destroy> {
      * Copies configuration and creates an SDK client without opening a cloud session.
      *
      * @param[in] key The API credential copied during creation; empty permits local preparation.
-     * @param[in] model The realtime model identifier; only x2.1 is supported.
+     * @param[in] model The realtime model identifier; x2.1.1-preview-cn and x2.1.1-preview-us are supported.
      *
      * @see xmax_client_create
      */
     explicit client(
         const std::string& key,
-        const std::string& model = "x2.1"
+        const std::string& model = "x2.1.1-preview-cn"
     ) {
         const xmax_client_config config{
             sizeof(config),

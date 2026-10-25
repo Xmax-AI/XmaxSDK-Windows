@@ -61,7 +61,7 @@ static AudioFrame audio(int64_t time = 1000, uint32_t rate = 48000, uint32_t sam
 
 static void disabled_quality() {
     auto preferences = std::make_shared<MemoryPreferences>();
-    auto history = std::make_shared<QualityHistory>("x2.1", preferences);
+    auto history = std::make_shared<QualityHistory>("x2.1.1-preview-cn", preferences);
     history->write(4, false);
     history->write(5, true);
     auto rtc = std::make_shared<FakeRtc>();
@@ -457,11 +457,11 @@ static void public_options_and_external_sink() {
     CHECK(state.event.state == XMAX_IDLE && state.reason == XMAX_REASON_FAILURE);
     CHECK(state.error.api_code == 47 && state.error.http_status == 503);
 
-    const xmax_realtime_options invalid{sizeof(invalid), "x2.1", 2};
+    const xmax_realtime_options invalid{sizeof(invalid), "x2.1.1-preview-cn", 2};
     xmax_realtime missing = reinterpret_cast<xmax_realtime>(1);
     CHECK(xmax_realtime_create_with_options(client.get(), &invalid, &missing) == XMAX_INVALID_ARGUMENT);
     CHECK(missing == nullptr);
-    const xmax_realtime_config legacy{sizeof(legacy), "x2.1"};
+    const xmax_realtime_config legacy{sizeof(legacy), "x2.1.1-preview-cn"};
     CHECK(xmax_realtime_create_with_config(client.get(), &legacy, &missing) == XMAX_OK);
     xmax::realtime compatibility(missing);
     CHECK(compatibility.quality().adaptive_enabled);

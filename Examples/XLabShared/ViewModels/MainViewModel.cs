@@ -20,12 +20,25 @@ internal sealed partial class MainViewModel : INotifyPropertyChanged, IAsyncDisp
     private string status = "准备就绪 · 摄像头预览不需要 API Key", error = "", metrics = "等待视频统计";
     private CameraDevice? camera;
     private VideoFormat format;
-    private string sessionKey = "", sessionCamera = "";
+    private string sessionKey = "", sessionCamera = "", sessionModel = "";
     private const XmaxEnvironment ServiceEnvironment = XmaxEnvironment.China;
     private VideoFormat sessionFormat;
     private IXmaxVideoSource? local, remote;
     public ObservableCollection<CameraDevice> Cameras { get; } = [];
     public ObservableCollection<VideoFormat> Formats { get; } = [];
+    public static IReadOnlyList<string> Models { get; } = Array.AsReadOnly(new[] { "x2.1.1-preview-cn", "x2.1.1-preview-us" });
+    private string selectedModel = Models[0];
+    public string SelectedModel
+    {
+        get => selectedModel;
+        set
+        {
+            if (!CanEdit || Active || selectedModel == value || !Models.Contains(value)) return;
+            selectedModel = value;
+            Changed(); Changed(nameof(ModelDisplayName));
+        }
+    }
+    public string ModelDisplayName => "X" + SelectedModel[1..];
     private string apiKey = "";
     public string ApiKey { get => apiKey; set { apiKey = value; Changed(); Changed(nameof(KeyLabel)); } }
     public string Prompt { get; set; } = "";
@@ -67,10 +80,9 @@ internal sealed partial class MainViewModel : INotifyPropertyChanged, IAsyncDisp
         try
         {
             if (IsPreview) return;
-            var model = XmaxClient.GetModelInfo();
+            var model = XmaxClient.GetModelInfo(SelectedModel);
             foreach (var item in model.SupportedFormats) Formats.Add(item);
-            SelectedFormat = model.SupportedFormats.FirstOrDefault(item => item.Width > item.Height);
-            if (SelectedFormat.Width == 0) SelectedFormat = model.DefaultCameraFormat;
+            SelectedFormat = model.DefaultCameraFormat;
             await GuardAsync(RefreshCamerasAsync);
         }
         catch (Exception failure) { ReportError(failure); }
@@ -97,14 +109,14 @@ internal sealed partial class MainViewModel : INotifyPropertyChanged, IAsyncDisp
     {
         if (SelectedCamera is null) { RequireCamera(); throw new InvalidOperationException("Select a camera before starting. Choose your physical camera for live video."); }
         if (session is not null && sessionKey == ApiKey &&
-            sessionCamera == SelectedCamera.Id && sessionFormat == SelectedFormat && State != RealtimeState.Idle)
+            sessionCamera == SelectedCamera.Id && sessionFormat == SelectedFormat && sessionModel == SelectedModel && State != RealtimeState.Idle)
             return;
         await StopAsync();
         int current = ++revision;
         using var client = new XmaxClient(new() { ApiKey = ApiKey, Environment = ServiceEnvironment });
-        var next = client.CreateRealtime();
+        var next = client.CreateRealtime(new() { Model = SelectedModel });
         session = next;
-        sessionKey = ApiKey; sessionCamera = SelectedCamera.Id; sessionFormat = SelectedFormat;
+        sessionKey = ApiKey; sessionCamera = SelectedCamera.Id; sessionFormat = SelectedFormat; sessionModel = SelectedModel;
         LocalVideo = next.LocalVideo; RemoteVideo = next.RemoteVideo;
         foreach (var row in TimingRows.Concat(UplinkRows).Concat(UplinkNetworkRows).Concat(DownlinkRows).Concat(DownlinkNetworkRows)) row.Value = "—";
         next.EventReceived += item => dispatcher.InvokeAsync(() => { if (current == revision) Receive(item); });

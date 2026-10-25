@@ -36,7 +36,17 @@ try
     {
         Check(XmaxRuntime.Version.Length > 0, "version");
         var model = XmaxClient.GetModelInfo();
-        Check(model.SupportedFormats.Count == 2 && model.DefaultCameraFormat == new VideoFormat(1024, 1920), "model sizes");
+        Check(model.Identifier == "x2.1.1-preview-cn", "default model");
+        foreach (string identifier in new[] { "x2.1.1-preview-cn", "x2.1.1-preview-us" })
+        {
+            var info = XmaxClient.GetModelInfo(identifier);
+            Check(info.Identifier == identifier && info.DisplayName == "X" + identifier[1..], "model identifiers");
+            Check(info.SupportedFormats.Count == 2 && info.DefaultCameraFormat == new VideoFormat(1920, 1024), "model sizes");
+            using var owner = new XmaxClient();
+            await using var selected = owner.CreateRealtime(new() { Model = identifier });
+            await selected.PrepareExternalAsync(new(16, 8));
+        }
+        await ThrowsAsync<XmaxException>(() => { XmaxClient.GetModelInfo("x2.1"); return Task.CompletedTask; });
         var client = new XmaxClient();
         Check(client.GetCapabilities().HasFlag(XmaxCapabilities.Storage), "storage capability");
         var realtime = client.CreateRealtime();

@@ -13,13 +13,13 @@ C++ 类型分别定义在同名头文件中：`RealtimeModel.hpp`、`RealtimeQua
 
 xmax::client client(xmax::XmaxConfiguration{apiKey, xmax::XmaxEnvironment::china});
 auto capabilities = client.capabilities();
-auto realtime = client.create_realtime(xmax::RealtimeConfiguration{xmax::RealtimeModel::x2_1});
+auto realtime = client.create_realtime(xmax::RealtimeConfiguration{xmax::RealtimeModel::x2_1_1_preview_cn});
 auto storage = client.create_storage();
 ```
 
 `XMAX_CAP_RTC` 表示构建包含 RTC 后端；`XMAX_CAP_CAMERA` 表示提供原生采集实现，不保证设备存在或权限已授予；`XMAX_CAP_NATIVE_WINDOW` 表示 Windows HWND 显示实现；`XMAX_CAP_TRAJECTORY` 表示提供坐标映射、任务轨迹信令和效果数据查询。客户端可以在子对象创建后销毁，Realtime / Storage 仍拥有所需配置和传输对象。
 
-模型由实时配置选择，服务环境由全局配置选择；当前仅支持 `xmax::RealtimeModel::x2_1`，服务端模型标识为 `x2.1`。模型能力可通过 `xmax::client::model_info(xmax::RealtimeModel::x2_1)` 查询。新入口中，海外通用 API 使用 `api.xmax.cloud`，实时会话使用 `api.xmax.ai`。字符串配置和 C ABI 入口均仅接受 `x2.1`；国内外服务通过环境配置选择。
+模型由实时配置选择，服务环境由全局配置选择；当前支持 `xmax::RealtimeModel::x2_1_1_preview_cn` 和 `xmax::RealtimeModel::x2_1_1_preview_us`，服务端模型标识分别为 `x2.1.1-preview-cn` 和 `x2.1.1-preview-us`，默认使用国内模型。模型能力可通过 `xmax::client::model_info(xmax::RealtimeModel::x2_1_1_preview_cn)` 查询。新入口中，海外通用 API 使用 `api.xmax.cloud`，实时会话使用 `api.xmax.ai`。字符串配置和 C ABI 入口接受上述两个标识；国内外服务地址通过环境配置独立选择，不随模型自动切换。旧的 `x2.1` 标识和 `x2_1` 枚举已移除，调用方需更新模型配置。
 
 SDK 当前采用 CPU 帧路径；Windows 原生窗口使用 GDI 呈现，不提供 D3D11 纹理零拷贝。媒体输入以摄像头和宿主提交的帧为主，不内置图片或视频文件解码，也不提供远端插帧。上传文件与实时媒体输入是不同接口。
 
@@ -39,7 +39,7 @@ Windows 使用 Media Foundation；Mac 开发构建使用 AVFoundation。SDK 保�
 
 | 模型 | 支持的编码目标 | SDK 默认目标 |
 | --- | --- | --- |
-| `x2.1` | `1024×1920`、`1920×1024` | `1024×1920 @ 30 fps` |
+| `x2.1.1-preview-cn`、`x2.1.1-preview-us` | `1024×1920`、`1920×1024` | `1920×1024 @ 30 fps` |
 
 兼容预设 `1080×1920` 映射为 `1024×1920`，`1920×1080` 映射为 `1920×1024`。枚举中保留的其他尺寸不表示当前模型支持它们。`format()` 返回编码目标，不表示相机硬件必定输出该尺寸；本地帧视图报告设备的实际输出尺寸。
 

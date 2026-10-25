@@ -49,10 +49,17 @@ public sealed partial class MainWindow
     }
     private void OpenModels()
     {
-        var row = new Grid(); row.Children.Add(Theme.Text("X2.1", 13, "#2F46E2"));
-        var check = Theme.Text("✓", 13, "#2F46E2"); check.FontFamily = new("Segoe UI Symbol"); check.HorizontalAlignment = HorizontalAlignment.Right; row.Children.Add(check);
-        var model = new Button { Template = Theme.ButtonTemplate, Content = row, Height = 36, Background = Theme.Brush("#EEF1FF"), BorderThickness = new(0), CornerRadius = new(8), HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch, Padding = new(10, 0, 10, 0) };
-        model.Click += (_, _) => ClosePopups(); OpenPopup(modelButton, model, 240, 7);
+        var list = new StackPanel { Spacing = 2 };
+        foreach (string identifier in MainViewModel.Models)
+        {
+            bool selected = Model.SelectedModel == identifier;
+            var row = new Grid(); row.Children.Add(Theme.Text("X" + identifier[1..], 13, selected ? "#2F46E2" : "#111318"));
+            if (selected) { var check = Theme.Text("✓", 13, "#2F46E2"); check.FontFamily = new("Segoe UI Symbol"); check.HorizontalAlignment = HorizontalAlignment.Right; row.Children.Add(check); }
+            var option = new Button { Template = Theme.ButtonTemplate, Content = row, Height = 36, Background = Theme.Brush(selected ? "#EEF1FF" : "#00FFFFFF"), BorderThickness = new(0), CornerRadius = new(8), HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch, Padding = new(10, 0, 10, 0) };
+            AutomationProperties.SetName(option, identifier);
+            option.Click += (_, _) => { Model.SelectedModel = identifier; ClosePopups(); }; list.Children.Add(option);
+        }
+        OpenPopup(modelButton, list, 256, 7);
     }
     private void OpenKey()
     {

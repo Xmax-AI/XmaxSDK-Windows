@@ -124,7 +124,7 @@ struct DiagnosticHttp : Http {
 static void api_diagnostics() {
     XmaxLogger::configure(XMAX_LOG_BUSINESS, XMAX_LOG_ENGLISH);
     auto http = std::make_shared<DiagnosticHttp>();
-    ApiService api({"API_KEY_SENTINEL_92817", "x2.1", 15000}, http);
+    ApiService api({"API_KEY_SENTINEL_92817", "x2.1.1-preview-cn", 15000}, http);
     auto result = api.request("GET", "/sample?api_key=QUERY_SENTINEL", nullptr, [] { return false; });
     CHECK(result["token"] == "SUCCESS_PAYLOAD_SENTINEL");
     auto text = messages(drain());
@@ -209,7 +209,7 @@ static void storage_diagnostics() {
     XmaxLogger::configure(XMAX_LOG_BUSINESS, XMAX_LOG_ENGLISH);
     auto http = std::make_shared<DiagnosticStorageHttp>();
     auto api =
-        std::make_shared<ApiService>(Config{"STORAGE_API_KEY_SENTINEL", "x2.1", 15000}, http);
+        std::make_shared<ApiService>(Config{"STORAGE_API_KEY_SENTINEL", "x2.1.1-preview-cn", 15000}, http);
     XmaxStorageManager storage(api);
     const uint8_t bytes[]{1, 2, 3};
     storage.upload_data(bytes, sizeof(bytes), "image.png", "image/png", false);
@@ -237,7 +237,7 @@ static void lifecycle_and_signal_privacy() {
     auto http = std::make_shared<FakeHttp>();
     auto rtc = std::make_shared<FakeRtc>();
     auto api =
-        std::make_shared<ApiService>(Config{"API_KEY_SENTINEL_92817", "x2.1", 15000}, http);
+        std::make_shared<ApiService>(Config{"API_KEY_SENTINEL_92817", "x2.1.1-preview-cn", 15000}, http);
     {
         XmaxRealtimeManager session(api, [rtc] { return rtc; });
         session.prepare({1920, 1024, 30});

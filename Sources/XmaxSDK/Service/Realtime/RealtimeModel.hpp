@@ -27,7 +27,7 @@ class RealtimeModelDefinition {
     /**
      * The model's encoding targets and generation canvases, ordered by camera preset.
      */
-    inline static constexpr auto capabilities = model_capabilities(RealtimeModel::x2_1);
+    inline static constexpr auto capabilities = model_capabilities(RealtimeModel::x2_1_1_preview_cn);
 
     /**
      * The model's encoding targets, read from its public description.
@@ -51,8 +51,10 @@ class RealtimeModelDefinition {
     static RealtimeModel parse(
         std::string_view identifier
     ) {
-        if (identifier == model_identifier(RealtimeModel::x2_1))
-            return RealtimeModel::x2_1;
+        if (identifier == model_identifier(RealtimeModel::x2_1_1_preview_cn))
+            return RealtimeModel::x2_1_1_preview_cn;
+        if (identifier == model_identifier(RealtimeModel::x2_1_1_preview_us))
+            return RealtimeModel::x2_1_1_preview_us;
         throw Error(
             XMAX_INVALID_ARGUMENT,
             "Unsupported realtime model"
@@ -70,7 +72,7 @@ class RealtimeModelDefinition {
         RealtimeModel model
     ) {
         require(
-            model == RealtimeModel::x2_1,
+            model == RealtimeModel::x2_1_1_preview_cn || model == RealtimeModel::x2_1_1_preview_us,
             XMAX_INVALID_ARGUMENT,
             "Unsupported realtime model"
         );

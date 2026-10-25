@@ -21,7 +21,7 @@ public sealed partial class MainWindow
         branding.Children.Add(brand); branding.Children.Add(previewBadge); header.Children.Add(branding);
         foreach (var button in new[] { cameraButton, modelButton, keyButton }) homeControls.Children.Add(button);
         header.Children.Add(homeControls); header.Children.Add(sessionControls);
-        foreach (var element in new UIElement[] { new Pill { Text = "X2.1", Passive = true, IsHitTestVisible = false }, statisticsButton, volumeButton, elapsed, recordButton, stopButton }) sessionControls.Children.Add(element);
+        foreach (var element in new UIElement[] { sessionModelLabel, statisticsButton, volumeButton, elapsed, recordButton, stopButton }) sessionControls.Children.Add(element);
         AutomationProperties.SetName(cameraButton, "Select Camera"); AutomationProperties.SetName(keyButton, "API Key");
         AutomationProperties.SetName(StartButton, "Start Camera"); AutomationProperties.SetName(statisticsButton, "Show / hide statistics"); AutomationProperties.SetName(volumeButton, "Remote volume");
         ToolTipService.SetToolTip(statisticsButton, "Show / hide statistics"); ToolTipService.SetToolTip(volumeButton, "Remote volume"); ToolTipService.SetToolTip(keyButton, "API Key");

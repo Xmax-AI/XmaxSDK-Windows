@@ -58,7 +58,7 @@ ApplicationWindow {
                             background: Rectangle { color: "white"; radius: 12; border.color: "#e5e7eb" }
                             contentItem: Column {
                                 Repeater {
-                                    model: ["x2.1"]
+                                    model: ["x2.1.1-preview-cn", "x2.1.1-preview-us"]
                                     delegate: ItemDelegate {
                                         required property string modelData
                                         width: 224; height: 36; text: modelData.replace("x2", "X2")

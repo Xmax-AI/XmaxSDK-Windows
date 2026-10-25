@@ -327,7 +327,7 @@ xmax_result XMAX_CALL xmax_model_get_info(
         __func__,
         [&] {
             sized(info);
-            *info = RealtimeModelDefinition::info(RealtimeModelDefinition::parse(model ? model : "x2.1"));
+            *info = RealtimeModelDefinition::info(RealtimeModelDefinition::parse(model ? model : "x2.1.1-preview-cn"));
         }
     );
 }
@@ -355,7 +355,7 @@ xmax_result XMAX_CALL xmax_client_create_with_options(
             );
             Config config;
             config.key = trim(options->api_key ? options->api_key : "");
-            config.model = "x2.1";
+            config.model = "x2.1.1-preview-cn";
             config.environment = options->environment;
             config.timeout_ms = options->http_timeout_ms ? options->http_timeout_ms : 15000;
             auto client = std::make_unique<xmax_client_impl>(std::move(config));
@@ -386,7 +386,7 @@ xmax_result XMAX_CALL xmax_realtime_create_with_config(
             handle(client);
             sized(config);
             handle(out_realtime);
-            const std::string model = config->model ? config->model : "x2.1";
+            const std::string model = config->model ? config->model : "x2.1.1-preview-cn";
             RealtimeModelDefinition::parse(model);
             *out_realtime = new xmax_realtime_impl(client->client.create_realtime(model));
         }
@@ -420,7 +420,7 @@ xmax_result XMAX_CALL xmax_realtime_create_with_options(
                 XMAX_INVALID_ARGUMENT,
                 "Adaptive quality must be 0 or 1"
             );
-            const std::string model = options->model ? options->model : "x2.1";
+            const std::string model = options->model ? options->model : "x2.1.1-preview-cn";
             RealtimeModelDefinition::parse(model);
             *out_realtime = new xmax_realtime_impl(
                 client->client.create_realtime(
@@ -802,7 +802,7 @@ xmax_result XMAX_CALL xmax_client_create(
 
             Config config;
             config.key = trim(c->api_key ? c->api_key : "");
-            config.model = c->model ? c->model : "x2.1";
+            config.model = c->model ? c->model : "x2.1.1-preview-cn";
             config.timeout_ms = c->http_timeout_ms ? c->http_timeout_ms : 15000;
 
             auto client = std::make_unique<xmax_client_impl>(std::move(config));

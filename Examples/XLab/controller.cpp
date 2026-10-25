@@ -94,7 +94,7 @@ void XLabController::setApiKey(const QString& key) {
     emit changed();
 }
 void XLabController::setModel(const QString& model) {
-    if (active || busy || model != "x2.1")
+    if (active || busy || (model != "x2.1.1-preview-cn" && model != "x2.1.1-preview-us"))
         return;
     model_ = model;
     emit changed();

@@ -16,11 +16,11 @@
           </StackPanel>
           <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center" Visibility="{Binding Active, Converter={StaticResource HiddenWhenTrue}}">
             <c:Pill x:Name="CameraButton" Style="{StaticResource CameraPicker}" Text="{Binding SelectedCamera.Name, TargetNullValue=Select Camera}" ToolTip="{Binding SelectedCamera.Name}" AutomationProperties.Name="Select Camera" IsEnabled="{Binding CanEdit}" IsEnabledChanged="CameraEnabledChanged" Click="CameraClicked" Visibility="{Binding IsPreview, Converter={StaticResource HiddenWhenTrue}}"/>
-            <c:Pill x:Name="ModelButton" Text="X2.1" Glyph="chevron" TrailingGlyph="True" Margin="12,0,0,0" IsEnabled="{Binding CanEdit}" Click="ModelClicked"/>
+            <c:Pill x:Name="ModelButton" Text="{Binding ModelDisplayName}" Glyph="chevron" TrailingGlyph="True" Margin="12,0,0,0" IsEnabled="{Binding CanEdit}" Click="ModelClicked"/>
             <c:Pill x:Name="KeyButton" Text="{Binding KeyLabel}" LabelVerticalOffset="4" Glyph="key" ToolTip="API Key" AutomationProperties.Name="API Key" Margin="12,0,0,0" IsEnabled="{Binding CanEdit}" Click="KeyClicked"/>
           </StackPanel>
           <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center" Visibility="{Binding Active, Converter={StaticResource Visible}}">
-            <c:Pill Text="X2.1" Foreground="#6B7380" IsHitTestVisible="False"/>
+            <c:Pill Text="{Binding ModelDisplayName}" Foreground="#6B7380" IsHitTestVisible="False"/>
             <c:Pill x:Name="StatisticsButton" Glyph="statistics" Accent="{Binding StatisticsVisible}" ToolTip="Show / hide statistics" Margin="12,0,0,0" Click="StatisticsClicked"/>
             <c:Pill x:Name="VolumeButton" Glyph="{Binding VolumeGlyph}" ToolTip="Remote volume" Margin="12,0,0,0" Click="VolumeClicked">
               <c:Pill.Style><Style TargetType="c:Pill" BasedOn="{StaticResource {x:Type c:Pill}}">
@@ -164,8 +164,8 @@
       </StackPanel></Border>
     </Popup>
     <Popup x:Name="ModelPopup" PlacementTarget="{Binding ElementName=ModelButton}">
-      <Border Style="{StaticResource PopupSurface}" Width="240" Padding="7">
-        <Button Style="{StaticResource LinkButton}" Height="36" Foreground="#2F46E2" Click="ModelSelected" HorizontalContentAlignment="Stretch"><Border Background="#EEF1FF" CornerRadius="8" Width="224" Height="36" Padding="10,0"><Grid><TextBlock Text="X2.1" VerticalAlignment="Center"/><TextBlock Text="✓" FontFamily="Segoe UI Symbol" HorizontalAlignment="Right" VerticalAlignment="Center"/></Grid></Border></Button>
+      <Border Style="{StaticResource PopupSurface}" Width="256" Padding="7">
+        <StackPanel x:Name="ModelOptions"/>
       </Border>
     </Popup>
     <Popup x:Name="KeyPopup" PlacementTarget="{Binding ElementName=KeyButton}" Opened="KeyOpened">

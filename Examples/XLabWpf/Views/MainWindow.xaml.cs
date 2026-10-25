@@ -45,6 +45,7 @@ public partial class MainWindow : Window
     internal async Task VerifyMenusAsync(string? output)
     {
         var original = Model.SelectedCamera;
+        string originalModel = Model.SelectedModel;
         string originalKey = Model.ApiKey;
         string? remembered = CameraSelectionStore.Load();
         try
@@ -83,10 +84,21 @@ public partial class MainWindow : Window
                 }
             }
             CameraPopup.IsOpen = false;
-            ModelPopup.IsOpen = true;
+            ModelClicked(ModelButton, new RoutedEventArgs());
             await Task.Delay(180);
             if (!string.IsNullOrEmpty(output)) SaveElementScreenshot((FrameworkElement)ModelPopup.Child, System.IO.Path.Combine(output, "model-menu.png"));
-            ModelSelected(this, new RoutedEventArgs());
+            if (ModelOptions.Children.Count != 2) throw new InvalidOperationException("The model menu must include domestic and overseas models.");
+            var selectedRow = (Grid)((Border)((Button)ModelOptions.Children[0]).Content).Child;
+            var label = (TextBlock)selectedRow.Children[0];
+            var check = (TextBlock)selectedRow.Children[1];
+            if (label.TranslatePoint(new Point(label.ActualWidth, 0), selectedRow).X > check.TranslatePoint(new Point(), selectedRow).X)
+                throw new InvalidOperationException("The model name overlaps its selection indicator.");
+            ((Button)ModelOptions.Children[1]).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            if (ModelPopup.IsOpen || Model.SelectedModel != "x2.1.1-preview-us" || ModelButton.Text != "X2.1.1-preview-us")
+                throw new InvalidOperationException("Model selection did not update the session configuration and header.");
+            ModelClicked(ModelButton, new RoutedEventArgs());
+            ((Button)ModelOptions.Children[0]).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            if (Model.SelectedModel != "x2.1.1-preview-cn") throw new InvalidOperationException("The domestic model could not be selected.");
             if (Model.Session is not null) throw new InvalidOperationException("Opening the device menu started a camera session.");
             if (CameraList.Items.Count > 1)
             {
@@ -99,6 +111,7 @@ public partial class MainWindow : Window
         finally
         {
             DismissPopups();
+            Model.SelectedModel = originalModel;
             Model.SelectedCamera = original;
             SetApiKey(originalKey);
             Model.ClearError();
@@ -269,7 +282,28 @@ public partial class MainWindow : Window
         PreviewFooter.Width = width;
     }
     private void CameraClicked(object sender, RoutedEventArgs e) => CameraPopup.IsOpen = !CameraPopup.IsOpen;
-    private void ModelClicked(object sender, RoutedEventArgs e) => ModelPopup.IsOpen = !ModelPopup.IsOpen;
+    private void ModelClicked(object sender, RoutedEventArgs e)
+    {
+        ModelOptions.Children.Clear();
+        foreach (string identifier in MainViewModel.Models)
+        {
+            bool selected = Model.SelectedModel == identifier;
+            var row = new Grid();
+            row.ColumnDefinitions.Add(new()); row.ColumnDefinitions.Add(new() { Width = new(22) });
+            var color = (Brush)new BrushConverter().ConvertFromString(selected ? "#2F46E2" : "#111318")!;
+            row.Children.Add(new TextBlock { Text = "X" + identifier[1..], VerticalAlignment = VerticalAlignment.Center, Foreground = color });
+            if (selected)
+            {
+                var check = new TextBlock { Text = "✓", FontFamily = new("Segoe UI Symbol"), HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Center, Foreground = color };
+                Grid.SetColumn(check, 1); row.Children.Add(check);
+            }
+            var option = new Button { Style = (Style)FindResource("LinkButton"), Height = 36, Tag = identifier, HorizontalContentAlignment = HorizontalAlignment.Stretch,
+                Content = new Border { Background = (Brush)new BrushConverter().ConvertFromString(selected ? "#EEF1FF" : "#00FFFFFF")!, CornerRadius = new(8), Width = 240, Height = 36, Padding = new(10, 0, 10, 0), Child = row } };
+            option.Click += ModelSelected;
+            ModelOptions.Children.Add(option);
+        }
+        ModelPopup.IsOpen = !ModelPopup.IsOpen;
+    }
     private void KeyClicked(object sender, RoutedEventArgs e) => KeyPopup.IsOpen = !KeyPopup.IsOpen;
     private void VolumeClicked(object sender, RoutedEventArgs e) => VolumePopup.IsOpen = !VolumePopup.IsOpen;
     private void KeyOpened(object sender, EventArgs e) => ApiKeyInput.Focus();
@@ -294,7 +328,11 @@ public partial class MainWindow : Window
             CameraPopup.IsOpen = false; e.Handled = true;
         }
     }
-    private void ModelSelected(object sender, RoutedEventArgs e) => ModelPopup.IsOpen = false;
+    private void ModelSelected(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button { Tag: string identifier }) Model.SelectedModel = identifier;
+        ModelPopup.IsOpen = false;
+    }
     private void StatisticsClicked(object sender, RoutedEventArgs e) => Model.StatisticsVisible = !Model.StatisticsVisible;
     private async void StopClicked(object sender, RoutedEventArgs e)
     { try { await Model.StopAsync(); } catch (Exception error) { Model.ReportError(error); } }
