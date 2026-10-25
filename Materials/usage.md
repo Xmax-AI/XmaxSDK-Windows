@@ -1,6 +1,6 @@
 # Windows 使用说明
 
-当前版本 `0.2.0`。公开入口是 [C API](../include/xmax/xmax.h) 和 [C++ RAII 包装](../include/xmax/xmax.hpp)。[XLab 控制器](../Examples/XLab/controller.cpp) 只通过公开 C API 接入，SDK 不依赖 Qt。
+当前版本 `1.0.0`。公开入口是 [C API](../include/xmax/xmax.h) 和 [C++ RAII 包装](../include/xmax/xmax.hpp)。[XLab 控制器](../Examples/XLab/controller.cpp) 只通过公开 C API 接入，SDK 不依赖 Qt。
 
 C++ 类型分别定义在同名头文件中：`RealtimeModel.hpp`、`RealtimeQualityLevel.hpp`、`RealtimeCameraPreset.hpp`、`XmaxEnvironment.hpp`、`XmaxConfiguration.hpp` 和 `RealtimeConfiguration.hpp`。可以按需单独包含；统一包含 `<xmax/xmax.hpp>` 也会导入这些类型。
 

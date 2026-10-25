@@ -27,7 +27,7 @@ Demo 为 unpackaged 桌面应用，直接运行 `XLabWinUI.exe`。发布包包�
 
 ## 控件接入
 
-旧版 `XmaxVideoView` 已更名为 `XmaxRealtimeVideoView`，迁移时替换 XAML 标签和 C# 类型引用。包名、命名空间和绑定属性保持一致，旧类型名不再提供；详见 [0.2.0 变更说明](../.cicd/release-notes/0.2.0.md#api-changes)。
+旧版 `XmaxVideoView` 已更名为 `XmaxRealtimeVideoView`，迁移时替换 XAML 标签和 C# 类型引用。包名、命名空间和绑定属性保持一致，旧类型名不再提供；详见 [1.0.0 变更说明](../.cicd/release-notes/1.0.0.md#api-changes)。
 
 在 WinUI 项目中引用 `Xmax.SDK.WinUI`，并保持项目的 `UseWinUI` 配置：
 
