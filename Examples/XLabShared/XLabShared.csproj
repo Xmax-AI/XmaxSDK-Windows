@@ -9,5 +9,6 @@
     <EmbeddedResource Include="../XLab/assets/presets.json" LogicalName="XLab.Shared.presets.json" />
     <InternalsVisibleTo Include="XLabWpf" />
     <InternalsVisibleTo Include="XLabWinUI" />
+    <InternalsVisibleTo Include="XLabRecordingTests" />
   </ItemGroup>
 </Project>

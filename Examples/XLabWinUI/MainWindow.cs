@@ -52,6 +52,7 @@ public sealed partial class MainWindow : Window
     private readonly Pill statisticsButton = new() { Glyph = "statistics" };
     private readonly Pill volumeButton = new() { Glyph = "muted", Secondary = true };
     private readonly Pill elapsed = new() { Passive = true, MinWidth = 72, IsHitTestVisible = false };
+    private readonly Pill recordButton = new() { Text = "Record", Glyph = "record", Secondary = true, IconSize = 12, ContentSpacing = 7, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold };
     private readonly Pill stopButton = new() { Text = "Stop Session", Glyph = "stop", Destructive = true };
     private readonly Pill freeUpload = new() { Glyph = "plus", Width = 44, Height = 44, Padding = new(0), Margin = new(0, 0, 10, 0) };
     private readonly Pill submit = new() { Glyph = "arrow", Primary = true, Width = 44, Height = 44, Padding = new(0) };
@@ -96,10 +97,15 @@ public sealed partial class MainWindow : Window
             if (closed) return;
             args.Cancel = true;
             if (closing) return;
-            closing = true; ClosePopups(); root.IsHitTestVisible = false; toastTimer.Stop();
-            try { await Model.DisposeAsync(); }
-            catch (Exception error) { Model.ReportError(error); }
-            finally { closed = true; DispatcherQueue.TryEnqueue(() => Close()); }
+            closing = true; ClosePopups(); toastTimer.Stop(); RefreshUi();
+            try
+            {
+                await Model.StopAsync();
+                await PresentRecordingSaveAsync();
+                await Model.DisposeAsync();
+                closed = true; DispatcherQueue.TryEnqueue(() => Close());
+            }
+            catch (Exception error) { closing = false; Model.ReportError(error); RefreshUi(); }
         };
         RefreshUi();
     }
@@ -118,6 +124,7 @@ public sealed partial class MainWindow : Window
     private void ModelChanged(object? sender, PropertyChangedEventArgs args)
     {
         RefreshUi();
+        if (Model.HasRecordingToSave && !Model.IsFinishingRecording) _ = PresentRecordingSaveAsync();
         if (args.PropertyName == nameof(Model.Error)) { toastTimer.Stop(); if (Model.Error.Length > 0) toastTimer.Start(); }
     }
     private void RefreshUi()
@@ -129,7 +136,15 @@ public sealed partial class MainWindow : Window
         cameraButton.Visibility = Model.IsPreview ? Visibility.Collapsed : Visibility.Visible;
         cameraButton.Text = Model.SelectedCamera?.Name ?? "Select Camera";
         keyButton.Text = Model.KeyLabel;
-        cameraButton.IsEnabled = modelButton.IsEnabled = keyButton.IsEnabled = StartButton.IsEnabled = Model.CanEdit;
+        cameraButton.IsEnabled = modelButton.IsEnabled = keyButton.IsEnabled = StartButton.IsEnabled = Model.CanEdit && !closing && !Model.HasRecordingToSave && !Model.IsFinishingRecording;
+        recordButton.Text = Model.RecordLabel;
+        recordButton.Glyph = "record";
+        recordButton.Accent = Model.IsRecording;
+        recordButton.IsLoading = Model.IsFinishingRecording;
+        recordButton.IsEnabled = !closing && (Model.CanRecord || Model.IsRecording);
+        recordButton.Refresh();
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(recordButton, Model.RecordLabel);
+        stopButton.IsEnabled = !closing;
         StartButton.Text = Model.StartLabel; stopButton.Text = Model.StopLabel;
         statisticsButton.Accent = Model.StatisticsVisible; volumeButton.Glyph = Model.VolumeGlyph; elapsed.Text = Model.Elapsed;
         localPlaceholder.Text = Model.LocalPlaceholder; resultPlaceholder.Text = Model.ResultPlaceholder;

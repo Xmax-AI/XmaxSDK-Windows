@@ -21,11 +21,11 @@ public partial class App : Application
     {
         string[] arguments = Environment.GetCommandLineArgs();
         string? mode = arguments.FirstOrDefault(value => value.StartsWith("--smoke-test"));
-        bool preview = arguments.Contains("--preview") || arguments.Contains("--preview-session") || mode is "--smoke-test-ui" or "--smoke-test-frames" or "--smoke-test-reference-close";
+        bool preview = arguments.Contains("--preview") || arguments.Contains("--preview-session") || mode is "--smoke-test-ui" or "--smoke-test-frames" or "--smoke-test-reference-close" or "--smoke-test-recording";
         ApiKeyStore? store = !preview && mode is null ? new() : null;
         if (mode?.StartsWith("--smoke-test-key-memory-") == true)
             store = new ApiKeyStore("XMAX.AI/XLabWinUI/ApiKey.Smoke." + Guid.Parse(Environment.GetEnvironmentVariable("XMAX_SMOKE_CREDENTIAL_ID") ?? "").ToString("N"));
-        var main = new MainWindow(preview, arguments.Contains("--preview-session") || mode is "--smoke-test-frames" or "--smoke-test-reference-close", store, mode is null or "--smoke-test-camera" or "--smoke-test-live");
+        var main = new MainWindow(preview, arguments.Contains("--preview-session") || mode is "--smoke-test-frames" or "--smoke-test-reference-close" or "--smoke-test-recording", store, mode is null or "--smoke-test-camera" or "--smoke-test-live");
         if (mode is not null) main.Ready += async () => await main.RunSmokeAsync(mode);
         window = main;
         window.Activate();

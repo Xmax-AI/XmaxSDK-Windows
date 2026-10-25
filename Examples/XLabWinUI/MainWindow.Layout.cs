@@ -21,14 +21,13 @@ public sealed partial class MainWindow
         branding.Children.Add(brand); branding.Children.Add(previewBadge); header.Children.Add(branding);
         foreach (var button in new[] { cameraButton, modelButton, keyButton }) homeControls.Children.Add(button);
         header.Children.Add(homeControls); header.Children.Add(sessionControls);
-        var record = new Pill { Text = "Record", Glyph = "record", Secondary = true, IsEnabled = false };
-        ToolTipService.SetToolTip(record, "WinUI recording is not available in this build.");
-        foreach (var element in new UIElement[] { new Pill { Text = "X2.1", Passive = true, IsHitTestVisible = false }, statisticsButton, volumeButton, elapsed, record, stopButton }) sessionControls.Children.Add(element);
+        foreach (var element in new UIElement[] { new Pill { Text = "X2.1", Passive = true, IsHitTestVisible = false }, statisticsButton, volumeButton, elapsed, recordButton, stopButton }) sessionControls.Children.Add(element);
         AutomationProperties.SetName(cameraButton, "Select Camera"); AutomationProperties.SetName(keyButton, "API Key");
         AutomationProperties.SetName(StartButton, "Start Camera"); AutomationProperties.SetName(statisticsButton, "Show / hide statistics"); AutomationProperties.SetName(volumeButton, "Remote volume");
         ToolTipService.SetToolTip(statisticsButton, "Show / hide statistics"); ToolTipService.SetToolTip(volumeButton, "Remote volume"); ToolTipService.SetToolTip(keyButton, "API Key");
         cameraButton.Click += (_, _) => OpenCameras(); modelButton.Click += (_, _) => OpenModels(); keyButton.Click += (_, _) => OpenKey();
         statisticsButton.Click += (_, _) => Model.StatisticsVisible = !Model.StatisticsVisible;
+        recordButton.Click += async (_, _) => await ToggleRecordingAsync();
         volumeButton.Click += (_, _) => OpenVolume();
         stopButton.Click += async (_, _) => { try { await Model.StopAsync(); } catch (Exception error) { Model.ReportError(error); } };
         StartButton.Click += (_, _) => Model.StartCommand.Execute(null);

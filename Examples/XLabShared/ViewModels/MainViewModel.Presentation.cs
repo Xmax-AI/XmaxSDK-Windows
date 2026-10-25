@@ -18,10 +18,10 @@ internal sealed partial class MainViewModel
     private Task? updateTask;
     internal Task WaitForConditionsAsync() => updateTask ?? Task.CompletedTask;
     private readonly Dictionary<ReferenceItem, CancellationTokenSource> uploadCancellations = [];
-    public bool Active { get => active; private set { if (active == value) return; active = value; Changed(); Changed(nameof(StartLabel)); } }
+    public bool Active { get => active; private set { if (active == value) return; active = value; Changed(); Changed(nameof(StartLabel)); RecordingChanged(); } }
     public bool IsPreview { get => preview; private set { preview = value; Changed(); Changed(nameof(StartLabel)); Changed(nameof(StopLabel)); Changed(nameof(Elapsed)); Changed(nameof(LocalPlaceholder)); } }
     public bool CanEdit => !Busy;
-    public bool RemoteReady { get => remoteReady; private set { remoteReady = value; Changed(); Changed(nameof(ResultPlaceholder)); } }
+    public bool RemoteReady { get => remoteReady; private set { remoteReady = value; Changed(); Changed(nameof(ResultPlaceholder)); RecordingChanged(); } }
     public string LocalPlaceholder => IsPreview ? "UI Preview\nCamera is disabled" : "";
     public string ResultPlaceholder => IsPreview ? "UI Preview\nGeneration is disabled" : RemoteReady ? "" : State == RealtimeState.Connected ? "Generating…" : "Select a reference to generate…";
     public string LocalTitle => IsPreview ? "Local" : string.IsNullOrEmpty(SelectedCamera?.Name) ? "Local" : "Local · " + SelectedCamera.Name;

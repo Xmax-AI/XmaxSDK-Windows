@@ -18,12 +18,18 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "XmaxSDK.WinUI", "Sources\Xm
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "XLabWinUI", "Examples\XLabWinUI\XLabWinUI.csproj", "{70B72AB0-1831-4207-B11D-EEA2AD246229}"
 EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "XLabRecordingTests", "Tests\XLabRecordingTests\XLabRecordingTests.csproj", "{6A1E6181-B2B6-4560-AE97-148F5EF5F5D6}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
 		Release|Any CPU = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{6A1E6181-B2B6-4560-AE97-148F5EF5F5D6}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{6A1E6181-B2B6-4560-AE97-148F5EF5F5D6}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{6A1E6181-B2B6-4560-AE97-148F5EF5F5D6}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{6A1E6181-B2B6-4560-AE97-148F5EF5F5D6}.Release|Any CPU.Build.0 = Release|Any CPU
 		{233D5E9D-BAF2-5698-B096-4D1442C7FCD6}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{233D5E9D-BAF2-5698-B096-4D1442C7FCD6}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{233D5E9D-BAF2-5698-B096-4D1442C7FCD6}.Release|Any CPU.ActiveCfg = Release|Any CPU

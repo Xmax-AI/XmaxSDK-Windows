@@ -125,6 +125,7 @@ public sealed partial class MainWindow
                 await Model.StartLandingAsync(); await Task.Delay(50); await Model.StopAsync(); await Task.Delay(50); await Model.StartLandingAsync();
                 transitions.Add(await VerifyTransitionAsync(true)); await Model.StopAsync(); transitions.Add(await VerifyTransitionAsync(false));
             }
+            else if (mode == "--smoke-test-recording") await VerifyRecordingAsync();
             else if (mode == "--smoke-test-reference-close")
             {
                 await VerifyReferenceCloseAsync();

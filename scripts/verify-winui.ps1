@@ -14,6 +14,8 @@ $env:DOTNET_ROOT=Split-Path (Get-Command $DotNet -ErrorAction Stop).Source
 $properties=@('-p:Platform=x64',"-p:XmaxDotNetBuildRoot=$($BuildRoot.Replace('\','/'))/","-p:XmaxNativeDir=$NativeDirectory")
 & $DotNet build "$repo/Examples/XLabWinUI" -c Release @properties
 if ($LASTEXITCODE -ne 0) { throw 'WinUI build failed.' }
+& $DotNet run --project "$repo/Tests/XLabRecordingTests" -c Release @properties -- --native "--artifacts=$BuildRoot/recording-artifacts"
+if ($LASTEXITCODE -ne 0) { throw 'Recording encoder and ownership verification failed.' }
 $app=Join-Path $BuildRoot 'bin/XLabWinUI/x64/Release/net10.0-windows10.0.26100.0/win-x64/XLabWinUI.exe'
 $previousOutput=$env:XMAX_SMOKE_OUTPUT
 $previousCredential=$env:XMAX_SMOKE_CREDENTIAL_ID
@@ -30,6 +32,7 @@ try {
         if (!$result.passed) { throw "$Mode failed: $($result.error)" }
         Write-Output "PASS WinUI $Mode"
     }
+    Invoke-Smoke '--smoke-test-recording'
     Invoke-Smoke '--smoke-test-frames'
     Invoke-Smoke '--smoke-test-ui'
     Invoke-Smoke '--smoke-test-key-gate'

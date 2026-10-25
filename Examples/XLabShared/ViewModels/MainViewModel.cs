@@ -163,6 +163,7 @@ internal sealed partial class MainViewModel : INotifyPropertyChanged, IAsyncDisp
         var cancellation = operationCancellation;
         operationCancellation = null;
         if (cancellation is not null) await cancellation.CancelAsync();
+        await StopRecordingAsync();
         LocalVideo = RemoteVideo = null;
         State = RealtimeState.Idle;
         Status = previous is null ? "准备就绪" : "正在关闭会话…";
@@ -184,6 +185,7 @@ internal sealed partial class MainViewModel : INotifyPropertyChanged, IAsyncDisp
                 BeginElapsed();
             }
             Status = $"状态：{item.State}";
+            if (!RemoteReady && IsRecording) _ = FinishInterruptedRecordingAsync();
         }
         else if (item.Type == RealtimeEventType.Error) Error = $"{item.Message} ({item.Code}, HTTP {item.HttpStatus})";
         else if (item.Type == RealtimeEventType.Statistics && item.Width > 0 && item.Height > 0)
@@ -204,7 +206,7 @@ internal sealed partial class MainViewModel : INotifyPropertyChanged, IAsyncDisp
     public void ReportError(Exception failure) => Error = failure is XmaxException sdk
         ? $"{sdk.Message} (SDK {sdk.Result}, API {sdk.ApiCode}, HTTP {sdk.HttpStatus})" : failure.Message;
     private void RefreshCommands()
-    { RefreshCommand.Refresh(); PreviewCommand.Refresh(); GenerateCommand.Refresh(); StopCommand.Refresh(); StartCommand?.Refresh(); SubmitPromptCommand?.Refresh(); }
+    { RefreshCommand.Refresh(); PreviewCommand.Refresh(); GenerateCommand.Refresh(); StopCommand.Refresh(); StartCommand?.Refresh(); SubmitPromptCommand?.Refresh(); RecordingChanged(); }
     private void Changed([CallerMemberName] string? name = null) => PropertyChanged?.Invoke(this, new(name));
     public ValueTask DisposeAsync() => new(StopAsync());
 }
