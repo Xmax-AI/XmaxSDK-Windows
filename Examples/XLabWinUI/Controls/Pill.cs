@@ -34,15 +34,16 @@ internal sealed class Pill : Button
     public Pill()
     {
         Template = Theme.ButtonTemplate;
+        UseSystemFocusVisuals = false;
         FontFamily = Theme.Font; FontSize = 13; Height = 36; MinWidth = 36; Padding = new(15, 0, 15, 0);
         HorizontalContentAlignment = HorizontalAlignment.Center; VerticalContentAlignment = VerticalAlignment.Center;
         body.Children.Add(icon); body.Children.Add(progress); body.Children.Add(label); body.Children.Add(chevron); Content = body;
         ProtectedCursor = Microsoft.UI.Input.InputSystemCursor.Create(Microsoft.UI.Input.InputSystemCursorShape.Hand);
         PointerEntered += (_, _) => { hot = true; Refresh(); };
         PointerExited += (_, _) => { hot = false; pressed = false; Refresh(); };
-        PointerPressed += (_, _) => { pressed = true; Refresh(); };
+        PointerPressed += (_, _) => { pressed = true; focused = false; Refresh(); };
         PointerReleased += (_, _) => { pressed = false; Refresh(); };
-        GotFocus += (_, _) => { focused = true; Refresh(); };
+        GotFocus += (_, _) => { focused = FocusState == Microsoft.UI.Xaml.FocusState.Keyboard; Refresh(); };
         LostFocus += (_, _) => { focused = false; Refresh(); };
         RegisterPropertyChangedCallback(IsEnabledProperty, (_, _) => Refresh());
         Loaded += (_, _) => Refresh();
@@ -64,7 +65,7 @@ internal sealed class Pill : Button
         icon.Width = icon.Height = IconSize ?? (Primary ? 20 : Height <= 18 ? 11 : 16);
         BorderThickness = new(1); CornerRadius = new(Height / 2);
         BorderBrush = Theme.Brush(Primary ? "#00FFFFFF" : Destructive ? "#F1BABA" : Accent ? "#D7DDFB" : focused ? "#2F46E2" : hot ? "#C9CED6" : "#E2E5EA");
-        Background = Primary || Accent || Destructive ? Theme.Brush(Primary ? "#2F46E2" : Accent ? "#EEF1FF" : "#FDF2F2") : new LinearGradientBrush
+        Background = Primary || Accent || Destructive ? Theme.Brush(Primary ? (focused ? "#2438C4" : "#2F46E2") : Accent ? "#EEF1FF" : "#FDF2F2") : new LinearGradientBrush
         { StartPoint = new(0, 0), EndPoint = new(0, 1), GradientStops = { new() { Color = Microsoft.UI.Colors.White }, new() { Color = Theme.Brush("#F3F4F6").Color, Offset = 1 } } };
         Opacity = !IsEnabled ? .5 : pressed ? .85 : 1;
         if (Text.Length > 0 && string.IsNullOrEmpty(AutomationProperties.GetName(this))) AutomationProperties.SetName(this, Text);

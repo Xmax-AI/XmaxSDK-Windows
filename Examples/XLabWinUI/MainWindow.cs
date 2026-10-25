@@ -49,7 +49,7 @@ public sealed partial class MainWindow : Window
     private readonly Pill cameraButton = new() { Text = "Select Camera", Glyph = "camera", MaxWidth = 218, FontSize = 12 };
     private readonly Pill modelButton = new() { Text = "X2.1", Glyph = "chevron", TrailingGlyph = true, Padding = new(18, 0, 12, 0), ContentSpacing = 6 };
     private readonly Pill keyButton = new() { Glyph = "key", LabelVerticalOffset = 2.75 };
-    private readonly Pill statisticsButton = new() { Glyph = "statistics" };
+    private readonly Pill statisticsButton = new() { Glyph = "statistics", Secondary = true };
     private readonly Pill volumeButton = new() { Glyph = "muted", Secondary = true };
     private readonly Pill elapsed = new() { Passive = true, MinWidth = 72, IsHitTestVisible = false };
     private readonly Pill recordButton = new() { Text = "Record", Glyph = "record", Secondary = true, IconSize = 12, ContentSpacing = 7, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold };
