@@ -208,11 +208,11 @@ int main(int argc, char** argv) {
                        qAbs((inkTop + inkBottom + 1) / (2 * pixelScale) - buttonCenter) <= 1,
                    "API Key stars must be visually centered inside the header button");
             verify(controller.apiKey().size() == 13 &&
-                       keyInput->property("displayText").toString() == QString(13, '*'),
-                   "API Key edits must show only stars without briefly revealing the last character");
+                       keyInput->property("displayText").toString() == controller.apiKey(),
+                   "API Key editor must show the entered value while the header stays masked");
             if (!dir.isEmpty())
                 verify(window->grabWindow().save(dir + "/key-settings.png"),
-                       "Cannot capture masked API Key settings");
+                       "Cannot capture API Key settings");
             QTest::keyClick(window, Qt::Key_Escape);
             controller.setApiKey(savedKey);
             if (!dir.isEmpty())

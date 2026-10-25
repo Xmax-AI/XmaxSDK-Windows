@@ -85,7 +85,6 @@ ApplicationWindow {
                                     id: keyInput; objectName: "keyInput"
                                     width: parent.width; height: 40
                                     text: controller.apiKey; placeholderText: "API Key"; selectByMouse: true
-                                    echoMode: TextInput.Password; passwordCharacter: "*"; passwordMaskDelay: 0
                                     font.pixelSize: 14; color: "#111318"
                                     onTextEdited: controller.apiKey = text
                                     onAccepted: keyPopup.close()
