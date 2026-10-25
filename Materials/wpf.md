@@ -4,8 +4,6 @@
 
 `Examples/XLabShared` 保存 WPF 与 [WinUI 3 Demo](winui.md) 共用的 ViewModel、预设目录、凭据和相机偏好；UI 调度、计时器与缩略图解码通过各自的适配器提供。
 
-当前 Parallels 开发环境可以在 macOS 仓库根目录直接运行 `bash scripts/run-wpf.sh`；Windows 可执行 `./scripts/run-wpf.ps1`。默认复用现有 `C:/dev/XmaxSDK-build` 原生构建，托管输出放在 `C:/dev/XmaxSDK-dotnet`，路径均可用参数覆盖。
-
 ## 启动
 
 安装 .NET 10 SDK/Windows Desktop Runtime、Microsoft Visual C++ x64 Redistributable，并准备原生 SDK。实时生成需要包含 Agora 的构建及匹配 DLL。
@@ -27,7 +25,7 @@ dotnet run --project Examples/XLabWpf -c Release `
 
 WPF 缩略图使用同图的 PNG 资源，提交给生成服务的参考图 URL 保持原值。当前 WPF 的 Record 按钮未接入录制，保持禁用。需要录制结果可使用 [WinUI 3 XLab](winui.md) 或 Qt XLab。
 
-只查看 UI 时使用 `./scripts/run-wpf.ps1 -Preview` 或 `-PreviewSession`；macOS 可通过 `bash scripts/run-wpf.sh -PreviewSession` 启动虚拟机中的 Demo。
+只查看 UI 时，在上述 `dotnet run` 命令末尾添加 `-- --preview` 或 `-- --preview-session`。预览不打开摄像头或连接生成服务。
 
 ## 控件接入
 
@@ -47,9 +45,9 @@ WPF 缩略图使用同图的 PNG 资源，提交给生成服务的参考图 URL 
 ## 验证
 
 ```powershell
-./scripts/verify-dotnet.ps1 -NativeDirectory <native-dll-directory> -Camera
-# 真实云端验收：通过安全的本机方式设置环境变量后执行，不把 Key 放进命令行。
-./scripts/verify-dotnet.ps1 -NativeDirectory <native-dll-directory> -Live
+dotnet run --project Tests/XmaxSDKWpfTests -c Release `
+  -p:XmaxNativeDir=C:/path/to/sdk/bin `
+  -p:XmaxDotNetBuildRoot=C:/dev/XmaxSDK-dotnet/
 ```
 
 通用验收行为与环境变量见 [C# SDK](dotnet.md)。WPF 验证包含 WriteableBitmap 像素、镜像和关闭资源检查；设置 `XMAX_SMOKE_OUTPUT` 可指定截图与 JSON 报告目录。

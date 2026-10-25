@@ -7,13 +7,13 @@
 安装 .NET 10 SDK，准备带 Agora 的原生 SDK 及 Microsoft Visual C++ x64 Redistributable；NuGet 会还原 Windows App SDK 和构建工具，无需先安装 Visual Studio 的 WinUI 模板。
 
 ```powershell
-./scripts/run-winui.ps1 -NativeDirectory C:/dev/XmaxSDK-build/Sources/XmaxSDK/RelWithDebInfo
-# 不打开摄像头或连接生成服务的界面预览：
-./scripts/run-winui.ps1 -Preview
-./scripts/run-winui.ps1 -PreviewSession
+dotnet build Examples/XLabWinUI -c Release -p:Platform=x64 `
+  -p:XmaxNativeDir=C:/path/to/sdk/bin `
+  -p:XmaxDotNetBuildRoot=C:/dev/XmaxSDK-dotnet/
+& C:/dev/XmaxSDK-dotnet/bin/XLabWinUI/x64/Release/net10.0-windows10.0.26100.0/win-x64/XLabWinUI.exe
 ```
 
-Parallels 共享源码环境可在 macOS 仓库目录执行 `bash scripts/run-winui.sh`。默认共享路径为 `\\Mac\XmaxSDK`，构建输出为 Windows 本地的 `C:/dev/XmaxSDK-dotnet`，可用脚本参数覆盖。
+可在运行命令末尾添加 `--preview` 或 `--preview-session`，只查看界面。共享源码环境的构建输出必须位于 Windows 本地磁盘。
 
 Demo 为 unpackaged 桌面应用，直接运行 `XLabWinUI.exe`。发布包包含匹配的 Windows App SDK 运行文件，仍需安装 .NET 10 Runtime 和原生 SDK 依赖的 Visual C++ 运行库。
 
@@ -43,12 +43,12 @@ Demo 为 unpackaged 桌面应用，直接运行 `XLabWinUI.exe`。发布包包�
 ## 验证与打包
 
 ```powershell
-./scripts/verify-winui.ps1 -NativeDirectory <native-dll-directory>
-./scripts/verify-winui.ps1 -NativeDirectory <native-dll-directory> -Camera
-# 显式设置 XMAX_API_KEY 后，额外验证真实生成与参考图/提示词更新：
-./scripts/verify-winui.ps1 -NativeDirectory <native-dll-directory> -Live
-./scripts/pack-winui.ps1 -NativeDirectory <native-dll-directory>
+dotnet run --project Tests/XLabRecordingTests -c Release -p:Platform=x64 `
+  -p:XmaxNativeDir=C:/path/to/sdk/bin `
+  -p:XmaxDotNetBuildRoot=C:/dev/XmaxSDK-dotnet/ -- --native
 ```
+
+界面冒烟模式可直接传给上面的 Demo EXE：`--smoke-test-recording`、`--smoke-test-frames`、`--smoke-test-ui`。`--smoke-test-camera` 打开实际摄像头，`--smoke-test-live` 还会创建真实云端生成会话，需显式提供 `XMAX_API_KEY`。
 
 通用验收行为与环境变量见 [C# SDK](dotnet.md)。WinUI 另外验证控件卸载重载、结果录制、编码收尾和保存流程；报告与截图保存到构建目录的 `winui-screenshots/`。
 

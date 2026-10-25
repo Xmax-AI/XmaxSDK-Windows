@@ -11,18 +11,24 @@
 先按[安装说明](installation.md)构建原生 SDK，再从仓库根目录执行：
 
 ```powershell
-./scripts/verify-dotnet.ps1 -NativeDirectory .build/windows/Sources/XmaxSDK/Release
+dotnet build XmaxSDK.DotNet.sln -c Release -p:Platform=x64 `
+  -p:XmaxNativeDir=C:/path/to/sdk/bin `
+  -p:XmaxDotNetBuildRoot=C:/dev/XmaxSDK-dotnet/
 ```
 
-在虚拟机共享源码目录开发时，输出必须位于 Windows 本地磁盘：
+原生 C ABI 布局探针由 CMake 的 `xmax_dotnet_abi_probe` 目标生成。将其输出传给托管集成测试：
 
 ```powershell
-./scripts/verify-dotnet.ps1 `
-  -NativeDirectory C:/dev/XmaxSDK-build/Sources/XmaxSDK/RelWithDebInfo `
-  -BuildRoot C:/dev/XmaxSDK-dotnet
+& C:/path/to/native-build/Release/xmax_dotnet_abi_probe.exe | Set-Content C:/dev/native-layout.txt -Encoding UTF8
+dotnet run --project Tests/XmaxSDKNetTests -c Release `
+  -p:XmaxNativeDir=C:/path/to/sdk/bin `
+  -p:XmaxDotNetBuildRoot=C:/dev/XmaxSDK-dotnet/ -- C:/dev/native-layout.txt
+dotnet run --project Tests/XmaxSDKWpfTests -c Release `
+  -p:XmaxNativeDir=C:/path/to/sdk/bin `
+  -p:XmaxDotNetBuildRoot=C:/dev/XmaxSDK-dotnet/
 ```
 
-脚本比较原生 C 编译器和 C# 的所有公共结构体大小、字段偏移及事件枚举值，运行真实 DLL 的托管集成测试、WPF 像素/镜像/关闭测试，以及不使用摄像头或生成服务的界面冒烟测试。界面测试会加载预设缩略图。`-Camera` 显式打开摄像头；`-Live` 额外创建真实云端生成会话，需要通过 `XMAX_API_KEY` 提供凭证。这两个开关默认关闭。
+这些测试比较公共结构体布局与事件值，检查真实 DLL 的所有权、取消、帧交付和 WPF 显示，不打开摄像头或创建云端生成会话。界面与真实设备验收通过各 Demo 的显式冒烟模式执行；运行真实云端模式前，通过安全的本机方式提供 `XMAX_API_KEY`。
 
 ## 使用
 
@@ -83,9 +89,9 @@ WPF 与 WinUI 3 共用 `Examples/XLabShared` 的会话、预设、参考图上�
 
 API Key 保存在当前 Windows 用户的凭据管理器中，重启恢复，清空输入后删除。`XMAX_API_KEY` 可临时覆盖保存值，不改写凭据。顶部按钮使用固定星号表示已设置，展开的编辑框显示完整内容。获取入口为 [Xmax Open Platform](https://platform.xmaxsi.com/api-keys)。两套 Demo 共用凭据与相机偏好，生成和上传使用国内服务。
 
-`-Preview` / `-PreviewSession` 仅检查界面，有明确预览标记，不打开摄像头或连接生成服务；参考图仍从 CDN 加载。启动脚本见 [WPF](wpf.md) 和 [WinUI 3](winui.md) 指南。
+`--preview` / `--preview-session` 仅检查界面，有明确预览标记，不打开摄像头或连接生成服务；参考图仍从 CDN 加载。启动命令见 [WPF](wpf.md) 和 [WinUI 3](winui.md) 指南。
 
-验证脚本默认检查托管接口、布局与像素交付、页面交互，以及独立凭据条目的保存、恢复、修改和清空，不改写用户的真实凭据。`-Camera` 和 `-Live` 的含义见本文构建与测试部分；多设备时可通过 `XMAX_SMOKE_CAMERA` 指定设备名称片段。构建报告记录实际通过的检查，不在文档中固定测试数量。
+托管测试与 Demo 冒烟模式覆盖接口、布局与像素交付、页面交互，以及独立凭据条目的保存、恢复、修改和清空，不改写用户的真实凭据。`--smoke-test-camera` 和 `--smoke-test-live` 分别显式验证实际摄像头和云端生成；多设备时可通过 `XMAX_SMOKE_CAMERA` 指定设备名称片段。构建报告记录实际通过的检查，不在文档中固定测试数量。
 
 ## 维护与打包
 

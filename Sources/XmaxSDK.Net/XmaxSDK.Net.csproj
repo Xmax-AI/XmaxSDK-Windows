@@ -16,8 +16,7 @@
   <ItemGroup>
     <None Include="../../Materials/dotnet.md" Pack="true" PackagePath="README.md" />
     <None Include="../../LICENSE" Pack="true" PackagePath="licenses/" />
-    <None Include="../../THIRD_PARTY.md" Pack="true" PackagePath="licenses/" />
-    <None Include="../../third_party/nlohmann/LICENSE.MIT" Pack="true" PackagePath="licenses/nlohmann/" />
+    <None Include="../../Materials/dependencies.md" Pack="true" PackagePath="licenses/THIRD_PARTY.md" />
   </ItemGroup>
   <ItemGroup Condition="'$(XmaxNativeNoticesDir)' != ''">
     <None Include="$(XmaxNativeNoticesDir)/**/*" Pack="true" PackagePath="licenses/native/%(RecursiveDir)" />

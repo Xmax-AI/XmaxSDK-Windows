@@ -4,6 +4,8 @@ out/
 Vendor/
 .DS_Store
 .cicd/
+/scripts/
+/third_party/
 .vs/
 /Backup/
 /UpgradeLog*.htm

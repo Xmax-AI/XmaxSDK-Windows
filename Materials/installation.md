@@ -37,6 +37,8 @@ target_link_libraries(MyApp PRIVATE Xmax::SDK)
 
 需要 CMake 3.24+、C++17 编译器和平台 SDK。Windows 使用 Visual Studio 2022 的 C++ 桌面开发工具及 Windows SDK；便携开发预设使用 Ninja。
 
+首次 CMake 配置会按 [依赖锁定文件](../Configurations/Release/dependencies.json)下载 JSON 头文件和许可证，逐项校验 SHA-256，并缓存在构建目录的 `dependencies/`。可用 `-DXMAX_DEPENDENCIES_DIR=<cache-directory>` 指定已有缓存；缓存内容校验通过后无需重新下载。
+
 Windows x64：
 
 ```powershell
@@ -62,7 +64,15 @@ cmake --install .build/core --prefix .build/install
 安装 Qt 6.8+ 的 MSVC x64 版本，包含 Qt Quick、Quick Controls、Multimedia、Image Formats。Qt 仅供示例使用，SDK 本身不依赖 Qt。
 
 ```powershell
-$agora = ./scripts/get-agora.ps1
+$locked = Get-Content Configurations/Release/dependencies.json -Raw | ConvertFrom-Json
+New-Item -ItemType Directory -Force .build/vendor/agora | Out-Null
+$archive = "$PWD/.build/vendor/agora.zip"
+Invoke-WebRequest $locked.agora.url -OutFile $archive
+if ((Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant() -ne $locked.agora.sha256) {
+    throw 'Agora archive SHA-256 mismatch.'
+}
+Expand-Archive $archive -DestinationPath .build/vendor/agora -Force
+$agora = "$PWD/.build/vendor/agora/Agora_Native_SDK_for_Windows_FULL/sdk"
 $qt = "C:/Qt/6.8.3/msvc2022_64"
 cmake --preset windows -DXMAX_BUILD_EXAMPLE=ON -DXMAX_WITH_AGORA=ON "-DXMAX_AGORA_ROOT=$agora" "-DCMAKE_PREFIX_PATH=$qt"
 cmake --build --preset windows
@@ -70,7 +80,7 @@ cmake --build --preset windows
 & .build/windows/Examples/XLab/Release/XLab.exe
 ```
 
-下载脚本根据 [依赖锁定文件](../Configurations/Release/dependencies.json)选择 Agora 版本并校验 SHA-256。构建复制 SDK 与 Agora DLL；Qt 运行库、QML、多媒体和图片插件由 `windeployqt` 部署。发布时保留 [依赖许可证及说明](../THIRD_PARTY.md)。
+上述命令根据 [依赖锁定文件](../Configurations/Release/dependencies.json)选择 Agora 版本并校验 SHA-256。构建复制 SDK 与 Agora DLL；Qt 运行库、QML、多媒体和图片插件由 `windeployqt` 部署。发布时保留 [依赖许可证及说明](dependencies.md)。
 
 ## Mac 与 Parallels Windows 共用源码
 
@@ -85,24 +95,18 @@ cmake --build --preset windows
 | Windows 构建产物、解决方案和 PDB | `C:\dev\XmaxSDK-build` |
 | Windows Agora 依赖 | `C:\dev\XmaxSDK-deps\agora\sdk` |
 
-在 Mac 工程根目录执行：
-
-```sh
-./scripts/windows-dev.sh build  # 在 Windows 编译并部署 Demo
-./scripts/windows-dev.sh test   # 编译并运行 Windows SDK/Qt 测试
-./scripts/windows-dev.sh open   # 打开 Windows Visual Studio，默认启动项目为 XLab
-./scripts/windows-dev.sh run    # 增量编译、部署并运行最新 Demo
-```
-
-也可在 Windows PowerShell 中直接调用共享脚本：
+在 Windows PowerShell 中直接构建共享源码，输出放到本地磁盘：
 
 ```powershell
-& '\\Mac\XmaxSDK\scripts\windows-dev.ps1' -Action test
+cmake -S S:/ -B C:/dev/XmaxSDK-build -G "Visual Studio 17 2022" -A x64 `
+  -DXMAX_WITH_AGORA=ON -DXMAX_BUILD_EXAMPLE=ON `
+  -DXMAX_AGORA_ROOT=C:/dev/XmaxSDK-deps/agora/sdk `
+  -DCMAKE_PREFIX_PATH=C:/Qt/6.8.3/msvc2022_64
+cmake --build C:/dev/XmaxSDK-build --config RelWithDebInfo --parallel 4
+ctest --test-dir C:/dev/XmaxSDK-build -C RelWithDebInfo --output-on-failure
 ```
 
-脚本默认 RelWithDebInfo/x64：启用编译优化并保留 PDB 调试符号，用于实际摄像头、编码和帧率验证。Visual Studio 调试实时会话时也应选择 `RelWithDebInfo | x64`；需要逐语句检查未优化代码时可传 `-Configuration Debug`，其性能不能作为发布版基准。
-
-脚本使用已安装的 Qt MSVC x64。`QT_ROOT_DIR` / `XMAX_AGORA_ROOT` 可指定依赖位置，也可传入 `-QtRoot` / `-AgoraRoot`；`-BuildRoot` 必须指向 Windows 本地目录。需要固定盘符时，可通过 `-SourceDrive` 指定空闲盘符，脚本不会覆盖已有的其他映射。Mac 侧可通过 `XMAX_WINDOWS_VM` 和 `XMAX_WINDOWS_SOURCE` 覆盖虚拟机名称与共享路径。重新编译前关闭正在运行的对应 Demo，以释放 DLL 文件。
+Visual Studio 可打开 `C:/dev/XmaxSDK-build/XmaxWindows.sln`，实时媒体验证选择 `RelWithDebInfo | x64`，保留优化和 PDB 调试符号。开发者也可使用自行保留的本地工具，源码构建不依赖这些工具。重新编译前关闭对应 Demo，以释放 DLL 文件。
 
 媒体性能可单独测量，不依赖 API Key 或云端服务。在 Windows 构建完成后，显式指定采样秒数与唯一匹配的摄像头名称片段：
 
@@ -120,14 +124,14 @@ cmake --build --preset windows
 cmake --preset xlab -DCMAKE_PREFIX_PATH=/path/to/Qt/6.8.3/macos
 cmake --build --preset xlab
 # 正常模式：空 Key 会打开输入框；当前 Mac 构建没有 RTC 后端，会明确提示。
-bash scripts/run-xlab.sh
+.build/xlab/Examples/XLab/XLab.app/Contents/MacOS/XLab
 # 仅预览 UI，不校验 Key、不开摄像头、不连接生成服务：
-bash scripts/run-xlab.sh --preview
+.build/xlab/Examples/XLab/XLab.app/Contents/MacOS/XLab --preview
 # 直接预览会话页面
-bash scripts/run-xlab.sh --preview-session
+.build/xlab/Examples/XLab/XLab.app/Contents/MacOS/XLab --preview-session
 ```
 
-配置好本机工具和 Qt 后，也可运行 `bash scripts/verify.sh --example`。构建缓存位于忽略的 `.build`，源码分发不包含缓存。
+构建完成后使用 `ctest --preset core` 或 `ctest --test-dir .build/xlab --output-on-failure` 验证。构建缓存位于忽略的 `.build`，源码分发不包含缓存。
 
 Mac 构建提供 AVFoundation 摄像头实现，可开发公共 C++ 逻辑和 Qt UI；当前没有集成 macOS Agora C++ 后端。默认测试使用采集和传输替身，不打开设备或使用真实凭证。
 
@@ -146,15 +150,15 @@ cmake --install .build/windows --config Release --prefix .build/install
 
 需要包含依赖说明、校验值和验证报告的正式发行包时，从 [GitHub Releases](https://github.com/Xmax-AI/XmaxSDK-Windows/releases) 下载。
 
-C#、WPF 和 WinUI 的本地打包脚本使用已构建或解压的原生 SDK：
+C#、WPF 和 WinUI 可直接使用 .NET CLI 打包。原生 DLL 与依赖说明来自已构建安装或解压的 SDK：
 
 ```powershell
-./scripts/pack-dotnet.ps1 -NativeDirectory <native-bin-directory> -BuildRoot C:/dev/XmaxSDK-packages
-./scripts/pack-winui.ps1 -NativeDirectory <native-bin-directory> -BuildRoot C:/dev/XmaxSDK-packages
+dotnet pack Sources/XmaxSDK.Net -c Release -o C:/dev/XmaxSDK-packages `
+  -p:XmaxNativeDir=C:/path/to/sdk/bin -p:XmaxNativeNoticesDir=C:/path/to/sdk/licenses
+dotnet pack Sources/XmaxSDK.Wpf -c Release -o C:/dev/XmaxSDK-packages
+dotnet pack Sources/XmaxSDK.WinUI -c Release -p:Platform=x64 -o C:/dev/XmaxSDK-packages
 ```
 
-输出位于 `BuildRoot/packages`，包括 `Xmax.SDK`、`Xmax.SDK.Wpf`、`Xmax.SDK.WinUI` NuGet 包，以及 WPF、WinUI Demo ZIP。这些命令生成本地文件，不会自动上传。
-
-包含 Agora 运行库时必须保留其依赖说明。脚本优先查找原生 SDK 的同级 `licenses` 目录；使用源码构建输出时，通过 `-DependencyNoticesDirectory` 指定收集好的依赖说明目录。
+共享源码环境还需添加 `-p:XmaxDotNetBuildRoot=C:/dev/XmaxSDK-dotnet/`，将中间文件写入 Windows 本地磁盘。使用 `dotnet publish` 发布对应的 Demo 项目，并保留原生与托管依赖的许可证。上述命令生成本地文件，不会自动上传。
 
 依赖锁定及 ABI 基线位于 [`Configurations/Release`](../Configurations/Release)。发布维护工具与 Release Notes 仅保留在维护者本地，不是源码构建或 SDK 接入的前提。

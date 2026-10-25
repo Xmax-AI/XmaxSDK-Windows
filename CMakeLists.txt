@@ -25,6 +25,7 @@ if(XMAX_ENABLE_SANITIZERS AND NOT MSVC)
   add_compile_options(-fsanitize=address,undefined -fno-omit-frame-pointer)
   add_link_options(-fsanitize=address,undefined)
 endif()
+include(cmake/Dependencies.cmake)
 add_subdirectory(Sources/XmaxSDK)
 if(BUILD_TESTING)
   # This independent C executable is compared with managed sizeof/offsetof in verify-dotnet.ps1.

@@ -10,5 +10,16 @@
   },
   "aqtinstall": "3.3.0",
   "cmake": "4.4.4",
-  "ninja": "1.13.2"
+  "ninja": "1.13.2",
+  "nlohmann": {
+    "version": "3.11.3",
+    "header": {
+      "url": "https://github.com/nlohmann/json/releases/download/v3.11.3/json.hpp",
+      "sha256": "9bea4c8066ef4a1c206b2be5a36302f8926f7fdc6087af5d20b417d0cf103ea6"
+    },
+    "license": {
+      "url": "https://raw.githubusercontent.com/nlohmann/json/v3.11.3/LICENSE.MIT",
+      "sha256": "86b998c792894ccb911a1cb7994f7a9652894e7a094c0b5e45be2f553f45cf14"
+    }
+  }
 }

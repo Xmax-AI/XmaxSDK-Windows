@@ -7,6 +7,7 @@
 - [C# SDK](dotnet.md)：托管接口、取消和所有权，以及两套 .NET Demo 的共同操作。
 - [WPF XLab](wpf.md)、[WinUI 3 XLab](winui.md)：各自的控件接入、运行方式和功能差异。
 - [本地打包](installation.md#本地打包)：托管包、Demo ZIP 与运行依赖。
+- [依赖说明](dependencies.md)：外部组件、获取方式和发行包中的许可证。
 
 接口的精确契约见[公开头文件](../include/xmax/xmax.h)。项目结构和文档维护分工见[项目入口](../README.md)。
 
