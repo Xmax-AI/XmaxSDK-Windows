@@ -47,7 +47,7 @@ def main() -> None:
         text = re.sub(r'^(`{3,}|~{3,})[^\n]*\n.*?^\1[ \t]*$', '',
                       path.read_text(encoding='utf-8'), flags=re.M | re.S)
         for link in re.findall(r'\]\(([^)]+)\)',text):
-            if re.match(r'https?:|#',link): continue
+            if re.match(r'https?:|mailto:|#',link): continue
             assert (path.parent/link.split('#')[0]).exists(), f'Broken documentation link in {path}: {link}'
     attributes = subprocess.check_output(['git','check-attr','eol','--','third_party/nlohmann/json.hpp'],cwd=ROOT,text=True)
     assert attributes.strip().endswith(': lf'), 'Vendored text must retain LF for cross-platform SHA checks'
