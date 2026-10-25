@@ -51,7 +51,7 @@ foreach ($entry in $assets.libraries.PSObject.Properties) {
         $licenses | Copy-Item -Destination $destination -Force
     }
 }
-Compress-Archive -Path "$publish/*" -DestinationPath "$output/XLabWinUI-$version-win-x64.zip" -Force
+& "$PSScriptRoot/archive-directory.ps1" -SourceDirectory $publish -DestinationPath "$output/XLabWinUI-$version-win-x64.zip"
 Get-ChildItem $output -File | Where-Object { $_.Name -ne 'SHA256SUMS' } | ForEach-Object {
     '{0}  {1}' -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant(),$_.Name
 } | Set-Content "$output/SHA256SUMS" -Encoding UTF8
