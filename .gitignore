@@ -3,6 +3,7 @@ build/
 out/
 Vendor/
 .DS_Store
+.cicd/
 .vs/
 /Backup/
 /UpgradeLog*.htm

@@ -185,7 +185,7 @@ The public C API is available through `<xmax/xmax.h>`; C++ applications can use
 
 ### NuGet
 
-Use the packages produced by the [local packaging workflow](./.cicd/README.md#本地验证与打包)
+Use the packages produced by the [local packaging workflow](./Materials/installation.md#本地打包)
 as a local NuGet source, then add **Xmax.SDK** to your C# application:
 
 ```powershell
@@ -208,7 +208,7 @@ for project configuration.
 
 Download the Windows SDK archive from
 [GitHub Releases](https://github.com/Xmax-AI/XmaxSDK-Windows/releases),
-or build it with the [local packaging workflow](./.cicd/README.md#本地验证与打包).
+or build it with the [local packaging workflow](./Materials/installation.md#本地打包).
 Follow the [manual integration guide](./Materials/installation.md#接入-windows-二进制包)
 to add the headers, import library, native DLLs and required runtime dependencies
 to your application.

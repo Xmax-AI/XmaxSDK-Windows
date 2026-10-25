@@ -27,7 +27,7 @@ Demo 为 unpackaged 桌面应用，直接运行 `XLabWinUI.exe`。发布包包�
 
 ## 控件接入
 
-旧版 `XmaxVideoView` 已更名为 `XmaxRealtimeVideoView`，迁移时替换 XAML 标签和 C# 类型引用。包名、命名空间和绑定属性保持一致，旧类型名不再提供；详见 [1.0.0 变更说明](../.cicd/release-notes/1.0.0.md#api-changes)。
+旧版 `XmaxVideoView` 已更名为 `XmaxRealtimeVideoView`，迁移时替换 XAML 标签和 C# 类型引用。包名、命名空间和绑定属性保持一致，旧类型名不再提供；详见 [1.0.0 变更说明](https://github.com/Xmax-AI/XmaxSDK-Windows/releases/tag/1.0.0#api-changes)。
 
 在 WinUI 项目中引用 `Xmax.SDK.WinUI`，并保持项目的 `UseWinUI` 配置：
 
@@ -52,4 +52,4 @@ Demo 为 unpackaged 桌面应用，直接运行 `XLabWinUI.exe`。发布包包�
 
 通用验收行为与环境变量见 [C# SDK](dotnet.md)。WinUI 另外验证控件卸载重载、结果录制、编码收尾和保存流程；报告与截图保存到构建目录的 `winui-screenshots/`。
 
-包内容、依赖许可证和发布渠道见 [CI/CD 的本地验证与打包说明](../.cicd/README.md#本地验证与打包)。
+包内容、依赖许可证和发布渠道见 [本地打包说明](installation.md#本地打包)。

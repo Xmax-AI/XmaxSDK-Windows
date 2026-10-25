@@ -6,7 +6,7 @@
 - [使用说明](usage.md)：C/C++ 接口行为、媒体规格、线程与所有权，是原生接入规则的主文档。
 - [C# SDK](dotnet.md)：托管接口、取消和所有权，以及两套 .NET Demo 的共同操作。
 - [WPF XLab](wpf.md)、[WinUI 3 XLab](winui.md)：各自的控件接入、运行方式和功能差异。
-- [CI/CD](../.cicd/README.md)：本地打包、验证、版本准备与 GitHub 上传。
+- [本地打包](installation.md#本地打包)：托管包、Demo ZIP 与运行依赖。
 
 接口的精确契约见[公开头文件](../include/xmax/xmax.h)。项目结构和文档维护分工见[项目入口](../README.md)。
 

@@ -4,7 +4,7 @@
 
 ## 接入 Windows 二进制包
 
-本地打包和 GitHub Release 下载说明见[发布流程](../.cicd/README.md)。
+二进制发布包见 [GitHub Releases](https://github.com/Xmax-AI/XmaxSDK-Windows/releases)，本地构建与打包方式见本文。
 SDK 包包含 `bin/XmaxSDK.dll`、Agora DLL、`lib/XmaxSDK.lib`、`include/xmax`、CMake package、符号与消费样例。
 Qt 仅在独立 XLab 包中，SDK 包不需要 Qt。
 
@@ -70,7 +70,7 @@ cmake --build --preset windows
 & .build/windows/Examples/XLab/Release/XLab.exe
 ```
 
-下载脚本根据 [依赖锁定文件](../.cicd/dependencies.json)选择 Agora 版本并校验 SHA-256。构建复制 SDK 与 Agora DLL；Qt 运行库、QML、多媒体和图片插件由 `windeployqt` 部署。发布时保留 [依赖许可证及说明](../THIRD_PARTY.md)。
+下载脚本根据 [依赖锁定文件](../Configurations/Release/dependencies.json)选择 Agora 版本并校验 SHA-256。构建复制 SDK 与 Agora DLL；Qt 运行库、QML、多媒体和图片插件由 `windeployqt` 部署。发布时保留 [依赖许可证及说明](../THIRD_PARTY.md)。
 
 ## Mac 与 Parallels Windows 共用源码
 
@@ -136,4 +136,25 @@ Mac 构建提供 AVFoundation 摄像头实现，可开发公共 C++ 逻辑和 Qt
 
 平台能力和输入限制见 [使用说明](usage.md)。真实摄像头、音频、云端生成及持续性能需要在目标 Windows 环境验收；UI 预览不替代实时会话验收。
 
-包的内容与本地发布步骤见[发布流程](../.cicd/README.md)。
+## 本地打包
+
+原生 SDK 可从 CMake 构建目录安装到独立目录：
+
+```powershell
+cmake --install .build/windows --config Release --prefix .build/install
+```
+
+需要包含依赖说明、校验值和验证报告的正式发行包时，从 [GitHub Releases](https://github.com/Xmax-AI/XmaxSDK-Windows/releases) 下载。
+
+C#、WPF 和 WinUI 的本地打包脚本使用已构建或解压的原生 SDK：
+
+```powershell
+./scripts/pack-dotnet.ps1 -NativeDirectory <native-bin-directory> -BuildRoot C:/dev/XmaxSDK-packages
+./scripts/pack-winui.ps1 -NativeDirectory <native-bin-directory> -BuildRoot C:/dev/XmaxSDK-packages
+```
+
+输出位于 `BuildRoot/packages`，包括 `Xmax.SDK`、`Xmax.SDK.Wpf`、`Xmax.SDK.WinUI` NuGet 包，以及 WPF、WinUI Demo ZIP。这些命令生成本地文件，不会自动上传。
+
+包含 Agora 运行库时必须保留其依赖说明。脚本优先查找原生 SDK 的同级 `licenses` 目录；使用源码构建输出时，通过 `-DependencyNoticesDirectory` 指定收集好的依赖说明目录。
+
+依赖锁定及 ABI 基线位于 [`Configurations/Release`](../Configurations/Release)。发布维护工具与 Release Notes 仅保留在维护者本地，不是源码构建或 SDK 接入的前提。

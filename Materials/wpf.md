@@ -31,7 +31,7 @@ WPF 缩略图使用同图的 PNG 资源，提交给生成服务的参考图 URL 
 
 ## 控件接入
 
-旧版 `XmaxVideoView` 已更名为 `XmaxRealtimeVideoView`，迁移时替换 XAML 标签和 C# 类型引用。包名、命名空间和绑定属性保持一致，旧类型名不再提供；详见 [1.0.0 变更说明](../.cicd/release-notes/1.0.0.md#api-changes)。
+旧版 `XmaxVideoView` 已更名为 `XmaxRealtimeVideoView`，迁移时替换 XAML 标签和 C# 类型引用。包名、命名空间和绑定属性保持一致，旧类型名不再提供；详见 [1.0.0 变更说明](https://github.com/Xmax-AI/XmaxSDK-Windows/releases/tag/1.0.0#api-changes)。
 
 ```xml
 <sdk:XmaxRealtimeVideoView

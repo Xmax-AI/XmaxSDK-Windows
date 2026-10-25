@@ -1,6 +1,6 @@
 param([string]$Destination = "$PSScriptRoot/../.build/vendor/agora")
 $ErrorActionPreference = "Stop"
-$locked = Get-Content "$PSScriptRoot/../.cicd/dependencies.json" -Raw | ConvertFrom-Json
+$locked = Get-Content "$PSScriptRoot/../Configurations/Release/dependencies.json" -Raw | ConvertFrom-Json
 $url = $locked.agora.url
 $sha256 = $locked.agora.sha256
 New-Item -ItemType Directory -Force -Path $Destination | Out-Null

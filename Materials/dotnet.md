@@ -89,13 +89,8 @@ API Key 保存在当前 Windows 用户的凭据管理器中，重启恢复，清
 
 ## 维护与打包
 
-Interop 由公开头文件生成：
-
-```sh
-python .cicd/generate-dotnet-interop.py
-python .cicd/generate-dotnet-interop.py --check
-```
+Interop 由公开头文件生成，生成器作为维护者本地工具保留。
 
 不要手工编辑 `.g.cs` 和 `native_abi_probe.c`。生成器覆盖所有 C ABI 导出及公共结构体；高层 C# API 维护在普通 `.cs` 文件。
 
-托管包、Demo ZIP 的构建命令、候选包内容和发布渠道统一见 [CI/CD 的托管打包说明](../.cicd/README.md#托管打包)。这些工具生成本地产物，不会自动发布到 NuGet 或 GitHub。
+托管包、Demo ZIP 的构建命令、候选包内容和发布渠道统一见 [本地打包说明](installation.md#本地打包)。这些工具生成本地产物，不会自动发布到 NuGet 或 GitHub。
