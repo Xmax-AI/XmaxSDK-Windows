@@ -12,6 +12,7 @@
 #include "Foundation/Media/Camera/CameraCapture.hpp"
 #include <condition_variable>
 #include <mutex>
+#include <optional>
 
 namespace xmax::detail {
 
@@ -49,7 +50,8 @@ class CameraController {
 
     /**
      * Starts native capture and delivers frames at their original dimensions, waiting for the first frame,
-     * failure, or cancellation.
+     * failure, or cancellation. Startup failures are thrown to the caller; only failures after successful
+     * startup are delivered through the failure callback.
      *
      * @param[in] device The UTF-8 camera identifier; an empty string selects the default camera.
      * @param[in] format The requested pixel dimensions and frame rate, subject to the interface's format
@@ -71,6 +73,17 @@ class CameraController {
     void stop() noexcept;
 
   private:
+
+    /**
+     * Retains the first capture failure and forwards it only after startup has committed.
+     *
+     * @param[in] error The original capture or frame-processing failure.
+     * @param[in] receiver The runtime failure receiver, invoked outside the camera-state lock.
+     */
+    void report_failure(
+        Error error,
+        const std::function<void(Error)>& receiver
+    );
 
     /**
      * The native camera adapter factory for enumeration and capture.
@@ -98,9 +111,14 @@ class CameraController {
     bool ready_ = false;
 
     /**
-     * The latest capture or conversion failure, read by startup waiters.
+     * Whether startup has committed and subsequent failures belong to the active camera stream.
      */
-    std::string failure_;
+    bool running_ = false;
+
+    /**
+     * The first capture or conversion failure, including its original code and diagnostics.
+     */
+    std::optional<Error> failure_;
 
     /**
      * The latest accepted monotonic timestamp for this input binding, in microseconds.

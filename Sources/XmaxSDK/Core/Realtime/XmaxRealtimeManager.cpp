@@ -1185,6 +1185,8 @@ void XmaxRealtimeManager::update_camera_format(
                 );
             } catch (const Error& error) {
                 errors_.record(error);
+                if (!media_.camera_active())
+                    unbind_local();
                 change_state(media_.camera_active() ? XMAX_READY : XMAX_IDLE);
                 throw;
             }

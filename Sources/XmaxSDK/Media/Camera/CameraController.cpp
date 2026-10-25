@@ -128,7 +128,8 @@ struct CameraMetrics {
 
 /**
  * Starts native capture and delivers frames at their original dimensions, waiting for the first frame,
- * failure, or cancellation.
+ * failure, or cancellation. Startup failures are thrown to the caller; only failures after successful
+ * startup are delivered through the failure callback.
  *
  * @param[in] device The UTF-8 camera identifier; an empty string selects the default camera.
  * @param[in] format The requested pixel dimensions and frame rate, subject to the interface's format
@@ -161,7 +162,8 @@ void CameraController::start(
     {
         std::lock_guard<std::mutex> lock(mutex_);
         ready_ = false;
-        failure_.clear();
+        running_ = false;
+        failure_.reset();
         last_timestamp_ = -1;
     }
 
@@ -175,6 +177,8 @@ void CameraController::start(
             validate_frame(frame.view());
             {
                 std::lock_guard<std::mutex> lock(mutex_);
+                if (failure_)
+                    return;
                 frame.timestamp_us = std::max(last_timestamp_ + 1, frame.timestamp_us);
                 last_timestamp_ = frame.timestamp_us;
             }
@@ -197,26 +201,20 @@ void CameraController::start(
             }
             changed_.notify_all();
         } catch (const std::exception&) {
-            {
-                std::lock_guard<std::mutex> lock(mutex_);
-                failure_ = "Camera frame processing failed";
-            }
-            changed_.notify_all();
-            if (output.failure)
-                output.failure(Error(
+            report_failure(
+                Error(
                     XMAX_MEDIA_ERROR,
                     "Camera frame processing failed"
-                ));
+                ),
+                output.failure
+            );
         }
     };
     callbacks.failure = [this, output](Error error) {
-        {
-            std::lock_guard<std::mutex> lock(mutex_);
-            failure_ = error.what();
-        }
-        changed_.notify_all();
-        if (output.failure)
-            output.failure(std::move(error));
+        report_failure(
+            std::move(error),
+            output.failure
+        );
     };
 
     try {
@@ -230,17 +228,17 @@ void CameraController::start(
         const auto deadline = Clock::now() + std::chrono::seconds(12);
         std::unique_lock<std::mutex> lock(mutex_);
 
-        while (!ready_) {
+        for (;;) {
             require(
                 !cancel(),
                 XMAX_CANCELLED,
                 "Camera startup cancelled"
             );
-            require(
-                failure_.empty(),
-                XMAX_MEDIA_ERROR,
-                failure_
-            );
+            if (failure_)
+                throw *failure_;
+            if (ready_)
+                break;
+
             require(
                 Clock::now() < deadline,
                 XMAX_TIMEOUT,
@@ -252,11 +250,10 @@ void CameraController::start(
             );
         }
 
-        require(
-            !cancel(),
-            XMAX_CANCELLED,
-            "Camera startup cancelled"
-        );
+        // Commit under the failure lock so each error belongs to startup or runtime, never both.
+        running_ = true;
+        lock.unlock();
+
         XmaxLogger::write(
             LogCategory::Media,
             XMAX_LOG_INFO,
@@ -275,9 +272,39 @@ void CameraController::start(
 }
 
 /**
+ * Retains the first capture failure and forwards it only after startup has committed.
+ *
+ * @param[in] error The original capture or frame-processing failure.
+ * @param[in] receiver The runtime failure receiver, invoked outside the camera-state lock.
+ */
+void CameraController::report_failure(
+    Error error,
+    const std::function<void(Error)>& receiver
+) {
+    bool notify;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (failure_)
+            return;
+
+        failure_ = error;
+        notify = running_;
+    }
+    changed_.notify_all();
+
+    if (notify && receiver)
+        receiver(std::move(error));
+}
+
+/**
  * Stops camera capture and drains frame and failure callbacks before returning.
  */
 void CameraController::stop() noexcept {
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        running_ = false;
+    }
+
     if (capture_) {
         capture_->stop();
         capture_.reset();
