@@ -33,8 +33,9 @@ Item {
                             id: cell
                             required property int index
                             property int position: rowIndex * list.columns + index
-                            property bool upload: position === list.items.length
-                            property var entry: upload ? ({}) : list.items[position]
+                            property bool upload: position === 0
+                            property var entry: upload ? ({}) : list.items[position - 1]
+                            objectName: "reference_" + list.mode + "_" + position
                             width: 84; height: 84
                             Rectangle {
                                 id: circle
@@ -69,9 +70,10 @@ Item {
                                 Accessible.role: Accessible.Button
                                 Accessible.name: cell.upload ? "Upload reference image" : cell.entry.name || ""
                             }
-                            ToolTip.visible: hit.containsMouse
-                            ToolTip.delay: 600
-                            ToolTip.text: cell.upload ? "Upload your own reference image" : cell.entry.error || thumbnail.errorString || cell.entry.name || ""
+                            XLabToolTip {
+                                visible: hit.containsMouse && hit.enabled
+                                text: cell.upload ? "Upload your own reference image" : cell.entry.error || thumbnail.errorString || cell.entry.name || ""
+                            }
                         }
                     }
                 }

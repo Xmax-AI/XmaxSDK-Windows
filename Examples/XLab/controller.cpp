@@ -1,5 +1,6 @@
 #include "controller.hpp"
 #include <QDateTime>
+#include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QFutureWatcher>
@@ -9,10 +10,31 @@
 #include <QJsonObject>
 #include <QPointer>
 #include <QSettings>
+#include <QStandardPaths>
 #include <QUuid>
 #include <QVideoFrame>
 #include <QtConcurrent>
 #include <cmath>
+#ifdef Q_OS_WIN
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
+
+bool XLabController::reduceMotion() const {
+#ifdef Q_OS_WIN
+    BOOL enabled = TRUE;
+    return SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, &enabled, 0) && !enabled;
+#elif defined(Q_OS_MACOS)
+    QSettings accessibility(QDir::homePath() + "/Library/Preferences/com.apple.universalaccess.plist",
+                            QSettings::NativeFormat);
+    return accessibility.value("reduceMotion", false).toBool();
+#else
+    return false;
+#endif
+}
+
 namespace {
 QString sdkError(xmax_result result) {
     return result < 0 ? QString::fromUtf8(xmax_last_error()) : QString();
@@ -53,6 +75,9 @@ XLabController::XLabController(bool uiPreview, bool sessionPreview, QObject* par
     elapsed_timer_.start();
 }
 XLabController::~XLabController() {
+    poll_.stop();
+    if (recording_)
+        recording_->stopAccepting();
     for (const auto& job : transfers_)
         job.second->cancel();
     if (handles_)
@@ -180,23 +205,25 @@ QString XLabController::elapsed() const {
     auto sec = active && session_clock_.isValid() ? session_clock_.elapsed() / 1000 : 0;
     return QString("%1:%2").arg(sec / 60, 2, 10, QChar('0')).arg(sec % 60, 2, 10, QChar('0'));
 }
-void XLabController::async(std::function<QString()> work, std::function<void(QString)> done) {
+QFuture<QString> XLabController::async(std::function<QString()> work, std::function<void(QString)> done) {
     auto watcher = new QFutureWatcher<QString>(this);
     connect(watcher, &QFutureWatcher<QString>::finished, this, [watcher, done = std::move(done)] {
         auto error = watcher->result();
         watcher->deleteLater();
         done(error);
     });
-    watcher->setFuture(QtConcurrent::run([work = std::move(work)] {
+    auto future = QtConcurrent::run([work = std::move(work)] {
         try {
             return work();
         } catch (const std::exception&) {
             return QString("Desktop operation failed.");
         }
-    }));
+    });
+    watcher->setFuture(future);
+    return future;
 }
 void XLabController::start() {
-    if (busy || active)
+    if (busy || active || close_requested_)
         return;
     error.clear();
     if (preview) {
@@ -245,7 +272,7 @@ void XLabController::start() {
         return;
     if (cameraName().isEmpty()) {
         error = cameras_.isEmpty()
-                    ? "No camera is available. Connect a camera and click Refresh."
+                    ? "No camera is available. Connect a camera and try again."
                     : "Select a camera before starting. Choose your physical camera for live video.";
         emit changed();
         return;
@@ -310,6 +337,7 @@ void XLabController::beginGeneration() {
         });
 }
 void XLabController::stop() {
+    stopRecording();
     if (closing) {
         emit changed();
         return;
@@ -345,11 +373,147 @@ void XLabController::stop() {
                   if (!message.isEmpty())
                       error = message;
                   emit changed();
+                  checkCloseReady();
               });
     } else {
         busy = false;
         closing = false;
         emit changed();
+        checkCloseReady();
+    }
+}
+
+bool XLabController::canRecord() const {
+    return active && remoteReady && !preview && !busy && !closing && !close_requested_ &&
+           !recording_ && !finishing_recording_ && recording_path_.isEmpty();
+}
+
+void XLabController::startRecording() {
+    if (!canRecord() || !handles_)
+        return;
+    error.clear();
+    QPointer<XLabController> guard(this);
+    const auto id = ++recording_id_;
+    auto recorder = std::make_shared<RealtimeMediaRecorder>([guard, id](QString message) {
+        if (guard)
+            QMetaObject::invokeMethod(guard, [guard, id, message] {
+                if (guard && guard->recording_ && guard->recording_id_ == id) {
+                    guard->error = message;
+                    guard->stopRecording();
+                }
+            }, Qt::QueuedConnection);
+    });
+    recording_ = recorder;
+    const auto handles = handles_;
+    recording_registration_ = async([handles, recorder] {
+        auto context = new std::shared_ptr<RealtimeMediaRecorder>(recorder);
+        const xmax_remote_media_listener listener{
+            sizeof(listener),
+            [](void* user, xmax_media_frame frame) {
+                try {
+                    (*static_cast<std::shared_ptr<RealtimeMediaRecorder>*>(user))->append(
+                        RecordingPacket::retain(frame));
+                } catch (...) {
+                    // Never propagate an application allocation failure through the SDK callback.
+                    (*static_cast<std::shared_ptr<RealtimeMediaRecorder>*>(user))->fail(
+                        "Recording stopped because a media packet could not be retained. Save the recorded portion.");
+                }
+            },
+            context,
+            [](void* user) { delete static_cast<std::shared_ptr<RealtimeMediaRecorder>*>(user); }
+        };
+        const auto result = xmax_realtime_set_remote_media_frame_listener(handles->realtime, &listener);
+        if (result != XMAX_OK)
+            delete context;
+        return sdkError(result);
+    }, [this, recorder](QString message) {
+        if (recording_ == recorder && !message.isEmpty()) {
+            error = message;
+            stopRecording();
+        }
+    });
+    emit changed();
+}
+
+void XLabController::stopRecording() {
+    if (!recording_)
+        return;
+    auto recorder = std::exchange(recording_, {});
+    recorder->stopAccepting();
+    finishing_recording_ = true;
+    const auto handles = handles_;
+    auto registration = recording_registration_;
+    auto result = std::make_shared<RecordingResult>();
+    async([handles, recorder, registration, result]() mutable {
+        // Removal follows registration even when Stop is pressed before registration finishes.
+        registration.waitForFinished();
+        if (handles)
+            xmax_realtime_set_remote_media_frame_listener(handles->realtime, nullptr);
+        *result = recorder->finish().get();
+        return result->error;
+    }, [this, recorder, result](QString message) {
+        finishing_recording_ = false;
+        if (!message.isEmpty())
+            error = message;
+        if (!result->path.isEmpty()) {
+            completed_recording_ = recorder;
+            recording_path_ = result->path;
+            emit recordingReady();
+        }
+        emit changed();
+        checkCloseReady();
+    });
+    emit changed();
+}
+
+QUrl XLabController::defaultRecordingDestination() const {
+    auto directory = QStandardPaths::writableLocation(QStandardPaths::MoviesLocation);
+    if (directory.isEmpty())
+        directory = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+    return QUrl::fromLocalFile(directory + "/XLab-" + QDateTime::currentDateTime().toString("yyyy-MM-dd-HHmmss") + ".mp4");
+}
+
+void XLabController::saveRecording(const QUrl& destination) {
+    if (recording_path_.isEmpty() || saving_recording_)
+        return;
+    if (!destination.isLocalFile()) {
+        emit recordingSaveFailed("Choose a local folder for the MP4 recording.");
+        return;
+    }
+    saving_recording_ = true;
+    const auto source = recording_path_;
+    async([source, destination] { return RealtimeMediaRecorder::save(source, destination.toLocalFile()); },
+          [this](QString message) {
+              saving_recording_ = false;
+              if (message.isEmpty())
+                  discardRecording();
+              else
+                  emit recordingSaveFailed(message);
+              emit changed();
+          });
+    emit changed();
+}
+
+void XLabController::discardRecording() {
+    if (saving_recording_)
+        return;
+    recording_path_.clear();
+    completed_recording_.reset();
+    emit changed();
+    checkCloseReady();
+}
+
+void XLabController::requestClose() {
+    close_requested_ = true;
+    stop();
+    checkCloseReady();
+}
+
+void XLabController::checkCloseReady() {
+    if (close_requested_ && !close_emitted_ && !closing && !recording_ && !finishing_recording_ &&
+        !saving_recording_ && recording_path_.isEmpty()) {
+        close_emitted_ = true;
+        emit readyToClose();
     }
 }
 void XLabController::selectReference(const QString& id) {

@@ -43,7 +43,7 @@ Pill {
                     width: 260; height: 34
                     text: modelData.name + (highlighted ? "  ✓" : "")
                     highlighted: picker.controller.cameraId === modelData.id
-                    ToolTip.visible: hovered; ToolTip.text: modelData.name
+                    XLabToolTip { visible: option.hovered; text: option.modelData.name }
                     background: Rectangle { radius: 8; color: option.highlighted ? "#eef1ff" : option.hovered ? "#f3f4f6" : "transparent" }
                     contentItem: Text {
                         text: option.text; elide: Text.ElideRight; verticalAlignment: Text.AlignVCenter
@@ -58,26 +58,6 @@ Pill {
                 width: 260; height: visible ? 36 : 0
                 text: "No cameras found"; leftPadding: 8; verticalAlignment: Text.AlignVCenter
                 color: "#6b7380"; font.pixelSize: 12
-            }
-            Item {
-                width: 260; height: 12
-                Rectangle { anchors.verticalCenter: parent.verticalCenter; width: parent.width; height: 1; color: "#e5e7eb" }
-            }
-            ItemDelegate {
-                id: refresh; objectName: "cameraRefresh"
-                width: 260; height: 34; text: "Refresh Cameras"
-                background: Rectangle { radius: 8; color: refresh.hovered ? "#f3f4f6" : "transparent" }
-                contentItem: Text { text: refresh.text; color: "#111318"; font.pixelSize: 12; verticalAlignment: Text.AlignVCenter }
-                onClicked: picker.controller.refreshCameras()
-            }
-            CheckDelegate {
-                objectName: "cameraMirror"
-                width: 260; height: 34
-                text: "Mirror preview and result"
-                checked: picker.controller.videoMirrored
-                onClicked: picker.controller.videoMirrored = !picker.controller.videoMirrored
-                ToolTip.visible: hovered
-                ToolTip.text: "Display only; the published video is unchanged"
             }
         }
     }

@@ -11,12 +11,14 @@ Rectangle {
     readonly property alias sink: video.videoSink
     color: "black"
     radius: 24
+    clip: true
     layer.enabled: !softwareRendering
     layer.effect: MultiEffect { maskEnabled: true; maskSource: mask }
     Rectangle { id: mask; anchors.fill: parent; radius: 24; color: "white"; visible: false; layer.enabled: true }
     VideoOutput {
         id: video; objectName: panel.result ? "remoteVideoOutput" : "localVideoOutput"
-        anchors.fill: parent; fillMode: VideoOutput.PreserveAspectFit
+        anchors.fill: parent
+        fillMode: panel.result ? VideoOutput.PreserveAspectFit : VideoOutput.PreserveAspectCrop
     }
     Text {
         anchors.verticalCenter: parent.verticalCenter

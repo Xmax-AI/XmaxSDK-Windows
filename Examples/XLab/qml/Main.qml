@@ -16,6 +16,7 @@ ApplicationWindow {
     readonly property var titles: ["Character Swap", "Virtual Try-On", "Style Transfer", "Free Prompt"]
     readonly property var freeReferences: { controller.references; return controller.referencesFor("free") }
     property string importMode: "charx"
+    property bool allowClose: false
     function openImporter(mode) { importMode = mode; importer.open() }
 
     ScrollView {
@@ -110,15 +111,26 @@ ApplicationWindow {
                             }
                         }
                     }
-                    Pill { objectName: "interpolationButton"; glyph: "bolt"; text: "2x"; ToolTip.text: "Frame interpolation"; onClicked: controller.interpolation() }
                     Pill { text: controller.preview ? "Preview" : controller.elapsed; passive: true; enabled: false; opacity: 1; implicitWidth: 72 }
+                    Pill {
+                        objectName: "recordButton"
+                        text: controller.finishingRecording ? "Finishing…" : controller.recordingToSave ? "Saving…" : controller.recording ? "Stop Recording" : "Record"
+                        glyph: "record"; glyphSize: 12; contentSpacing: 7; recordingStyle: true
+                        accent: controller.recording; loading: controller.finishingRecording
+                        enabled: controller.recording || controller.canRecord
+                        ToolTip.text: controller.recording ? "Stop recording and save the remote result" : "Record remote video and audio"
+                        onClicked: controller.recording ? controller.stopRecording() : controller.startRecording()
+                    }
                     Pill { objectName: "stopButton"; glyph: "stop"; text: controller.preview ? "Exit Preview" : "Stop Session"; destructive: true; onClicked: controller.stop() }
                 }
             }
 
             Column {
                 id: landing
+                objectName: "landingPage"
                 visible: !controller.active
+                transform: Translate { id: landingShift }
+                PageEntry { page: landing; shift: landingShift; controller: window.controller }
                 anchors.horizontalCenter: parent.horizontalCenter
                 y: Math.max(header.y + 108, (page.height - height) / 2 - 5)
                 spacing: 0
@@ -139,8 +151,14 @@ ApplicationWindow {
                     Column {
                         anchors.centerIn: parent; spacing: 20
                         Pill {
+                            id: startButton
                             objectName: "startButton"; anchors.horizontalCenter: parent.horizontalCenter
                             primary: true; text: controller.closing ? "Stopping…" : controller.busy ? "Starting…" : controller.preview ? "Preview UI" : "Start Camera"; glyph: "camera"
+                            labelSize: Math.min(18, Math.max(15, window.width * 0.003 + 12))
+                            glyphSize: 20; contentSpacing: 10
+                            contentHorizontalPadding: Math.min(40, Math.max(25, window.width * 0.0075 + 18))
+                            implicitHeight: Math.max(20, Math.ceil(startFont.height)) + Math.min(16, Math.max(12, window.width * 0.0028 + 9)) * 2
+                            FontMetrics { id: startFont; font.family: startButton.font.family; font.pixelSize: startButton.labelSize; font.weight: Font.DemiBold }
                             enabled: !controller.busy; onClicked: controller.start()
                         }
                         Rectangle {
@@ -160,7 +178,7 @@ ApplicationWindow {
                     }
                     Text {
                         width: parent.width - 40; anchors.horizontalCenter: parent.horizontalCenter; anchors.bottom: parent.bottom; anchors.bottomMargin: 28
-                        text: 'By clicking Start, you agree to our <a style="color:#c3c6cc" href="https://platform.xmaxai.com/docs/resources/terms">Terms of Use</a> and <a style="color:#c3c6cc" href="https://platform.xmaxai.com/docs/resources/privacy">Privacy Policy</a>.'
+                        text: 'By clicking Start, you agree to our <a style="color:#c3c6cc" href="https://platform.xmaxsi.com/docs/resources/terms">Terms of Use</a> and <a style="color:#c3c6cc" href="https://platform.xmaxsi.com/docs/resources/privacy">Privacy Policy</a>.'
                         textFormat: Text.RichText; wrapMode: Text.Wrap; horizontalAlignment: Text.AlignHCenter
                         color: "#9ca3af"; linkColor: "#c3c6cc"; font.pixelSize: Math.min(15,Math.max(12,window.width * 0.0028 + 9.5))
                         onLinkActivated: link => Qt.openUrlExternally(link)
@@ -176,9 +194,12 @@ ApplicationWindow {
 
             Column {
                 id: workspace
+                objectName: "generationPage"
                 visible: controller.active
+                transform: Translate { id: workspaceShift }
+                PageEntry { page: workspace; shift: workspaceShift; controller: window.controller }
                 x: 28; width: parent.width - 56
-                y: header.y + header.height + 24
+                y: header.y + header.height + 8
                 spacing: 0
                 Row {
                     width: parent.width; spacing: 24
@@ -242,35 +263,53 @@ ApplicationWindow {
                                 }
                                 ToolButton { x: 31; y: -4; width: 18; height: 18; text: "×"; onClicked: controller.removeFreeReference(); Accessible.name: "Remove reference" }
                             }
-                            Pill { objectName: "submitButton"; glyph: "arrow"; width: 44; height: 44; primary: true; implicitWidth: 44; ToolTip.text: "Submit prompt"; enabled: window.freeReferences.length === 0 || window.freeReferences[0].state === "ready"; onClicked: controller.submitPrompt() }
+                            Pill { objectName: "submitButton"; glyph: "arrow"; width: 44; height: 44; primary: true; showsShadow: false; implicitWidth: 44; ToolTip.text: "Submit prompt"; enabled: window.freeReferences.length === 0 || window.freeReferences[0].state === "ready"; onClicked: controller.submitPrompt() }
                         }
                     }
                 }
             }
             Row {
+                id: socialFooter
                 visible: !controller.active
+                transform: Translate { id: socialFooterShift }
+                PageEntry { page: socialFooter; shift: socialFooterShift; controller: window.controller }
                 x: 28; y: page.height - 72; spacing: 18
                 Repeater {
                     model: ["wechat", "socialX", "globe"]
                     delegate: ToolButton {
+                        id: socialButton
                         required property string modelData
-                        width: 22; height: 22
-                        contentItem: Icon { kind: modelData; tint: "#6b7380" }
+                        width: 24; height: 36; padding: 0
+                        hoverEnabled: true
+                        contentItem: Item {
+                            Icon { anchors.centerIn: parent; width: modelData === "socialX" ? 18 : 20; height: width; kind: modelData; tint: parent.parent.hovered ? "#111318" : "#6b7380" }
+                        }
                         background: null
+                        HoverHandler { cursorShape: Qt.PointingHandCursor }
+                        XLabToolTip { visible: socialButton.hovered; text: socialButton.Accessible.name }
                         onClicked: { if (modelData === "wechat") wechat.open(); else Qt.openUrlExternally(modelData === "socialX" ? "https://x.com/XmaxAIOfficial" : "https://www.xmaxai.com") }
                         Accessible.name: modelData === "wechat" ? "WeChat" : modelData === "globe" ? "Website" : "X"
                     }
                 }
             }
             Row {
+                id: linksFooter
                 visible: !controller.active
+                transform: Translate { id: linksFooterShift }
+                PageEntry { page: linksFooter; shift: linksFooterShift; controller: window.controller }
                 anchors.right: parent.right; anchors.rightMargin: 28; y: page.height - 72; spacing: 24
                 Repeater {
-                    model: ["Contact Us", "API Platform"]
+                    model: [
+                        { label: "Contact Us", url: "mailto:contact@xmax.ai" },
+                        { label: "GitHub", url: "https://github.com/Xmax-AI/XmaxSDK-Windows" },
+                        { label: "API Platform", url: "https://platform.xmaxsi.com" }
+                    ]
                     delegate: Text {
-                        required property string modelData
-                        text: modelData; color: "#6b7380"; font.pixelSize: 13
-                        MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: Qt.openUrlExternally(modelData === "Contact Us" ? "mailto:contact@xmax.ai" : "https://platform.xmaxai.com") }
+                        required property var modelData
+                        text: modelData.label; color: linkHover.containsMouse ? "#111318" : "#6b7380"; font.pixelSize: 13
+                        height: 36; verticalAlignment: Text.AlignVCenter
+                        Accessible.role: Accessible.Link; Accessible.name: text
+                        MouseArea { id: linkHover; anchors.fill: parent; cursorShape: Qt.PointingHandCursor; hoverEnabled: true; onClicked: Qt.openUrlExternally(modelData.url) }
                     }
                 }
             }
@@ -279,6 +318,12 @@ ApplicationWindow {
     Connections {
         target: controller
         function onApiKeyRequired() { keyPopup.open(); keyInput.forceActiveFocus() }
+        function onRecordingReady() {
+            recordingSave.selectedFile = controller.defaultRecordingDestination()
+            recordingSave.open()
+        }
+        function onRecordingSaveFailed(message) { recordingRetry.message = message; recordingRetry.open() }
+        function onReadyToClose() { window.allowClose = true; Qt.callLater(function() { window.close() }) }
     }
     Rectangle {
         visible: controller.error.length > 0
@@ -296,6 +341,28 @@ ApplicationWindow {
     }
     Text { visible: controller.preview; anchors.horizontalCenter: parent.horizontalCenter; anchors.bottom: parent.bottom; anchors.bottomMargin: 8; text: "UI preview · no camera, network session or generated output"; color: "#9ca3af"; font.pixelSize: 11 }
     FileDialog { id: importer; title: "Choose a reference image"; nameFilters: ["Images (*.jpg *.jpeg *.png *.webp *.bmp)"]; onAccepted: controller.uploadReference(selectedFile, window.importMode) }
+    FileDialog {
+        id: recordingSave
+        title: "Save Recording"; fileMode: FileDialog.SaveFile
+        nameFilters: ["MP4 video (*.mp4)"]; defaultSuffix: "mp4"
+        onAccepted: controller.saveRecording(selectedFile)
+        onRejected: controller.discardRecording()
+    }
+    Dialog {
+        id: recordingRetry
+        property string message: ""
+        title: "Unable to Save Recording"
+        modal: true; anchors.centerIn: parent; closePolicy: Popup.NoAutoClose
+        contentItem: Column {
+            spacing: 16
+            Label { width: 360; text: recordingRetry.message; wrapMode: Text.Wrap }
+            Row {
+                spacing: 12
+                Button { text: "Try Again"; onClicked: { recordingRetry.close(); recordingSave.open() } }
+                Button { text: "Discard Recording"; onClicked: { recordingRetry.close(); controller.discardRecording() } }
+            }
+        }
+    }
     Popup {
         id: wechat; parent: Overlay.overlay; anchors.centerIn: parent; padding: 14
         background: Rectangle { color: "white"; radius: 12; border.color: "#e5e7eb" }
@@ -305,5 +372,10 @@ ApplicationWindow {
             Text { text: "Follow us on WeChat"; font.pixelSize: 12; anchors.horizontalCenter: parent.horizontalCenter }
         }
     }
-    onClosing: controller.stop()
+    onClosing: event => {
+        if (!window.allowClose) {
+            event.accepted = false
+            controller.requestClose()
+        }
+    }
 }

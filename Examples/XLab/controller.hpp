@@ -1,7 +1,10 @@
 #pragma once
+#include "recording.hpp"
+#include <QFuture>
 #include <QElapsedTimer>
 #include <QObject>
 #include <QTimer>
+#include <QUrl>
 #include <QVariantList>
 #include <QVariantMap>
 #include <QVideoSink>
@@ -52,6 +55,10 @@ class XLabController final : public QObject {
     Q_PROPERTY(float volume READ volume WRITE setVolume NOTIFY changed)
     Q_PROPERTY(QVideoSink* localSink READ localSink WRITE setLocalSink NOTIFY sinksChanged)
     Q_PROPERTY(QVideoSink* remoteSink READ remoteSink WRITE setRemoteSink NOTIFY sinksChanged)
+    Q_PROPERTY(bool canRecord READ canRecord NOTIFY changed)
+    Q_PROPERTY(bool recording READ recording NOTIFY changed)
+    Q_PROPERTY(bool finishingRecording READ finishingRecording NOTIFY changed)
+    Q_PROPERTY(bool recordingToSave READ recordingToSave NOTIFY changed)
   public:
     explicit XLabController(bool uiPreview = false, bool sessionPreview = false, QObject* parent = nullptr);
     ~XLabController() override;
@@ -82,6 +89,9 @@ class XLabController final : public QObject {
     /// @brief Refresh SDK devices while stopped without opening capture or a cloud session.
     Q_INVOKABLE void refreshCameras();
 
+    /// Returns whether the system requests reduced interface animation.
+    Q_INVOKABLE bool reduceMotion() const;
+
     QString mode() const { return mode_; }
     void setMode(const QString&);
     QVariantList references() const;
@@ -110,6 +120,16 @@ class XLabController final : public QObject {
         emit changed();
     }
     Q_INVOKABLE void interpolation();
+    bool canRecord() const;
+    bool recording() const { return recording_ != nullptr; }
+    bool finishingRecording() const { return finishing_recording_; }
+    bool recordingToSave() const { return !recording_path_.isEmpty(); }
+    Q_INVOKABLE void startRecording();
+    Q_INVOKABLE void stopRecording();
+    Q_INVOKABLE QUrl defaultRecordingDestination() const;
+    Q_INVOKABLE void saveRecording(const QUrl& destination);
+    Q_INVOKABLE void discardRecording();
+    Q_INVOKABLE void requestClose();
     bool microphone = false, active = false, busy = false, closing = false, preview = false,
          statisticsVisible = true, remoteReady = false;
     QString error, prompt, selected;
@@ -120,8 +140,21 @@ class XLabController final : public QObject {
     void sinksChanged();
     void referencesChanged();
     void camerasChanged();
+    void recordingReady();
+    void recordingSaveFailed(QString message);
+    void readyToClose();
 
   private:
+#ifdef XLAB_TEST_SUPPORT
+    friend class RecordingTests;
+#endif
+    std::shared_ptr<RealtimeMediaRecorder> recording_, completed_recording_;
+    QFuture<QString> recording_registration_;
+    QString recording_path_;
+    bool finishing_recording_ = false, saving_recording_ = false, close_requested_ = false;
+    quint64 recording_id_ = 0;
+    bool close_emitted_ = false;
+    void checkCloseReady();
     QString key_, model_ = "x2.1", mode_ = "charx";
     float volume_ = 0;
     QVariantList presets_, uploads_;
@@ -140,7 +173,7 @@ class XLabController final : public QObject {
     void tick();
     void beginGeneration();
     void applyPending();
-    void async(std::function<QString()> work, std::function<void(QString)> done);
+    QFuture<QString> async(std::function<QString()> work, std::function<void(QString)> done);
     void patchUpload(const QString&, const QVariantMap&);
     void upload(const QString& id, const QUrl&, const QString& mode, quint64 intent);
 };

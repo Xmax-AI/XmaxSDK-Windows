@@ -4,7 +4,7 @@ Image {
     property color tint: "#111318"
     readonly property color opaqueTint: Qt.rgba(tint.r,tint.g,tint.b,1)
     readonly property var paths: ({
-        camera: '<rect x="3" y="6" width="13" height="12" rx="3"/><path d="m16 10 5-3v10l-5-3"/>',
+        camera: '<rect x="2" y="6" width="14" height="12" rx="3"/><path d="m16 10 6-3.5v11l-6-3.5"/>',
         microphone: '<rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3M8 22h8"/>',
         key: '<circle cx="7.5" cy="15.5" r="5.5"/><path d="m11.4 11.6 9.6-9.6M15.5 7.5l3 3 3.5-3.5-3-3"/>',
         chevron: '<path d="m6 9 6 6 6-6"/>',
@@ -15,9 +15,10 @@ Image {
         plus: '<path d="M12 4v16M4 12h16"/>',
         arrow: '<path d="M4 12h16m-6-6 6 6-6 6"/>',
         stop: '<rect x="7" y="7" width="10" height="10" rx="1" fill="currentColor" stroke="none"/>',
-        globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c6 6 6 12 0 18-6-6-6-12 0-18"/>',
-        socialX: '<path d="m4 3 16 18h-4L1 3h3Zm16 0L4 21"/>',
-        wechat: '<path d="M15 14c-2 4-7 4-10 2l-3 1 1-3C-1 7 6 2 12 5M14 9c10-3 12 7 6 9l1 3-4-2c-9 0-10-8-3-10Z"/>',
+        record: '<circle cx="12" cy="12" r="8" fill="currentColor" stroke="none"/>',
+        globe: '<circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2c7.067 6.667 7.067 13.333 0 20-7.067-6.667-7.067-13.333 0-20"/>',
+        socialX: '<path fill="currentColor" stroke="none" fill-rule="evenodd" d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231 5.451-6.231ZM17.083 19.77h1.833L6.95 4.126H5.117L17.083 19.77Z"/>',
+        wechat: '<path fill="currentColor" stroke="none" fill-rule="evenodd" transform="matrix(1.15 0 0 1.15 -1.8 -1.8)" d="M9.3 4C5.6 4 2.6 6.6 2.6 9.9c0 1.9 1 3.5 2.6 4.6l-.7 2.2 2.4-1.2c.7.2 1.5.3 2.4.3h.5c-.1-.4-.2-.9-.2-1.3 0-3.1 2.9-5.6 6.4-5.6h.3C15.7 6.2 12.8 4 9.3 4ZM7.3 7.2a.9.9 0 1 1 0 1.8.9.9 0 0 1 0-1.8Zm4.4 0a.9.9 0 1 1 0 1.8.9.9 0 0 1 0-1.8Zm4.1 2.7c-3.1 0-5.6 2-5.6 4.6s2.5 4.6 5.6 4.6c.6 0 1.3-.1 1.9-.3l2 1-.5-1.8c1.3-.8 2.2-2.1 2.2-3.5 0-2.5-2.5-4.6-5.6-4.6Zm-1.6 2.5a.8.8 0 1 1 0 1.6.8.8 0 0 1 0-1.6Zm3.2 0a.8.8 0 1 1 0 1.6.8.8 0 0 1 0-1.6Z"/>',
         close: '<path d="m6 6 12 12M18 6 6 18"/>',
         warning: '<circle cx="12" cy="12" r="9"/><path d="M12 7v6M12 16v1"/>'
     })
