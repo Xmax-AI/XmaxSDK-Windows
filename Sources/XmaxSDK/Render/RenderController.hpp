@@ -104,13 +104,6 @@ class RenderController {
     }
 
     /**
-     * Reports whether application media delivery currently requires native PCM observation.
-     */
-    bool has_media_listener() const {
-        return output_.has_listener();
-    }
-
-    /**
      * Drains application media delivery while the lifecycle executor still accepts callback reentry.
      */
     void shutdown_output() {

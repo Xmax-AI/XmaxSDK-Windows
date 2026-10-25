@@ -183,11 +183,6 @@ void XLabController::setMode(const QString& mode) {
     emit changed();
     emit referencesChanged();
 }
-void XLabController::interpolation() {
-    error = handles_ ? sdkError(xmax_realtime_set_interpolation(handles_->realtime, 1))
-                     : QStringLiteral("Frame interpolation is unavailable in this preview.");
-    emit changed();
-}
 QVariantList XLabController::references() const {
     return referencesFor(mode_);
 }

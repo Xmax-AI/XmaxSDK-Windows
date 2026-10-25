@@ -832,11 +832,6 @@ enum {
     XMAX_CAP_STORAGE = 1u << 3,
 
     /**
-     * The build provides a native video interpolation backend.
-     */
-    XMAX_CAP_FRAME_INTERPOLATION = 1u << 4,
-
-    /**
      * Provides trajectory coordinate mapping, task signaling, and effect-data queries.
      */
     XMAX_CAP_TRAJECTORY = 1u << 5,
@@ -1351,7 +1346,7 @@ typedef struct xmax_client_options {
 } xmax_client_options;
 
 /**
- * The realtime configuration; Windows does not enable remote frame interpolation.
+ * The model configuration for a realtime controller.
  */
 typedef struct xmax_realtime_config {
 
@@ -2364,22 +2359,6 @@ XMAX_API xmax_result XMAX_CALL
 xmax_realtime_get_quality(
     xmax_realtime realtime,
     xmax_quality_status* quality
-);
-
-/**
- * Requests enabling or disabling frame interpolation.
- *
- * @param[in] realtime A non-null realtime controller handle.
- * @param[in] enabled Nonzero requests frame interpolation.
- *
- * @return XMAX_OK on success, or a negative error code on failure. Use xmax_last_error for details.
- *
- * @note Enabling without a native interpolation backend returns XMAX_UNSUPPORTED; disabling can still
- * succeed.
- */
-XMAX_API xmax_result XMAX_CALL xmax_realtime_set_interpolation(
-    xmax_realtime realtime,
-    int32_t enabled
 );
 
 /**

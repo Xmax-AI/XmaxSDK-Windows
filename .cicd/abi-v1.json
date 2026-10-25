@@ -35,7 +35,6 @@
     "xmax_realtime_push_video_frame",
     "xmax_realtime_set_adaptive_quality",
     "xmax_realtime_set_encoding",
-    "xmax_realtime_set_interpolation",
     "xmax_realtime_set_remote_volume",
     "xmax_realtime_start",
     "xmax_realtime_stop_media",

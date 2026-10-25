@@ -35,7 +35,6 @@ int main() {
         return 23;
     moved.encoding();
     moved.adaptive_quality(false);
-    moved.interpolation(false);
     if (moved.volume() != .4f || moved.quality().adaptive_enabled || moved.acquire_frame())
         return 6;
     std::vector<uint8_t> pixels(size_t(1920) * 1024 * 4, 37);

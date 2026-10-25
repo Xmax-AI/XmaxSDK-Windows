@@ -66,7 +66,7 @@ class ExternalVideoController {
      * receivers.
      *
      * @param[in] source The frame or borrowed view to read, with a valid pixel layout.
-     * @param[in] binding The source revision; zero uses the current legacy binding. Stale revisions are ignored.
+     * @param[in] binding The source revision; zero submits to the current input without revision matching. Stale revisions are ignored.
      */
     void push(
         const xmax_video_frame& source,

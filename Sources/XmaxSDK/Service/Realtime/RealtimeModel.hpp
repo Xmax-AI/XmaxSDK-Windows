@@ -105,7 +105,6 @@ class RealtimeModelDefinition {
                 "This camera preset is not supported by the model"
             );
         }
-        format.fps = fps;
         return format;
     }
 

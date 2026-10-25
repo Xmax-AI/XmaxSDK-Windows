@@ -593,22 +593,6 @@ class realtime : public detail::owner<xmax_realtime, xmax_realtime_destroy> {
     }
 
     /**
-     * Configures native frame interpolation; enabling without a backend is rejected.
-     *
-     * @param[in] enabled True to enable; false to disable.
-     *
-     * @see xmax_realtime_set_interpolation
-     */
-    void interpolation(
-        bool enabled
-    ) {
-        check(xmax_realtime_set_interpolation(
-            get(),
-            enabled
-        ));
-    }
-
-    /**
      * Closes server and RTC resources while retaining local preview and cached conditions.
      *
      * @note This call blocks. Call it on a worker thread; failures throw xmax::error.

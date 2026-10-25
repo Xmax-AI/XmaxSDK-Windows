@@ -119,7 +119,6 @@ class XLabController final : public QObject {
         error.clear();
         emit changed();
     }
-    Q_INVOKABLE void interpolation();
     bool canRecord() const;
     bool recording() const { return recording_ != nullptr; }
     bool finishingRecording() const { return finishing_recording_; }

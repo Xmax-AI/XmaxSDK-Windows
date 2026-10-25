@@ -27,11 +27,6 @@ void ExternalVideoController::prepare(
     bool has_audio
 ) {
     MediaService::input(format);
-    require(
-        format.width >= 4 && format.height >= 4,
-        XMAX_INVALID_ARGUMENT,
-        "External input must be at least 4 by 4 pixels"
-    );
 
     std::lock_guard<std::mutex> lock(mutex_);
     require(
@@ -135,7 +130,7 @@ xmax_video_format ExternalVideoController::format() const {
  * receivers.
  *
  * @param[in] source The frame or borrowed view to read, with a valid pixel layout.
- * @param[in] binding The source revision; zero uses the current legacy binding. Stale revisions are ignored.
+ * @param[in] binding The source revision; zero submits to the current input without revision matching. Stale revisions are ignored.
  */
 void ExternalVideoController::push(
     const xmax_video_frame& source,

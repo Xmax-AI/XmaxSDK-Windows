@@ -1466,30 +1466,6 @@ xmax_result XMAX_CALL xmax_realtime_get_quality(
 }
 
 /**
- * Requests enabling or disabling frame interpolation.
- *
- * @param[in] r A non-null realtime controller handle.
- * @param[in] enabled Nonzero requests frame interpolation.
- *
- * @return XMAX_OK on success, or a negative error code on failure. Use xmax_last_error for details.
- *
- * @note Enabling without a native interpolation backend returns XMAX_UNSUPPORTED; disabling can still
- * succeed.
- */
-xmax_result XMAX_CALL xmax_realtime_set_interpolation(
-    xmax_realtime r,
-    int32_t enabled
-) {
-    return protect(
-        __func__,
-        [&] {
-            handle(r);
-            r->session->interpolation(enabled != 0);
-        }
-    );
-}
-
-/**
  * Connects and starts generation with initial conditions, waiting for the first result frame.
  *
  * A newer generation request cancels an unfinished one with XMAX_CANCELLED. The newer request executes

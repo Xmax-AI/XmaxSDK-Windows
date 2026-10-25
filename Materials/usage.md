@@ -17,7 +17,7 @@ auto realtime = client.create_realtime(xmax::RealtimeConfiguration{xmax::Realtim
 auto storage = client.create_storage();
 ```
 
-`XMAX_CAP_RTC` 表示构建包含 RTC 后端；`XMAX_CAP_CAMERA` 表示提供原生采集实现，不保证设备存在或权限已授予；`XMAX_CAP_NATIVE_WINDOW` 表示 Windows HWND 显示实现；`XMAX_CAP_TRAJECTORY` 表示提供坐标映射、任务轨迹信令和效果数据查询。当前 `XMAX_CAP_FRAME_INTERPOLATION` 为零。客户端可以在子对象创建后销毁，Realtime / Storage 仍拥有所需配置和传输对象。
+`XMAX_CAP_RTC` 表示构建包含 RTC 后端；`XMAX_CAP_CAMERA` 表示提供原生采集实现，不保证设备存在或权限已授予；`XMAX_CAP_NATIVE_WINDOW` 表示 Windows HWND 显示实现；`XMAX_CAP_TRAJECTORY` 表示提供坐标映射、任务轨迹信令和效果数据查询。客户端可以在子对象创建后销毁，Realtime / Storage 仍拥有所需配置和传输对象。
 
 模型由实时配置选择，服务环境由全局配置选择；当前仅支持 `xmax::RealtimeModel::x2_1`，服务端模型标识为 `x2.1`。`x2.1` 支持五组分辨率，模型能力可通过 `xmax::client::model_info(xmax::RealtimeModel::x2_1)` 查询。新入口中，海外通用 API 使用 `api.xmax.cloud`，实时会话使用 `api.xmax.ai`。字符串配置和 C ABI 入口均仅接受 `x2.1`；国内外服务通过环境配置选择。
 
@@ -160,8 +160,6 @@ realtime.downlink_quality_level(xmax::RealtimeQualityLevel::l3);
 `state_info()` 返回状态、状态原因和关联错误；`poll(xmax_event_info&)` 消费同一事件队列并保留这些详情。连接或生成失败后，回滚状态保留原始错误；新的有效操作清除旧失败原因。可通过 `disconnect(XMAX_REASON_ORIENTATION_CHANGED)` 表达方向变化。
 
 C 接口在失败线程上提供 `xmax_last_error_info`，包含 SDK 错误码、服务端业务码与 HTTP 状态码。它不会清除当前错误；下一次普通 SDK 调用会更新诊断。C++ 异常通过 `code()`、`api_code()`、`http_status()` 读取对应字段。系统明确拒绝设备访问时分别报告 `XMAX_CAMERA_PERMISSION_DENIED` 或 `XMAX_MICROPHONE_PERMISSION_DENIED`。
-
-当前调用 `interpolation(true)` 返回 `XMAX_UNSUPPORTED`，关闭插帧可正常调用。没有使用重复帧模拟插帧。
 
 ## 轨迹交互
 

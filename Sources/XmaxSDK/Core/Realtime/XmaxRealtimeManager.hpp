@@ -108,24 +108,17 @@ class XmaxRealtimeManager {
     );
 
     /**
-     * Copies and submits an external frame synchronously; may be called on a media thread.
+     * Copies and submits external pixels on the calling media thread.
      *
-     * @param[in] frame The frame or borrowed view to deliver; its pixels must remain valid until this
-     * synchronous call returns.
-     */
-    void push(
-        const xmax_video_frame& frame
-    );
-
-    /**
-     * Submits a source-bound external frame; replaced or closed bindings silently discard input.
+     * @param[in] frame The borrowed pixels, valid until this synchronous call returns.
+     * @param[in] binding The source revision, or zero to submit to the current input directly.
      *
-     * @param[in] frame The borrowed pixels, copied before this call returns.
-     * @param[in] binding The revision returned when this source was bound.
+     * @note Stale source revisions discard input. Invalid current source-bound frames fail that source;
+     * invalid direct submissions report an error without terminating the input.
      */
     void push(
         const xmax_video_frame& frame,
-        uint64_t binding
+        uint64_t binding = 0
     );
 
     /**
@@ -144,12 +137,12 @@ class XmaxRealtimeManager {
     /**
      * Reports whether a source binding accepts frames for preview and publication.
      *
-     * @param[in] binding The revision returned when this source was bound.
+     * @param[in] binding The source revision, or zero to query the current input without revision matching.
      *
      * @return True for a live binding, including while disconnected; false after failure or unbinding.
      */
     bool requesting(
-        uint64_t binding
+        uint64_t binding = 0
     ) const;
 
     /**
@@ -228,15 +221,6 @@ class XmaxRealtimeManager {
     float volume();
 
     /**
-     * Configures frame interpolation; enabling requires a native backend.
-     *
-     * @param[in] enabled True to enable; false to disable.
-     */
-    void interpolation(
-        bool enabled
-    );
-
-    /**
      * Validates and applies uplink bitrate limits and degradation preference.
      *
      * @param[in] value The uplink bitrate limits and degradation preference; see xmax_encoding_config for
@@ -276,13 +260,6 @@ class XmaxRealtimeManager {
      * @return The adaptation setting, directional quality levels, and effective dimensions and frame rates.
      */
     xmax_quality_status quality();
-
-    /**
-     * Reports whether external input accepts preview and publication frames.
-     *
-     * @return True for a live external binding, including while disconnected; false for camera mode or failed input.
-     */
-    bool requesting() const;
 
     /**
      * Sets and retains the remote playback volume for the current or next connection.

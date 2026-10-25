@@ -140,7 +140,6 @@ static void separate_connect_and_generation() {
     CHECK(rtc->encoding.maximum_bitrate == 2500 && rtc->encoding.minimum_bitrate == 0);
     sdk.adaptive(false);
     CHECK(!sdk.quality().adaptive_enabled);
-    expect_error(XMAX_UNSUPPORTED, [&] { sdk.interpolation(true); });
     CHECK(sdk.state_snapshot().state == XMAX_GENERATING);
     expect_error(XMAX_INVALID_STATE, [&] { sdk.stop_media(); });
     CHECK(sdk.state_snapshot().state == XMAX_GENERATING);

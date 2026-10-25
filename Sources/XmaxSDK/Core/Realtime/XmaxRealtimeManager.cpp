@@ -211,16 +211,6 @@ uint64_t XmaxRealtimeManager::prepare(
 }
 
 /**
- * Reports whether external input accepts preview and publication frames.
- *
- * @return True for a live external binding, including while disconnected; false for camera mode or failed input.
- */
-bool XmaxRealtimeManager::requesting() const {
-    return !media_.camera_active() && failed_media_epoch_ != media_epoch_.load() &&
-           media_.external().bound();
-}
-
-/**
  * Binds local preview to a new media revision, rejecting earlier frames.
  */
 void XmaxRealtimeManager::bind_local() {
@@ -295,7 +285,7 @@ void XmaxRealtimeManager::external_failure(
 /**
  * Reports whether a source binding accepts frames for preview and publication.
  *
- * @param[in] binding The revision returned when this source was bound.
+ * @param[in] binding The source revision, or zero to query the current input without revision matching.
  *
  * @return True for a live binding, including while disconnected; false after failure or unbinding.
  */
@@ -303,28 +293,43 @@ bool XmaxRealtimeManager::requesting(
     uint64_t binding
 ) const {
     std::lock_guard<std::mutex> lock(media_binding_mutex_);
-    return binding != 0 && media_epoch_ == binding && failed_media_epoch_ != binding &&
+    return (binding == 0 || media_epoch_ == binding) && failed_media_epoch_ != media_epoch_.load() &&
            !media_.camera_active() && media_.external().bound();
 }
 
 /**
- * Submits a source-bound external frame; replaced or closed bindings silently discard input.
+ * Copies and submits external pixels on the calling media thread.
  *
- * @param[in] frame The borrowed pixels, copied before this call returns.
- * @param[in] binding The revision returned when this source was bound.
+ * @param[in] frame The borrowed pixels, valid until this synchronous call returns.
+ * @param[in] binding The source revision, or zero to submit to the current input directly.
+ *
+ * @note Stale source revisions discard input. Invalid current source-bound frames fail that source;
+ * invalid direct submissions report an error without terminating the input.
  */
 void XmaxRealtimeManager::push(
     const xmax_video_frame& frame,
     uint64_t binding
 ) {
-    if (binding == 0 || media_epoch_ != binding || failed_media_epoch_ == binding || media_.camera_active())
-        return;
+    if (binding != 0) {
+        if (media_epoch_ != binding || failed_media_epoch_ == binding || media_.camera_active())
+            return;
+    } else {
+        require(
+            !media_.camera_active(),
+            XMAX_INVALID_STATE,
+            "External frames cannot replace SDK camera capture"
+        );
+    }
+
     try {
         media_.external().push(
             frame,
             binding
         );
     } catch (const Error& error) {
+        if (binding == 0)
+            throw;
+
         const Error source_error(
             XMAX_MEDIA_ERROR,
             error.what(),
@@ -337,6 +342,9 @@ void XmaxRealtimeManager::push(
         );
         throw source_error;
     } catch (...) {
+        if (binding == 0)
+            throw;
+
         const Error source_error(
             XMAX_MEDIA_ERROR,
             "Could not process external video pixels"
@@ -416,23 +424,6 @@ void XmaxRealtimeManager::stop_media() {
             );
         }
     );
-}
-
-/**
- * Copies and submits an external frame synchronously; may be called on a media thread.
- *
- * @param[in] frame The frame or borrowed view to deliver; its pixels must remain valid until this
- * synchronous call returns.
- */
-void XmaxRealtimeManager::push(
-    const xmax_video_frame& frame
-) {
-    require(
-        !media_.camera_active(),
-        XMAX_INVALID_STATE,
-        "External frames cannot replace SDK camera capture"
-    );
-    media_.external().push(frame);
 }
 
 /**
@@ -884,21 +875,6 @@ xmax_video_format XmaxRealtimeManager::format() {
  */
 float XmaxRealtimeManager::volume() {
     return stream_.volume();
-}
-
-/**
- * Configures frame interpolation; enabling requires a native backend.
- *
- * @param[in] enabled True to enable; false to disable.
- */
-void XmaxRealtimeManager::interpolation(
-    bool enabled
-) {
-    require(
-        !enabled,
-        XMAX_UNSUPPORTED,
-        "This build has no native frame interpolation backend"
-    );
 }
 
 /**

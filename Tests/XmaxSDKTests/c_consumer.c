@@ -57,7 +57,6 @@ int main(void) {
     extended.caps.struct_size = sizeof(extended);
     CHECK(xmax_client_get_capabilities(client, &extended.caps) == XMAX_OK);
     CHECK(extended.caps.abi_version == XMAX_ABI_VERSION && (extended.caps.flags & XMAX_CAP_STORAGE));
-    CHECK(!(extended.caps.flags & XMAX_CAP_FRAME_INTERPOLATION));
     CHECK(!!(extended.caps.flags & XMAX_CAP_EXTERNAL_AUDIO_INPUT) == !!(extended.caps.flags & XMAX_CAP_RTC));
     CHECK(extended.canary == UINT64_C(0x123456789abcdef0));
     xmax_storage storage = NULL;
@@ -171,8 +170,6 @@ int main(void) {
     quality.struct_size = sizeof(quality);
     CHECK(xmax_realtime_set_adaptive_quality(realtime, 0) == XMAX_OK);
     CHECK(xmax_realtime_get_quality(realtime, &quality) == XMAX_OK && !quality.adaptive_enabled);
-    CHECK(xmax_realtime_set_interpolation(realtime, 1) == XMAX_UNSUPPORTED);
-    CHECK(xmax_realtime_set_interpolation(realtime, 0) == XMAX_OK);
     xmax_encoding_config encoding = {sizeof(encoding), -1, 50, XMAX_ENCODER_AUTO};
     CHECK(xmax_realtime_set_encoding(realtime, &encoding) == XMAX_OK);
     CHECK(xmax_realtime_generate(realtime, NULL) == XMAX_INVALID_ARGUMENT);

@@ -398,6 +398,45 @@ static void listener_replacement_and_reentrancy() {
     eventually([&] { return weak.expired(); });
 }
 
+/**
+ * Checks shared external delivery while retaining direct-call and source-bound error contracts.
+ */
+static void external_video_entry_contracts() {
+    auto http = std::make_shared<FakeHttp>();
+    auto rtc = std::make_shared<FakeRtc>();
+    XmaxRealtimeManager manager(api(http), [rtc] { return rtc; });
+    const auto original = manager.prepare({4, 4, 30});
+    auto pixels = video(1);
+
+    CHECK(manager.requesting() && manager.requesting(original));
+    manager.push(pixels.view());
+    auto direct = manager.acquire_local_frame();
+    CHECK(direct && direct->timestamp_us == 1 && direct->planes[0] == pixels.planes[0]);
+    expect_error(XMAX_INVALID_ARGUMENT, [&] { manager.push(pixels.view()); });
+    CHECK(manager.requesting() && manager.state_info().event.state == XMAX_READY);
+
+    manager.push(pixels.view(), original);
+    CHECK(!manager.acquire_local_frame()); // Source-bound duplicate timestamps are ignored.
+    pixels.timestamp_us = 2;
+    manager.push(pixels.view(), original);
+    auto bound = manager.acquire_local_frame();
+    CHECK(bound && bound->timestamp_us == 2 && bound->planes[0] == direct->planes[0]);
+
+    const auto replacement = manager.prepare({4, 4, 30});
+    CHECK(manager.requesting() && !manager.requesting(original) && manager.requesting(replacement));
+    manager.push({}, original);
+    CHECK(!manager.acquire_local_frame() && manager.requesting(replacement));
+    pixels.timestamp_us = 3;
+    auto invalid = pixels.view();
+    invalid.planes[0] = nullptr;
+    expect_error(XMAX_INVALID_ARGUMENT, [&] { manager.push(invalid); });
+    CHECK(manager.requesting(replacement) && manager.state_info().event.state == XMAX_READY);
+    expect_error(XMAX_MEDIA_ERROR, [&] { manager.push(invalid, replacement); });
+    CHECK(!manager.requesting() && !manager.requesting(replacement));
+    eventually([&] { return manager.state_info().event.state == XMAX_IDLE; });
+    CHECK(manager.state_info().reason == XMAX_REASON_FAILURE);
+}
+
 static void public_options_and_external_sink() {
     xmax::client client("");
     xmax::RealtimeConfiguration settings;
@@ -896,6 +935,7 @@ int main() {
         bounded_media_queue(false);
         bounded_media_queue(true);
         listener_replacement_and_reentrancy();
+        external_video_entry_contracts();
         public_options_and_external_sink();
         destruction_with_inflight_source_reference();
         public_media_bridge();

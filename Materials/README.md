@@ -9,6 +9,6 @@
 - `images/why/`：共享产品介绍插图。
 - `images/xlab/`：从 macOS 工程 Materials 沿用的 **iOS XLab** 截图与录屏，用于设计参考。Windows SDK 的 Qt 示例源码位于 [Examples/XLab](../Examples/XLab)。
 
-品牌、插图和演示媒体复制自用户提供的 macOS 工程；安装与使用说明根据当前 Windows C++ / C API 实现编写。共享演示素材不表示 Windows SDK 已实现相应输入 API。当前 SDK 提供摄像头与外部视频输入；静态图片/文件视频独立解码、鼠标轨迹及 Windows 插帧后端尚未实现。Qt 只负责 Demo 界面与交互。
+品牌、插图和演示媒体复制自用户提供的 macOS 工程；安装与使用说明根据当前 Windows C++ / C API 实现编写。共享演示素材不表示 Windows SDK 已实现相应输入 API。当前 SDK 提供摄像头与外部视频输入；静态图片/文件视频独立解码、鼠标轨迹尚未实现；远端插帧不在 SDK 范围内。Qt 只负责 Demo 界面与交互。
 
 工程根目录为 `Windows/XmaxSDK`，主入口见 [README](../README.md)。内部设计文档保存在 Git 忽略的 `Docs` 中；本目录不在忽略规则内。
