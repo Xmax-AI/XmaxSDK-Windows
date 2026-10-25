@@ -9,6 +9,7 @@ Button {
     property bool primary: false
     property bool recordingStyle: false
     property bool secondaryForeground: false
+    property real labelVerticalOffset: 0
     property bool showsShadow: true
     property string glyph: ""
     property bool trailingGlyph: false
@@ -63,12 +64,15 @@ Button {
         BusyIndicator { visible: control.loading; running: visible; width: control.glyphSize; height: width; anchors.verticalCenter: parent.verticalCenter }
         Text {
             id: label
+            objectName: "pillLabel"
             text: control.text
             visible: text.length > 0
+            anchors.verticalCenter: parent.verticalCenter
+            anchors.verticalCenterOffset: control.labelVerticalOffset
             font.family: control.font.family
             font.pixelSize: control.labelSize
             font.weight: control.primary || control.destructive || control.recordingStyle ? Font.DemiBold : Font.Normal
-            color: control.primary ? "white" : control.destructive ? "#dc2626" : control.accent ? "#2f46e2" : control.recordingStyle || control.secondaryForeground ? (control.hovered && control.enabled ? "#111318" : "#8b919d") : control.passive ? "#6b7380" : "#111318"
+            color: control.primary ? "white" : control.destructive ? "#dc2626" : control.accent ? "#2f46e2" : control.secondaryForeground || control.passive ? "#6b7380" : control.recordingStyle ? (control.hovered && control.enabled ? "#111318" : "#8b919d") : "#111318"
         }
       }
     }

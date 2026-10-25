@@ -71,20 +71,35 @@ ApplicationWindow {
                     }
                     Pill {
                         id: keyButton; objectName: "keyButton"
-                        glyph: "key"; text: controller.apiKey.length ? controller.apiKey.slice(0,20) + (controller.apiKey.length > 20 ? "…" : "") : ""
+                        glyph: "key"; text: controller.apiKey.length ? "****************" : ""
+                        labelVerticalOffset: 4
                         enabled: !controller.busy; ToolTip.text: "API Key"
                         onClicked: { keyPopup.open(); keyInput.forceActiveFocus() }
                         Popup {
-                            id: keyPopup
-                            x: parent.width - width; y: parent.height + 8; width: 300; padding: 10
+                            id: keyPopup; objectName: "keyPopup"
+                            x: parent.width - width; y: parent.height + 8; width: 340; padding: 16
                             background: Rectangle { color: "white"; radius: 12; border.color: "#e5e7eb" }
-                            contentItem: TextField {
-                                id: keyInput; objectName: "keyInput"
-                                text: controller.apiKey; placeholderText: "API Key"; selectByMouse: true
-                                onTextEdited: controller.apiKey = text
-                                onAccepted: keyPopup.close()
-                                background: Rectangle { radius: 10; color: "#f7f8fa"; border.color: keyInput.activeFocus ? "#2f46e2" : "#e5e7eb" }
-                                leftPadding: 12; rightPadding: 12
+                            contentItem: Column {
+                                spacing: 12
+                                TextField {
+                                    id: keyInput; objectName: "keyInput"
+                                    width: parent.width; height: 40
+                                    text: controller.apiKey; placeholderText: "API Key"; selectByMouse: true
+                                    echoMode: TextInput.Password; passwordCharacter: "*"; passwordMaskDelay: 0
+                                    font.pixelSize: 14; color: "#111318"
+                                    onTextEdited: controller.apiKey = text
+                                    onAccepted: keyPopup.close()
+                                    background: Rectangle { radius: 10; color: "#f7f8fa"; border.color: keyInput.activeFocus ? "#2f46e2" : "#e5e7eb" }
+                                    leftPadding: 12; rightPadding: 12
+                                }
+                                Text {
+                                    id: apiKeyHelp; objectName: "apiKeyHelp"
+                                    width: parent.width; font.pixelSize: 13; color: "#6b7380"
+                                    textFormat: Text.RichText; wrapMode: Text.WordWrap; linkColor: "#2f46e2"
+                                    text: "Get an API key from the <a href=\"https://platform.xmaxsi.com/api-keys\">Xmax Open Platform</a>."
+                                    onLinkActivated: link => Qt.openUrlExternally(link)
+                                    HoverHandler { cursorShape: apiKeyHelp.hoveredLink.length ? Qt.PointingHandCursor : Qt.ArrowCursor }
+                                }
                             }
                         }
                     }
@@ -95,6 +110,7 @@ ApplicationWindow {
                     Pill { text: controller.model.replace("x2", "X2"); passive: true; enabled: false; opacity: 1 }
                     Pill {
                         objectName: "statisticsButton"; glyph: "statistics"; accent: controller.statisticsVisible
+                        secondaryForeground: true
                         ToolTip.text: controller.statisticsVisible ? "Hide statistics (collection continues)" : "Show statistics"
                         onClicked: controller.statisticsVisible = !controller.statisticsVisible
                     }

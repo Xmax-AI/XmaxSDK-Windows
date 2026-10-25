@@ -180,10 +180,41 @@ int main(int argc, char** argv) {
             click("modelButton");
             QTest::keyClick(window, Qt::Key_Escape);
             window->contentItem()->forceActiveFocus();
+            const auto savedKey = controller.apiKey();
+            controller.setApiKey("ui-smoke-key");
             click("keyButton");
-            verify(window->findChild<QQuickItem*>("keyInput")->hasActiveFocus(),
-                   "API Key editor should focus input");
+            auto keyInput = window->findChild<QQuickItem*>("keyInput");
+            verify(keyInput && keyInput->hasActiveFocus(), "API Key editor should focus input");
+            verify(window->findChild<QQuickItem*>("keyButton")->property("text").toString() ==
+                       QString(16, '*'), "Header must mask the entire API Key");
+            QTest::keyClick(window, Qt::Key_X);
+            auto keyButton = window->findChild<QQuickItem*>("keyButton");
+            auto keyLabel = keyButton->findChild<QQuickItem*>("pillLabel");
+            QTest::qWait(50);
+            const auto maskedImage = window->grabWindow();
+            const auto pixelScale = qreal(maskedImage.width()) / window->width();
+            const auto labelArea = keyLabel->mapRectToScene(keyLabel->boundingRect());
+            int inkTop = maskedImage.height(), inkBottom = -1;
+            for (int y = int(labelArea.top() * pixelScale); y < int(labelArea.bottom() * pixelScale); ++y)
+                for (int x = int(labelArea.left() * pixelScale); x < int(labelArea.right() * pixelScale); ++x) {
+                    const auto color = maskedImage.pixelColor(x, y);
+                    if (color.red() < 100 && color.green() < 100 && color.blue() < 100) {
+                        inkTop = qMin(inkTop, y);
+                        inkBottom = qMax(inkBottom, y);
+                    }
+                }
+            const auto buttonCenter = keyButton->mapToScene(QPointF(0, keyButton->height() / 2)).y();
+            verify(inkBottom >= inkTop &&
+                       qAbs((inkTop + inkBottom + 1) / (2 * pixelScale) - buttonCenter) <= 1,
+                   "API Key stars must be visually centered inside the header button");
+            verify(controller.apiKey().size() == 13 &&
+                       keyInput->property("displayText").toString() == QString(13, '*'),
+                   "API Key edits must show only stars without briefly revealing the last character");
+            if (!dir.isEmpty())
+                verify(window->grabWindow().save(dir + "/key-settings.png"),
+                       "Cannot capture masked API Key settings");
             QTest::keyClick(window, Qt::Key_Escape);
+            controller.setApiKey(savedKey);
             if (!dir.isEmpty())
                 verify(window->grabWindow().save(dir + "/landing.png"), "Cannot capture landing page");
             auto stage = window->findChild<QQuickItem*>("landingStage");
