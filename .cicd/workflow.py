@@ -52,7 +52,7 @@ def prepare(value: str, root: Path = ROOT, dry_run: bool = False) -> None:
         updates[path] = updated
     notes = root/'.cicd/release-notes'/f'{value}.md'
     if not notes.exists():
-        updates[notes] = f'# XmaxSDK Windows {value}\n\n## What\'s New\n\nTODO: Describe user-visible changes.\n\n## API Changes\n\nTODO: Describe compatibility and API changes.\n\n## Validation\n\nTODO: Record Windows checks and hardware validation.\n'
+        updates[notes] = '## What\'s New\n\nTODO: Describe user-visible changes.\n\n## API Changes\n\nTODO: Describe compatibility and API changes.\n\n## Validation\n\nTODO: Record Windows checks and hardware validation.\n'
     print(f'Preparing {value}; changes: '+', '.join(str(p.relative_to(root)) for p in updates))
     if not dry_run:
         for path, content in updates.items():
@@ -169,7 +169,7 @@ def release(value: str, directory: Path, publish: bool = False, root: Path = ROO
         print('Release preflight passed. Dry run: no tag, GitHub Release or upload has been created.')
         print(json.dumps({'repository':REPOSITORY,'version':value,'commit':head,'assets':[p.name for p in assets]},indent=2))
         return
-    run(['gh','release','create',value,'--repo',REPOSITORY,'--verify-tag','--title',f'XmaxSDK Windows {value}',
+    run(['gh','release','create',value,'--repo',REPOSITORY,'--verify-tag','--title',value,
          '--notes-file',notes,*assets],cwd=root)
 
 def main() -> None:
