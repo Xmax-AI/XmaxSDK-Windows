@@ -32,7 +32,7 @@ Demo 为 unpackaged 桌面应用，直接运行 `XLabWinUI.exe`。发布包包�
 在 WinUI 项目中引用 `Xmax.SDK.WinUI`，并保持项目的 `UseWinUI` 配置：
 
 ```xml
-<sdk:XmaxVideoView
+<sdk:XmaxRealtimeVideoView
     xmlns:sdk="using:Xmax.SDK.WinUI"
     VideoSource="{Binding LocalVideo}"
     ContentMode="Fit" />

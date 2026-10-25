@@ -6,12 +6,12 @@ using Xmax.SDK.Rendering;
 namespace Xmax.SDK.Wpf;
 
 /// <summary>Latest-frame BGRA display with native mirror metadata and fit/fill layout.</summary>
-public sealed class XmaxVideoView : FrameworkElement
+public sealed class XmaxRealtimeVideoView : FrameworkElement
 {
     public static readonly DependencyProperty VideoSourceProperty = DependencyProperty.Register(nameof(VideoSource), typeof(IXmaxVideoSource),
-        typeof(XmaxVideoView), new PropertyMetadata(null, (owner, _) => ((XmaxVideoView)owner).Restart()));
+        typeof(XmaxRealtimeVideoView), new PropertyMetadata(null, (owner, _) => ((XmaxRealtimeVideoView)owner).Restart()));
     public static readonly DependencyProperty ContentModeProperty = DependencyProperty.Register(nameof(ContentMode), typeof(VideoContentMode),
-        typeof(XmaxVideoView), new FrameworkPropertyMetadata(VideoContentMode.Fit, FrameworkPropertyMetadataOptions.AffectsRender));
+        typeof(XmaxRealtimeVideoView), new FrameworkPropertyMetadata(VideoContentMode.Fit, FrameworkPropertyMetadataOptions.AffectsRender));
     private readonly WriteableBitmapPresenter presenter = new();
     private VideoFramePump? pump;
     private bool mirrored;
@@ -23,7 +23,7 @@ public sealed class XmaxVideoView : FrameworkElement
     public uint VideoWidth { get; private set; }
     public uint VideoHeight { get; private set; }
     public event Action<Exception>? PlaybackFailed;
-    public XmaxVideoView()
+    public XmaxRealtimeVideoView()
     {
         ClipToBounds = true;
         Loaded += (_, _) => Restart();

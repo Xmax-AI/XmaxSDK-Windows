@@ -20,8 +20,8 @@ namespace XLabWpf.Views;
 public partial class MainWindow : Window
 {
     internal MainViewModel Model { get; }
-    internal XmaxVideoView LocalVideoView => LocalView;
-    internal XmaxVideoView RemoteVideoView => RemoteView;
+    internal XmaxRealtimeVideoView LocalVideoView => LocalView;
+    internal XmaxRealtimeVideoView RemoteVideoView => RemoteView;
     internal bool KeyPopupOpen => KeyPopup.IsOpen;
     internal object VideoDiagnostics => new
     {
@@ -105,7 +105,7 @@ public partial class MainWindow : Window
             CameraSelectionStore.Save(remembered);
         }
     }
-    internal static (int Minimum, int Maximum) VideoLumaRange(XmaxVideoView view)
+    internal static (int Minimum, int Maximum) VideoLumaRange(XmaxRealtimeVideoView view)
     {
         if (!view.IsVisible || view.ActualWidth <= 0 || view.ActualHeight <= 0) throw new InvalidOperationException("The video view is not visible.");
         int width = (int)view.ActualWidth, height = (int)view.ActualHeight;

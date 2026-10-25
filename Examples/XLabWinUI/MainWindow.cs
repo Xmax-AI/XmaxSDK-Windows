@@ -29,7 +29,7 @@ public sealed partial class MainWindow : Window
     private readonly TextBlock terms = Theme.Text("", 13, "#9CA3AF");
     private readonly StackPanel workspace = new();
     private readonly Grid localPanel = new() { Background = Theme.Brush("#000000") }, remotePanel = new() { Background = Theme.Brush("#000000") };
-    internal readonly XmaxVideoView LocalView = new() { ContentMode = VideoContentMode.Fill }, RemoteView = new();
+    internal readonly XmaxRealtimeVideoView LocalView = new() { ContentMode = VideoContentMode.Fill }, RemoteView = new();
     private readonly TextBlock localPlaceholder = Theme.Text("", 14, "#B3FFFFFF"), resultPlaceholder = Theme.Text("", 14, "#B3FFFFFF");
     private readonly StackPanel localStatistics = new(), remoteStatistics = new();
     private readonly Grid referenceArea = new() { Height = 190 };
@@ -77,8 +77,8 @@ public sealed partial class MainWindow : Window
         Model.ApiKeyRequired += OpenKey;
         Model.CameraRequired += OpenCameras;
         LocalView.PlaybackFailed += Model.ReportError; RemoteView.PlaybackFailed += Model.ReportError;
-        Theme.Bind(LocalView, XmaxVideoView.VideoSourceProperty, nameof(Model.LocalVideo), Model);
-        Theme.Bind(RemoteView, XmaxVideoView.VideoSourceProperty, nameof(Model.RemoteVideo), Model);
+        Theme.Bind(LocalView, XmaxRealtimeVideoView.VideoSourceProperty, nameof(Model.LocalVideo), Model);
+        Theme.Bind(RemoteView, XmaxRealtimeVideoView.VideoSourceProperty, nameof(Model.RemoteVideo), Model);
         root.SizeChanged += (_, _) => RequestLayout();
         scroller.ViewChanged += (_, _) => RequestLayout();
         root.Loaded += async (_, _) =>

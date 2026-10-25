@@ -10,12 +10,12 @@ using Xmax.SDK.Rendering;
 namespace Xmax.SDK.WinUI;
 
 /// <summary>Native WinUI 3 video display. Keeps only the latest SDK-owned BGRA frame.</summary>
-public sealed class XmaxVideoView : Grid
+public sealed class XmaxRealtimeVideoView : Grid
 {
     public static readonly DependencyProperty VideoSourceProperty = DependencyProperty.Register(nameof(VideoSource), typeof(IXmaxVideoSource),
-        typeof(XmaxVideoView), new PropertyMetadata(null, (owner, _) => ((XmaxVideoView)owner).Restart()));
+        typeof(XmaxRealtimeVideoView), new PropertyMetadata(null, (owner, _) => ((XmaxRealtimeVideoView)owner).Restart()));
     public static readonly DependencyProperty ContentModeProperty = DependencyProperty.Register(nameof(ContentMode), typeof(VideoContentMode),
-        typeof(XmaxVideoView), new PropertyMetadata(VideoContentMode.Fit, (owner, _) => ((XmaxVideoView)owner).UpdateLayoutMode()));
+        typeof(XmaxRealtimeVideoView), new PropertyMetadata(VideoContentMode.Fit, (owner, _) => ((XmaxRealtimeVideoView)owner).UpdateLayoutMode()));
     private readonly Image image = new() { HorizontalAlignment = HorizontalAlignment.Stretch, VerticalAlignment = VerticalAlignment.Stretch };
     private WriteableBitmap? bitmap;
     private Stream? pixels;
@@ -27,7 +27,7 @@ public sealed class XmaxVideoView : Grid
     public uint VideoWidth { get; private set; }
     public uint VideoHeight { get; private set; }
     public event Action<Exception>? PlaybackFailed;
-    public XmaxVideoView()
+    public XmaxRealtimeVideoView()
     {
         Background = new SolidColorBrush(Colors.Black);
         Children.Add(image);

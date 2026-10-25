@@ -66,7 +66,7 @@
           <Grid>
             <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="24"/><ColumnDefinition/></Grid.ColumnDefinitions>
             <Grid x:Name="LocalPanel" c:RoundedClip.Radius="24" Background="Black">
-              <sdk:XmaxVideoView x:Name="LocalView" VideoSource="{Binding LocalVideo}" ContentMode="Fill"/>
+              <sdk:XmaxRealtimeVideoView x:Name="LocalView" VideoSource="{Binding LocalVideo}" ContentMode="Fill"/>
               <TextBlock Text="{Binding LocalPlaceholder}" Foreground="#B3FFFFFF" FontSize="14" TextAlignment="Center" TextWrapping="Wrap" HorizontalAlignment="Stretch" VerticalAlignment="Center">
                 <TextBlock.Style><Style TargetType="TextBlock"><Setter Property="Margin" Value="24,0"/><Style.Triggers><DataTrigger Binding="{Binding StatisticsVisible}" Value="True"><Setter Property="Margin" Value="280,0,24,0"/></DataTrigger></Style.Triggers></Style></TextBlock.Style>
               </TextBlock>
@@ -78,7 +78,7 @@
               <Border Background="#59000000" CornerRadius="8" Padding="8,4" Margin="14,0,14,12" VerticalAlignment="Bottom" HorizontalAlignment="Left"><TextBlock Text="{Binding LocalTitle}" Foreground="#A6FFFFFF" FontFamily="Microsoft YaHei UI" FontSize="12" TextTrimming="CharacterEllipsis"/></Border>
             </Grid>
             <Grid x:Name="RemotePanel" Grid.Column="2" c:RoundedClip.Radius="24" Background="Black">
-              <sdk:XmaxVideoView x:Name="RemoteView" VideoSource="{Binding RemoteVideo}" ContentMode="Fit"/>
+              <sdk:XmaxRealtimeVideoView x:Name="RemoteView" VideoSource="{Binding RemoteVideo}" ContentMode="Fit"/>
               <TextBlock Text="{Binding ResultPlaceholder}" Foreground="#B3FFFFFF" FontSize="14" TextAlignment="Center" TextWrapping="Wrap" HorizontalAlignment="Stretch" VerticalAlignment="Center">
                 <TextBlock.Style><Style TargetType="TextBlock"><Setter Property="Margin" Value="24,0"/><Style.Triggers><DataTrigger Binding="{Binding StatisticsVisible}" Value="True"><Setter Property="Margin" Value="280,0,24,0"/></DataTrigger></Style.Triggers></Style></TextBlock.Style>
               </TextBlock>

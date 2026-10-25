@@ -42,7 +42,7 @@ API Key 输入后自动保存在当前 Windows 用户的凭据管理器中，重
 ## 控件接入
 
 ```xml
-<sdk:XmaxVideoView
+<sdk:XmaxRealtimeVideoView
     xmlns:sdk="clr-namespace:Xmax.SDK.Wpf;assembly=Xmax.SDK.Wpf"
     VideoSource="{Binding Session.LocalVideo}"
     ContentMode="Fit" />

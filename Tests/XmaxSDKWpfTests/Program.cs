@@ -31,7 +31,7 @@ internal static class Program
         using var client = new XmaxClient();
         await using var realtime = client.CreateRealtime();
         using var sink = await realtime.BindExternalAsync(new(16, 8));
-        var view = new XmaxVideoView { Width = 160, Height = 80, VideoSource = realtime.LocalVideo };
+        var view = new XmaxRealtimeVideoView { Width = 160, Height = 80, VideoSource = realtime.LocalVideo };
         var window = new Window { Content = view, SizeToContent = SizeToContent.WidthAndHeight, WindowStyle = WindowStyle.None };
         Exception? displayError = null;
         view.PlaybackFailed += error => displayError = error;
@@ -69,7 +69,7 @@ internal static class Program
         Check(displayError is null, "close raced with the renderer");
         Console.WriteLine("PASS WPF shutdown drains frame resources");
     }
-    private static Color Pixel(XmaxVideoView view, int x, int y)
+    private static Color Pixel(XmaxRealtimeVideoView view, int x, int y)
     {
         view.UpdateLayout();
         var bitmap = new RenderTargetBitmap(160, 80, 96, 96, PixelFormats.Pbgra32);

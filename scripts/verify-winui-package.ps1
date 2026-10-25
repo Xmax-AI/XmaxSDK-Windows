@@ -26,13 +26,13 @@ New-Item -ItemType Directory -Force $consumer | Out-Null
 <Application x:Class="WinUiConsumer.App" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"><Application.Resources><ResourceDictionary><ResourceDictionary.MergedDictionaries><XamlControlsResources xmlns="using:Microsoft.UI.Xaml.Controls"/></ResourceDictionary.MergedDictionaries></ResourceDictionary></Application.Resources></Application>
 '@ | Set-Content "$consumer/App.xaml" -Encoding UTF8
 @'
-<Window x:Class="WinUiConsumer.MainWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:sdk="using:Xmax.SDK.WinUI"><sdk:XmaxVideoView x:Name="Video" Width="160" Height="80"/></Window>
+<Window x:Class="WinUiConsumer.MainWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:sdk="using:Xmax.SDK.WinUI"><sdk:XmaxRealtimeVideoView x:Name="Video" Width="160" Height="80"/></Window>
 '@ | Set-Content "$consumer/MainWindow.xaml" -Encoding UTF8
 @'
 using Microsoft.UI.Xaml;
 using Xmax.SDK;
 namespace WinUiConsumer;
-public sealed partial class MainWindow : Window { public MainWindow() => InitializeComponent(); public Xmax.SDK.WinUI.XmaxVideoView View => Video; }
+public sealed partial class MainWindow : Window { public MainWindow() => InitializeComponent(); public Xmax.SDK.WinUI.XmaxRealtimeVideoView View => Video; }
 public partial class App : Application
 {
     private MainWindow? window;
