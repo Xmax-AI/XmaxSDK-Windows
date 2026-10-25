@@ -116,7 +116,7 @@ if (remote) {
 
 两条 Render 管线都保留最新未消费帧，旧连接的回调不会覆盖新连接。无新帧时 C API 返回 `XMAX_NO_EVENT`，C++ 包装返回空 frame。已获取的帧独立持有像素，Realtime 关闭或销毁后仍可读取。
 
-Qt 用 QImage / QVideoFrame 显示 SDK 帧；其他宿主可自行显示 CPU 帧。Windows 还提供 `xmax_frame_render_window(frame, hwnd, XMAX_CONTENT_FIT)`，应由 HWND 所属线程在重绘时调用。支持 FIT / FILL，当前为 GDI CPU 绘制，不提供 D3D11 纹理或自动重绘。WPF 可通过 P/Invoke 获取帧，或通过宿主 HWND 接入。[最小 .NET 消费端](../Examples/DotNetSmoke/Program.cs) 演示 Cdecl、UTF-8、Pack=8 和句柄释放；它用于 ABI 验证，不是完整托管 SDK。
+Qt 用 QImage / QVideoFrame 显示 SDK 帧；其他宿主可自行显示 CPU 帧。Windows 还提供 `xmax_frame_render_window(frame, hwnd, XMAX_CONTENT_FIT)`，应由 HWND 所属线程在重绘时调用。支持 FIT / FILL，当前为 GDI CPU 绘制，不提供 D3D11 纹理或自动重绘。C# 接入使用 [Xmax.SDK](dotnet.md)，WPF 可直接使用 [Xmax.SDK.Wpf 与 XLabWpf](wpf.md) 显示最新帧。[最小 .NET 消费端](../Examples/DotNetSmoke/Program.cs) 仍保留为直接调用 C ABI 的验证示例。
 
 ## 镜像
 

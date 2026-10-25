@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <PlatformTarget>x64</PlatformTarget>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <RootNamespace>XLabWpf</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../Sources/XmaxSDK.Wpf/XmaxSDK.Wpf.csproj" />
+    <ProjectReference Include="../XLabShared/XLabShared.csproj" />
+    <Resource Include="../XLab/assets/xmax-wordmark.png" Link="Assets/xmax-wordmark.png" />
+    <Resource Include="../XLab/assets/DMSans.ttf" Link="Assets/DMSans.ttf" />
+    <Resource Include="../XLab/assets/presets.json" Link="Assets/presets.json" />
+    <Content Include="../XLab/assets/DMSans-OFL.txt" Link="DMSans-OFL.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

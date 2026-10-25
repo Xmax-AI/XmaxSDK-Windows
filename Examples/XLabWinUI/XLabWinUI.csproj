@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows10.0.26100.0</TargetFramework>
+    <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
+    <UseWinUI>true</UseWinUI>
+    <WindowsPackageType>None</WindowsPackageType>
+    <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+    <Platforms>x64</Platforms>
+    <PlatformTarget>x64</PlatformTarget>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <RootNamespace>XLabWinUI</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.5.1" />
+    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.28000.2705" PrivateAssets="all" />
+    <ProjectReference Include="../../Sources/XmaxSDK.WinUI/XmaxSDK.WinUI.csproj" />
+    <ProjectReference Include="../XLabShared/XLabShared.csproj" />
+    <Content Include="../XLab/assets/xmax-wordmark.png" Link="Assets/xmax-wordmark.png" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="../XLab/assets/DMSans.ttf" Link="Assets/DMSans.ttf" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="../XLab/assets/DMSans-OFL.txt" Link="DMSans-OFL.txt" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

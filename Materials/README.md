@@ -4,6 +4,7 @@
 
 - [安装说明](installation.md)：CMake 构建、Windows DLL、Agora、Qt 示例与 Mac 开发验证。
 - [使用说明](usage.md)：C/C++ 接入、SDK 摄像头与外部输入、存储、画质、帧交付与生命周期。
+- [C# SDK](dotnet.md)、[WPF XLab](wpf.md) 和 [WinUI 3 XLab](winui.md)：托管封装、原生视频控件和界面一致的两套 .NET Demo。
 - `images/brand/`：共享 XmaxSDK 品牌与设计素材。
 - `images/use-cases/` 与 `videos/use-cases/`：共享模型演示海报和视频。
 - `images/why/`：共享产品介绍插图。

@@ -56,6 +56,8 @@ XmaxSDK/
 
 公开文档与素材入口为 [Materials](Materials/README.md)，包含 [安装说明](Materials/installation.md) 和 [使用说明](Materials/usage.md)。`Docs` 只保存本地内部文档，公开文档不依赖其内容。
 
+C# 接入使用 `Sources/XmaxSDK.Net`（`Xmax.SDK`）。WPF 视频控件在 `Sources/XmaxSDK.Wpf`，WinUI 3 视频控件在 `Sources/XmaxSDK.WinUI`；对应 Demo 为 `Examples/XLabWpf` 和 `Examples/XLabWinUI`，共用 `Examples/XLabShared` 的会话、参考图和凭据逻辑。两套界面对齐 Qt XLab，通过现有 C ABI 调用原生 SDK，运行时不依赖 Qt。构建与使用见 [C# SDK](Materials/dotnet.md)、[WPF XLab](Materials/wpf.md) 和 [WinUI 3 XLab](Materials/winui.md)；需要 .NET 10 和 Windows x64 进程。
+
 ## 只构建 SDK
 
 需要 CMake 3.24+ 和支持 C++17 的编译器。Windows 推荐 Visual Studio 2022 的 Desktop development with C++ 工作负载和 Windows SDK。

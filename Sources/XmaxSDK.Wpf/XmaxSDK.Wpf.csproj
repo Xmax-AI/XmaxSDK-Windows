@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <AssemblyName>Xmax.SDK.Wpf</AssemblyName>
+    <RootNamespace>Xmax.SDK.Wpf</RootNamespace>
+    <PackageId>Xmax.SDK.Wpf</PackageId>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+  </PropertyGroup>
+  <ItemGroup>
+    <None Include="../../Materials/wpf.md" Pack="true" PackagePath="README.md" />
+    <ProjectReference Include="../XmaxSDK.Net/XmaxSDK.Net.csproj" />
+    <InternalsVisibleTo Include="XmaxSDKWpfTests" />
+  </ItemGroup>
+</Project>

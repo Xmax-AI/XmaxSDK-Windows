@@ -1,0 +1,60 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "XmaxSDK.Net", "Sources\XmaxSDK.Net\XmaxSDK.Net.csproj", "{233D5E9D-BAF2-5698-B096-4D1442C7FCD6}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "XmaxSDK.Wpf", "Sources\XmaxSDK.Wpf\XmaxSDK.Wpf.csproj", "{50E18FD7-10C4-5FEA-AE5C-7D8DD943A102}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "XLabWpf", "Examples\XLabWpf\XLabWpf.csproj", "{91F63249-9ACA-58D8-8F2E-C0E6FC8E66E3}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "XmaxSDKNetTests", "Tests\XmaxSDKNetTests\XmaxSDKNetTests.csproj", "{2E9D6808-9BF4-50D5-A8EA-97729BCECBB4}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "XmaxSDKWpfTests", "Tests\XmaxSDKWpfTests\XmaxSDKWpfTests.csproj", "{475DFE94-88C7-5D05-830B-F52EE7F1DF06}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "XLabShared", "Examples\XLabShared\XLabShared.csproj", "{5034B743-63BB-4BA7-A25E-B0A7F10CB1EB}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "XmaxSDK.WinUI", "Sources\XmaxSDK.WinUI\XmaxSDK.WinUI.csproj", "{419AB508-9B0A-47E6-BE0C-58E869A4FE08}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "XLabWinUI", "Examples\XLabWinUI\XLabWinUI.csproj", "{70B72AB0-1831-4207-B11D-EEA2AD246229}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{233D5E9D-BAF2-5698-B096-4D1442C7FCD6}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{233D5E9D-BAF2-5698-B096-4D1442C7FCD6}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{233D5E9D-BAF2-5698-B096-4D1442C7FCD6}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{233D5E9D-BAF2-5698-B096-4D1442C7FCD6}.Release|Any CPU.Build.0 = Release|Any CPU
+		{50E18FD7-10C4-5FEA-AE5C-7D8DD943A102}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{50E18FD7-10C4-5FEA-AE5C-7D8DD943A102}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{50E18FD7-10C4-5FEA-AE5C-7D8DD943A102}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{50E18FD7-10C4-5FEA-AE5C-7D8DD943A102}.Release|Any CPU.Build.0 = Release|Any CPU
+		{91F63249-9ACA-58D8-8F2E-C0E6FC8E66E3}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{91F63249-9ACA-58D8-8F2E-C0E6FC8E66E3}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{91F63249-9ACA-58D8-8F2E-C0E6FC8E66E3}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{91F63249-9ACA-58D8-8F2E-C0E6FC8E66E3}.Release|Any CPU.Build.0 = Release|Any CPU
+		{2E9D6808-9BF4-50D5-A8EA-97729BCECBB4}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{2E9D6808-9BF4-50D5-A8EA-97729BCECBB4}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{2E9D6808-9BF4-50D5-A8EA-97729BCECBB4}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{2E9D6808-9BF4-50D5-A8EA-97729BCECBB4}.Release|Any CPU.Build.0 = Release|Any CPU
+		{475DFE94-88C7-5D05-830B-F52EE7F1DF06}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{475DFE94-88C7-5D05-830B-F52EE7F1DF06}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{475DFE94-88C7-5D05-830B-F52EE7F1DF06}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{475DFE94-88C7-5D05-830B-F52EE7F1DF06}.Release|Any CPU.Build.0 = Release|Any CPU
+		{5034B743-63BB-4BA7-A25E-B0A7F10CB1EB}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{5034B743-63BB-4BA7-A25E-B0A7F10CB1EB}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{5034B743-63BB-4BA7-A25E-B0A7F10CB1EB}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{5034B743-63BB-4BA7-A25E-B0A7F10CB1EB}.Release|Any CPU.Build.0 = Release|Any CPU
+		{419AB508-9B0A-47E6-BE0C-58E869A4FE08}.Debug|Any CPU.ActiveCfg = Debug|x64
+		{419AB508-9B0A-47E6-BE0C-58E869A4FE08}.Debug|Any CPU.Build.0 = Debug|x64
+		{419AB508-9B0A-47E6-BE0C-58E869A4FE08}.Release|Any CPU.ActiveCfg = Release|x64
+		{419AB508-9B0A-47E6-BE0C-58E869A4FE08}.Release|Any CPU.Build.0 = Release|x64
+		{70B72AB0-1831-4207-B11D-EEA2AD246229}.Debug|Any CPU.ActiveCfg = Debug|x64
+		{70B72AB0-1831-4207-B11D-EEA2AD246229}.Debug|Any CPU.Build.0 = Debug|x64
+		{70B72AB0-1831-4207-B11D-EEA2AD246229}.Release|Any CPU.ActiveCfg = Release|x64
+		{70B72AB0-1831-4207-B11D-EEA2AD246229}.Release|Any CPU.Build.0 = Release|x64
+	EndGlobalSection
+EndGlobal

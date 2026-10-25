@@ -9,7 +9,7 @@ ApplicationWindow {
     id: window
     objectName: "xlabWindow"
     width: 1360; height: 850; minimumWidth: 1180; minimumHeight: 760
-    visible: true; title: controller.preview ? "X-Lab — UI Preview (no live session)" : "X-Lab — XmaxSDK"
+    visible: true; title: controller.preview ? "XLab - QT — UI Preview (no live session)" : "XLab - QT"
     color: "white"
     readonly property var controller: xlab
     readonly property var modes: ["charx", "clothx", "vibex", "free"]

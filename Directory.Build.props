@@ -1,0 +1,13 @@
+<Project>
+  <PropertyGroup>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <LangVersion>latest</LangVersion>
+    <XmaxDotNetBuildRoot Condition="'$(XmaxDotNetBuildRoot)' == ''">$(MSBuildThisFileDirectory).build/dotnet/</XmaxDotNetBuildRoot>
+    <BaseOutputPath>$(XmaxDotNetBuildRoot)bin/$(MSBuildProjectName)/</BaseOutputPath>
+    <BaseIntermediateOutputPath>$(XmaxDotNetBuildRoot)obj/$(MSBuildProjectName)/</BaseIntermediateOutputPath>
+    <Version>$([System.IO.File]::ReadAllText('$(MSBuildThisFileDirectory)VERSION').Trim())</Version>
+    <Deterministic>true</Deterministic>
+  </PropertyGroup>
+</Project>

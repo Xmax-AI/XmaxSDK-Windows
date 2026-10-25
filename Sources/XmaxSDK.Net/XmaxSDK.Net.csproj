@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>Xmax.SDK</AssemblyName>
+    <RootNamespace>Xmax.SDK</RootNamespace>
+    <PackageId>Xmax.SDK</PackageId>
+    <Description>Managed C# bindings for the Xmax native realtime video SDK.</Description>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+  </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="XmaxSDKNetTests" />
+    <InternalsVisibleTo Include="Xmax.SDK.Wpf" />
+    <InternalsVisibleTo Include="Xmax.SDK.WinUI" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="../../Materials/dotnet.md" Pack="true" PackagePath="README.md" />
+    <None Include="../../LICENSE" Pack="true" PackagePath="licenses/" />
+    <None Include="../../THIRD_PARTY.md" Pack="true" PackagePath="licenses/" />
+    <None Include="../../third_party/nlohmann/LICENSE.MIT" Pack="true" PackagePath="licenses/nlohmann/" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(XmaxNativeNoticesDir)' != ''">
+    <None Include="$(XmaxNativeNoticesDir)/**/*" Pack="true" PackagePath="licenses/native/%(RecursiveDir)" />
+  </ItemGroup>
+</Project>
