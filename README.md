@@ -165,7 +165,7 @@ We introduce XmaxSDK, a native Windows SDK designed for real-time interactive vi
 XmaxSDK supports [**CMake**](#cmake), [**NuGet**](#nuget),
 and [**manual integration**](#manual).
 
-当前开发版本为 `1.0.0`，C ABI 版本为 `1`。
+当前开发版本为 `1.0.1`，C ABI 版本为 `1`。
 
 ### CMake
 
