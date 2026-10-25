@@ -17,35 +17,35 @@
 namespace xmax::detail {
 
 /**
- * 保存原生摄像头回调及其活动状态，通过互斥锁协调停止和帧交付。
+ * Coordinates native camera callbacks, active state, stopping, and frame delivery under a mutex.
  */
 struct AppleCaptureState {
 
     /**
-     * 串行协调样本交付、活动标记及停止采集的互斥锁。
+     * The mutex serializing sample delivery, active state, and capture shutdown.
      */
     std::mutex mutex;
 
     /**
-     * 当前原生采集状态是否仍允许交付样本。
+     * Whether capture may still deliver samples.
      */
     bool active = true;
 
     /**
-     * 原生帧与错误交付回调，停止采集时排空并解除。
+     * Native frame and failure callbacks, drained and cleared when stopping.
      */
     CaptureCallbacks callbacks;
 };
 } // namespace xmax::detail
 
 /**
- * 接收 AVFoundation 样本并交付 SDK 拥有的像素，采集失败时通知媒体控制器。
+ * Receives AVFoundation samples, delivers owned pixels, and reports capture failures to media control.
  */
 @interface XmaxCaptureDelegate : NSObject <AVCaptureVideoDataOutputSampleBufferDelegate> {
   @public
 
     /**
-     * 与采集控制器共享的样本交付状态。
+     * The sample-delivery state shared with the capture controller.
      */
     std::shared_ptr<xmax::detail::AppleCaptureState> state;
 }
@@ -53,15 +53,24 @@ struct AppleCaptureState {
 @implementation XmaxCaptureDelegate
 
 /**
- * 复制原生视频样本并交付拥有像素的 BGRA 帧，失败时停止交付并报告错误。
+ * Copies native samples into owned BGRA frames; failures stop delivery and report an error.
  *
- * @param[in] output 产生本次视频样本的 AVFoundation 输出对象，仅在回调期间借用。
- * @param[in] sample 当前原生视频样本，借用有效期仅限回调或同步复制期间。
- * @param[in] connection 交付本次样本的 AVFoundation 连接，仅在回调期间借用。
+ * @param[in] output The AVFoundation sample output, borrowed during the callback.
+ * @param[in] sample The borrowed native video sample, valid only during the callback or synchronous copy.
+ * @param[in] connection The AVFoundation connection delivering the sample, borrowed during the callback.
  */
-- (void)captureOutput:(AVCaptureOutput*)output
-    didOutputSampleBuffer:(CMSampleBufferRef)sample
-           fromConnection:(AVCaptureConnection*)connection {
+- (
+    void
+)captureOutput:
+     (
+         AVCaptureOutput*
+     )output
+    didOutputSampleBuffer:(
+                              CMSampleBufferRef
+                          )sample
+           fromConnection:(
+                              AVCaptureConnection*
+                          )connection {
     (void)output;
     (void)connection;
 
@@ -73,10 +82,21 @@ struct AppleCaptureState {
 
     try {
         CVPixelBufferRef pixels = CMSampleBufferGetImageBuffer(sample);
-        require(pixels != nullptr, XMAX_MEDIA_ERROR, "Camera delivered no pixel buffer");
+        require(
+            pixels != nullptr,
+            XMAX_MEDIA_ERROR,
+            "Camera delivered no pixel buffer"
+        );
 
-        const auto result = CVPixelBufferLockBaseAddress(pixels, kCVPixelBufferLock_ReadOnly);
-        require(result == kCVReturnSuccess, XMAX_MEDIA_ERROR, "Cannot lock camera pixels");
+        const auto result = CVPixelBufferLockBaseAddress(
+            pixels,
+            kCVPixelBufferLock_ReadOnly
+        );
+        require(
+            result == kCVReturnSuccess,
+            XMAX_MEDIA_ERROR,
+            "Cannot lock camera pixels"
+        );
 
         Frame frame;
 
@@ -94,20 +114,31 @@ struct AppleCaptureState {
 
             for (uint32_t y = 0; y < frame.height; ++y)
                 std::memcpy(
-                    frame.planes[0].data() + y * frame.strides[0], base + y * stride, frame.strides[0]
+                    frame.planes[0].data() + y * frame.strides[0],
+                    base + y * stride,
+                    frame.strides[0]
                 );
         } catch (...) {
-            CVPixelBufferUnlockBaseAddress(pixels, kCVPixelBufferLock_ReadOnly);
+            CVPixelBufferUnlockBaseAddress(
+                pixels,
+                kCVPixelBufferLock_ReadOnly
+            );
             throw;
         }
 
-        CVPixelBufferUnlockBaseAddress(pixels, kCVPixelBufferLock_ReadOnly);
+        CVPixelBufferUnlockBaseAddress(
+            pixels,
+            kCVPixelBufferLock_ReadOnly
+        );
         state->callbacks.frame(std::move(frame));
     } catch (const std::exception& error) {
         state->active = false;
         if (state->callbacks.failure) {
             try {
-                state->callbacks.failure(Error(XMAX_MEDIA_ERROR, error.what()));
+                state->callbacks.failure(Error(
+                    XMAX_MEDIA_ERROR,
+                    error.what()
+                ));
             } catch (...) {
             }
         }
@@ -120,9 +151,9 @@ namespace xmax::detail {
 namespace {
 
 /**
- * 枚举系统支持的内置与外置摄像头设备。
+ * Enumerates supported built-in and external cameras.
  *
- * @return 当前自动释放池管理的摄像头设备数组。
+ * @return The camera array managed by the current autorelease pool.
  */
 NSArray<AVCaptureDevice*>* video_devices() {
     NSMutableArray<AVCaptureDeviceType>* types =
@@ -142,48 +173,48 @@ NSArray<AVCaptureDevice*>* video_devices() {
 }
 
 /**
- * 通过 AVFoundation 枚举并采集摄像头；停止时排空样本回调。
+ * Enumerates and captures AVFoundation cameras, draining sample callbacks on stop.
  */
 class AppleCamera final : public CameraCapture {
 
     /**
-     * 当前控制器拥有的 AVFoundation 采集会话，停止后释放。
+     * The owned AVFoundation capture session, released on stop.
      */
     AVCaptureSession* session_ = nil;
 
     /**
-     * 已安装到采集会话的视频样本输出对象。
+     * The video sample output installed in the capture session.
      */
     AVCaptureVideoDataOutput* output_ = nil;
 
     /**
-     * 接收原生视频样本的委托对象。
+     * The delegate receiving native video samples.
      */
     XmaxCaptureDelegate* delegate_ = nil;
 
     /**
-     * 串行交付视频样本回调的调度队列。
+     * The dispatch queue serializing video sample callbacks.
      */
     dispatch_queue_t queue_ = nil;
 
     /**
-     * 与视频样本委托共享的采集状态。
+     * The capture state shared with the sample delegate.
      */
     std::shared_ptr<AppleCaptureState> state_;
 
   public:
 
     /**
-     * 停止摄像头采集并排空回调，然后释放拥有的媒体资源。
+     * Stops camera capture, drains callbacks, and releases owned media resources.
      */
     ~AppleCamera() override {
         stop();
     }
 
     /**
-     * 枚举 AVFoundation 摄像头及系统默认设备。
+     * Enumerates AVFoundation cameras and identifies the system default.
      *
-     * @return 摄像头设备信息快照，不存在可用设备时为空集合。
+     * @return A camera information snapshot, or an empty collection if no cameras are available.
      */
     std::vector<CameraDevice> devices() override {
         @autoreleasepool {
@@ -191,7 +222,8 @@ class AppleCamera final : public CameraCapture {
             auto default_id = [AVCaptureDevice defaultDeviceWithMediaType:AVMediaTypeVideo].uniqueID;
             for (AVCaptureDevice* device in video_devices())
                 result.push_back(
-                    {device.uniqueID.UTF8String, device.localizedName.UTF8String,
+                    {device.uniqueID.UTF8String,
+                     device.localizedName.UTF8String,
                      [device.uniqueID isEqualToString:default_id] != NO}
                 );
 
@@ -200,12 +232,14 @@ class AppleCamera final : public CameraCapture {
     }
 
     /**
-     * 启动 AVFoundation 摄像头采集，并交付 SDK 拥有的 BGRA 帧。
+     * Starts AVFoundation capture and delivers independently owned BGRA frames.
      *
-     * @param[in] id UTF-8 摄像头设备标识，空文本选择默认摄像头。
-     * @param[in] format 请求的视频像素宽高及每秒帧数，须符合调用接口的规格限制。
-     * @param[in] callbacks 采集帧与失败回调，在原生媒体线程交付，停止返回前排空。
-     * @param[in] cancel 协作式取消判断函数；返回 true 时应终止当前操作。
+     * @param[in] id The UTF-8 camera identifier; an empty string selects the default camera.
+     * @param[in] format The requested pixel dimensions and frame rate, subject to the interface's format
+     * limits.
+     * @param[in] callbacks Capture frame and failure callbacks, delivered on the native media thread and
+     * drained before stop returns.
+     * @param[in] cancel A cooperative cancellation predicate; true requests termination of the operation.
      */
     void start(
         const std::string& id,
@@ -215,7 +249,11 @@ class AppleCamera final : public CameraCapture {
     ) override {
         @autoreleasepool {
             stop();
-            require(!cancel(), XMAX_CANCELLED, "Camera startup cancelled");
+            require(
+                !cancel(),
+                XMAX_CANCELLED,
+                "Camera startup cancelled"
+            );
 
             const auto status = [AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeVideo];
 
@@ -228,16 +266,31 @@ class AppleCamera final : public CameraCapture {
 
                 const auto until = Clock::now() + std::chrono::seconds(30);
 
-                while (dispatch_semaphore_wait(semaphore, dispatch_time(DISPATCH_TIME_NOW, 20000000)) != 0) {
-                    require(!cancel(), XMAX_CANCELLED, "Camera permission request cancelled");
-                    require(Clock::now() < until, XMAX_TIMEOUT, "Camera permission request timed out");
+                while (dispatch_semaphore_wait(
+                    semaphore,
+                    dispatch_time(
+                               DISPATCH_TIME_NOW,
+                               20000000
+                           )
+                ) != 0) {
+                    require(
+                        !cancel(),
+                        XMAX_CANCELLED,
+                        "Camera permission request cancelled"
+                    );
+                    require(
+                        Clock::now() < until,
+                        XMAX_TIMEOUT,
+                        "Camera permission request timed out"
+                    );
                 }
             }
 
             require(
                 [AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeVideo] ==
                     AVAuthorizationStatusAuthorized,
-                XMAX_MEDIA_ERROR, "Camera access denied; check the host application's camera permission"
+                XMAX_MEDIA_ERROR,
+                "Camera access denied; check the host application's camera permission"
             );
 
             AVCaptureDevice* selected =
@@ -245,11 +298,19 @@ class AppleCamera final : public CameraCapture {
             for (AVCaptureDevice* device in video_devices())
                 if (id == device.uniqueID.UTF8String)
                     selected = device;
-            require(selected != nil, XMAX_MEDIA_ERROR, "Requested camera is unavailable");
+            require(
+                selected != nil,
+                XMAX_MEDIA_ERROR,
+                "Requested camera is unavailable"
+            );
 
             NSError* error = nil;
             AVCaptureDeviceInput* input = [AVCaptureDeviceInput deviceInputWithDevice:selected error:&error];
-            require(input != nil, XMAX_MEDIA_ERROR, "Cannot open the selected camera");
+            require(
+                input != nil,
+                XMAX_MEDIA_ERROR,
+                "Cannot open the selected camera"
+            );
             session_ = [[AVCaptureSession alloc] init];
             [session_ beginConfiguration];
 
@@ -258,7 +319,11 @@ class AppleCamera final : public CameraCapture {
             else if ([session_ canSetSessionPreset:AVCaptureSessionPreset1280x720])
                 session_.sessionPreset = AVCaptureSessionPreset1280x720;
 
-            require([session_ canAddInput:input], XMAX_MEDIA_ERROR, "Cannot attach camera input");
+            require(
+                [session_ canAddInput:input],
+                XMAX_MEDIA_ERROR,
+                "Cannot attach camera input"
+            );
             [session_ addInput:input];
             output_ = [[AVCaptureVideoDataOutput alloc] init];
             output_.videoSettings =
@@ -268,14 +333,24 @@ class AppleCamera final : public CameraCapture {
             state_->callbacks = std::move(callbacks);
             delegate_ = [[XmaxCaptureDelegate alloc] init];
             delegate_->state = state_;
-            queue_ = dispatch_queue_create("ai.xmax.sdk.camera", DISPATCH_QUEUE_SERIAL);
+            queue_ = dispatch_queue_create(
+                "ai.xmax.sdk.camera",
+                DISPATCH_QUEUE_SERIAL
+            );
             [output_ setSampleBufferDelegate:delegate_ queue:queue_];
-            require([session_ canAddOutput:output_], XMAX_MEDIA_ERROR, "Cannot attach camera output");
+            require(
+                [session_ canAddOutput:output_],
+                XMAX_MEDIA_ERROR,
+                "Cannot attach camera output"
+            );
             [session_ addOutput:output_];
             [session_ commitConfiguration];
 
             if ([selected lockForConfiguration:&error]) {
-                const auto target = CMTimeMake(1, int32_t(format.fps));
+                const auto target = CMTimeMake(
+                    1,
+                    int32_t(format.fps)
+                );
                 for (AVFrameRateRange* range in selected.activeFormat.videoSupportedFrameRateRanges)
                     if (format.fps >= range.minFrameRate && format.fps <= range.maxFrameRate) {
                         selected.activeVideoMinFrameDuration = target;
@@ -285,14 +360,22 @@ class AppleCamera final : public CameraCapture {
                 [selected unlockForConfiguration];
             }
 
-            require(!cancel(), XMAX_CANCELLED, "Camera startup cancelled");
+            require(
+                !cancel(),
+                XMAX_CANCELLED,
+                "Camera startup cancelled"
+            );
             [session_ startRunning];
-            require(session_.isRunning, XMAX_MEDIA_ERROR, "Camera capture did not start");
+            require(
+                session_.isRunning,
+                XMAX_MEDIA_ERROR,
+                "Camera capture did not start"
+            );
         }
     }
 
     /**
-     * 停止 AVFoundation 采集，并在返回前排空样本回调。
+     * Stops AVFoundation capture and drains callbacks before returning.
      */
     void stop() noexcept override {
         @autoreleasepool {
@@ -308,8 +391,11 @@ class AppleCamera final : public CameraCapture {
                 [session_ stopRunning];
 
             if (queue_)
-                dispatch_sync(queue_, ^{
-                              });
+                dispatch_sync(
+                    queue_,
+                    ^{
+                    }
+                );
 
             session_ = nil;
             output_ = nil;
@@ -322,16 +408,16 @@ class AppleCamera final : public CameraCapture {
 } // namespace
 
 /**
- * 检查当前 SDK 构建是否提供原生摄像头采集后端。
+ * Reports whether this SDK build provides native camera capture.
  */
 bool camera_available() noexcept {
     return true;
 }
 
 /**
- * 创建原生摄像头适配器，不支持的平台返回明确的能力错误。
+ * Creates a native camera adapter or reports unsupported capability on other platforms.
  *
- * @return 独占拥有的原生摄像头适配器；平台不支持时抛出能力错误。
+ * @return An exclusively owned camera adapter; unsupported platforms throw a capability error.
  */
 std::unique_ptr<CameraCapture> make_camera_capture() {
     return std::make_unique<AppleCamera>();

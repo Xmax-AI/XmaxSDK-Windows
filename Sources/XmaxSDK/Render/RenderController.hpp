@@ -10,71 +10,129 @@
 
 #pragma once
 #include "Render/Video/RemoteVideoFramePipeline.hpp"
+#include "Render/Video/RemoteMediaFrameDispatcher.hpp"
 #include "Render/Trajectory/TrajectoryRegistry.hpp"
 #include "Render/Trajectory/DefaultTrajectoryEffectRenderer.hpp"
 
 namespace xmax::detail {
 
 /**
- * 分别缓存最新的本地预览帧和远端结果帧，丢弃已失效会话或媒体绑定的回调。
+ * Retains the latest local and remote frames while rejecting stale session or media callbacks.
  */
 class RenderController {
 
   public:
 
     /**
-     * 当前任务轨迹缓存，供默认效果和自定义绘制共享。
+     * The task trajectory cache shared by default effects and custom rendering.
      */
     TrajectoryRegistry trajectory;
 
     /**
-     * 为指定连接批次启用远端结果帧交付。
+     * Enables remote result delivery for a connection revision.
      *
-     * @param[in] token 当前连接或媒体绑定的批次，用于拒收旧回调。
+     * @param[in] token The connection or media-binding revision used to reject stale callbacks.
      */
     void bind(
         uint64_t token
     ) {
         remote_.activate(token);
+        output_.bind(token);
     }
 
     /**
-     * 停用远端结果帧交付，并清除待处理帧。
+     * Disables remote result delivery and clears pending frames.
      *
-     * @param[in] token 当前连接或媒体绑定的批次，用于拒收旧回调。
+     * @param[in] token The connection or media-binding revision used to reject stale callbacks.
      */
     void unbind(
         uint64_t token
     ) {
         remote_.deactivate(token);
+        output_.unbind(token);
     }
 
     /**
-     * 仅在连接批次仍有效时接收远端结果帧。
+     * Receives remote frames only for the current connection revision.
      *
-     * @param[in] frame 待交付的视频帧或借用视图；同步调用返回前像素必须有效。
-     * @param[in] token 当前连接或媒体绑定的批次，用于拒收旧回调。
+     * @param[in] frame The frame or borrowed view to deliver; its pixels must remain valid until this
+     * synchronous call returns.
+     * @param[in] token The connection or media-binding revision used to reject stale callbacks.
      */
     void receive(
         Frame frame,
         uint64_t token
     ) {
-        remote_.submit(std::move(frame), token);
+        auto owned = std::make_shared<Frame>(std::move(frame));
+        if (remote_.submit_owned(
+            owned,
+            token
+        ))
+            output_.video(
+                std::move(owned),
+                token
+            );
     }
 
     /**
-     * 非阻塞取出最新的远端结果帧，并转移该帧的所有权。
+     * Receives copied PCM for the current result binding without changing native playback.
      *
-     * @return 返回的帧持有像素数据；没有新帧时返回空对象。
+     * @param[in] frame The result user's owned PCM and native rendering time.
+     * @param[in] token The producer's connection revision.
+     */
+    void receive_audio(
+        AudioFrame frame,
+        uint64_t token
+    ) {
+        output_.audio(
+            std::move(frame),
+            token
+        );
+    }
+
+    /**
+     * Replaces application media delivery and discards packets queued for the previous callback.
+     *
+     * @param[in] listener The owned-packet callback, or an empty function to stop delivery.
+     *
+     * @return The previous callback, whose context must be released outside the lifecycle queue.
+     */
+    RemoteMediaListener media_listener(
+        RemoteMediaListener listener
+    ) {
+        return output_.listener(std::move(listener));
+    }
+
+    /**
+     * Reports whether application media delivery currently requires native PCM observation.
+     */
+    bool has_media_listener() const {
+        return output_.has_listener();
+    }
+
+    /**
+     * Drains application media delivery while the lifecycle executor still accepts callback reentry.
+     */
+    void shutdown_output() {
+        output_.shutdown();
+    }
+
+    /**
+     * Acquires the latest remote result frame without blocking, transferring ownership.
+     *
+     * @return A frame that retains its pixels, or an empty object if no new frame is available.
      */
     std::shared_ptr<Frame> acquire_frame() {
-        return remote_.acquire();
+        auto frame = remote_.acquire();
+        if (frame)
+            frame->presentation_mirrored = remote_mirrored_.load();
+        return frame;
     }
 
     /**
-     * 为指定媒体批次启用本地预览交付。
+     * Enables local preview delivery for a media revision.
      *
-     * @param[in] token 当前连接或媒体绑定的批次，用于拒收旧回调。
+     * @param[in] token The connection or media-binding revision used to reject stale callbacks.
      */
     void bind_local(
         uint64_t token
@@ -83,9 +141,9 @@ class RenderController {
     }
 
     /**
-     * 停用本地预览交付，并清除待处理帧。
+     * Disables local preview delivery and clears pending frames.
      *
-     * @param[in] token 当前连接或媒体绑定的批次，用于拒收旧回调。
+     * @param[in] token The connection or media-binding revision used to reject stale callbacks.
      */
     void unbind_local(
         uint64_t token
@@ -94,34 +152,55 @@ class RenderController {
     }
 
     /**
-     * 仅在媒体批次仍有效时接收本地预览帧。
+     * Receives local preview frames only for the current media revision.
      *
-     * @param[in] frame 待交付的视频帧或借用视图；同步调用返回前像素必须有效。
-     * @param[in] token 当前连接或媒体绑定的批次，用于拒收旧回调。
+     * @param[in] frame The frame or borrowed view to deliver; its pixels must remain valid until this
+     * synchronous call returns.
+     * @param[in] token The connection or media-binding revision used to reject stale callbacks.
      */
     void receive_local(
         Frame frame,
         uint64_t token
     ) {
-        local_.submit(std::move(frame), token);
+        local_.submit(
+            std::move(frame),
+            token
+        );
     }
 
     /**
-     * 非阻塞取出最新的本地预览帧，并转移该帧的所有权。
+     * Acquires the latest local preview frame without blocking, transferring ownership.
      *
-     * @return 返回的帧持有像素数据；没有新帧时返回空对象。
+     * @return A frame that retains its pixels, or an empty object if no new frame is available.
      */
     std::shared_ptr<Frame> acquire_local_frame() {
-        return local_.acquire();
+        auto frame = local_.acquire();
+        if (frame)
+            frame->presentation_mirrored = local_mirrored_.load();
+        return frame;
     }
 
     /**
-     * 在原生窗口显示结果帧，并绘制当前任务的默认轨迹。
+     * Updates display orientation for subsequently acquired frames without modifying pixels.
      *
-     * @param[in] frame 当前显示的结果帧。
-     * @param[in] window 当前线程拥有的 HWND。
-     * @param[in] content_mode 视频与轨迹共同使用的布局方式。
-     * @param[in] interaction_enabled 当前生成任务是否允许显示交互效果。
+     * @param[in] local Whether to horizontally mirror local preview.
+     * @param[in] remote Whether to horizontally mirror the remote result display.
+     */
+    void mirror(
+        bool local,
+        bool remote
+    ) {
+        local_mirrored_ = local;
+        remote_mirrored_ = remote;
+    }
+
+    /**
+     * Renders a result frame and the task's default trajectory in a native window.
+     *
+     * @param[in] frame The currently displayed result frame.
+     * @param[in] window An HWND owned by the calling thread.
+     * @param[in] content_mode The layout mode shared by video and trajectory rendering.
+     * @param[in] interaction_enabled Whether the current generation permits interaction effects.
      */
     void render_window(
         const Frame& frame,
@@ -129,28 +208,51 @@ class RenderController {
         int32_t content_mode,
         bool interaction_enabled
     ) const {
-        xmax::detail::render_window(frame, window, content_mode);
+        xmax::detail::render_window(
+            frame,
+            window,
+            content_mode
+        );
         if (interaction_enabled)
-            trajectory_renderer_.render(
-                window, {frame.width, frame.height, 30}, content_mode, trajectory.snapshot()
+            trajectory_renderer_
+                .render(
+                window,
+                {frame.width, frame.height, 30},
+                content_mode,
+                trajectory.snapshot()
             );
     }
 
   private:
 
     /**
-     * 原生窗口默认轨迹效果的呈现组件。
+     * The display-mirror setting captured when acquiring a local frame.
+     */
+    std::atomic<bool> local_mirrored_{false};
+
+    /**
+     * The display-mirror setting captured when acquiring a remote frame.
+     */
+    std::atomic<bool> remote_mirrored_{false};
+
+    /**
+     * The native window renderer for default trajectory effects.
      */
     DefaultTrajectoryEffectRenderer trajectory_renderer_;
 
     /**
-     * 保存最新远端生成结果帧的邮箱。
+     * The latest remote result-frame mailbox.
      */
     RemoteVideoFramePipeline remote_;
 
     /**
-     * 保存最新本地预览帧的邮箱。
+     * The latest local preview-frame mailbox.
      */
     RemoteVideoFramePipeline local_;
+
+    /**
+     * The bounded serial audio/video output independent of latest-frame presentation mailboxes.
+     */
+    RemoteMediaFrameDispatcher output_;
 };
 } // namespace xmax::detail

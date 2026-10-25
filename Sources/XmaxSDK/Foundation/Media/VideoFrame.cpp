@@ -15,9 +15,9 @@
 namespace xmax::detail {
 
 /**
- * 校验非零偶数尺寸、像素预算和帧率范围。
+ * Validates nonzero even dimensions, pixel budget, and frame-rate limits.
  *
- * @param[in] f 宽、高均为 [2, 8192] 内的偶数，总像素不超过 2100000，帧率为 [1, 60]。
+ * @param[in] f Even dimensions in [2, 8192], at most 2100000 pixels, and a frame rate in [1, 60].
  */
 void validate_format(
     xmax_video_format f
@@ -26,14 +26,15 @@ void validate_format(
         f.width >= 2 && f.height >= 2 && f.width <= 8192 && f.height <= 8192 && f.width % 2 == 0 &&
             f.height % 2 == 0 && f.fps >= 1 && f.fps <= 60 &&
             uint64_t(f.width) * f.height <= RealtimeModelDefinition::maximum_input_pixels,
-        XMAX_INVALID_ARGUMENT, "Video format requires even dimensions, at most 2100000 pixels, and 1-60 fps"
+        XMAX_INVALID_ARGUMENT,
+        "Video format requires even dimensions, at most 2100000 pixels, and 1-60 fps"
     );
 }
 
 /**
- * 借用本帧的只读像素布局，视图不延长像素存储的生命周期。
+ * Returns a borrowed pixel-layout view without extending storage lifetime.
  *
- * @return 借用本帧像素的只读视图，在本帧被修改或销毁前有效。
+ * @return A read-only pixel view valid until this frame is modified or destroyed.
  */
 xmax_video_frame Frame::view() const {
     xmax_video_frame v{};
@@ -53,9 +54,9 @@ xmax_video_frame Frame::view() const {
 }
 
 /**
- * 校验像素格式、平面指针、字节步幅、可访问长度和视频尺寸。
+ * Validates pixel format, plane pointers, byte strides, accessible sizes, and dimensions.
  *
- * @param[in] s 待校验的只读视频视图，像素存储在本次校验期间有效。
+ * @param[in] s The read-only frame view; pixel storage remains valid during validation.
  */
 void validate_frame(
     const xmax_video_frame& s
@@ -65,11 +66,13 @@ void validate_frame(
             s.width % 2 == 0 && s.height % 2 == 0 &&
             uint64_t(s.width) * s.height <= RealtimeModelDefinition::maximum_input_pixels &&
             s.timestamp_us >= 0,
-        XMAX_INVALID_ARGUMENT, "Invalid video frame dimensions or timestamp"
+        XMAX_INVALID_ARGUMENT,
+        "Invalid video frame dimensions or timestamp"
     );
     require(
         s.pixel_format == XMAX_BGRA || s.pixel_format == XMAX_NV12 || s.pixel_format == XMAX_I420,
-        XMAX_INVALID_ARGUMENT, "Unsupported pixel format"
+        XMAX_INVALID_ARGUMENT,
+        "Unsupported pixel format"
     );
 
     const int count = s.pixel_format == XMAX_BGRA ? 1 : (s.pixel_format == XMAX_NV12 ? 2 : 3);
@@ -82,16 +85,18 @@ void validate_frame(
         require(
             s.planes[p] && s.strides[p] >= row_bytes && s.strides[p] <= 64 * 1024 &&
                 s.plane_sizes[p] >= (rows - 1) * s.strides[p] + row_bytes,
-            XMAX_INVALID_ARGUMENT, "Video plane pointer, stride or accessible size is invalid"
+            XMAX_INVALID_ARGUMENT,
+            "Video plane pointer, stride or accessible size is invalid"
         );
     }
 }
 
 /**
- * 校验外部视频视图，并将有效像素行复制到 SDK 拥有的存储。
+ * Validates an external frame view and copies its active rows into owned storage.
  *
- * @param[in] s 待复制的只读像素视图，需提供有效指针、字节步幅和完整可访问长度。
- * @return 拥有像素副本的视频帧，不再依赖原始平面存储。
+ * @param[in] s The read-only pixel view with valid pointers, byte strides, and complete accessible sizes.
+ *
+ * @return A frame owning its pixels independently of the source planes.
  */
 Frame Frame::copy(
     const xmax_video_frame& s
@@ -115,7 +120,11 @@ Frame Frame::copy(
         f.planes[p].resize(rows * row_bytes);
 
         for (size_t y = 0; y < rows; ++y)
-            std::memcpy(f.planes[p].data() + y * row_bytes, s.planes[p] + y * s.strides[p], row_bytes);
+            std::memcpy(
+                f.planes[p].data() + y * row_bytes,
+                s.planes[p] + y * s.strides[p],
+                row_bytes
+            );
     }
 
     return f;

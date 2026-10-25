@@ -14,13 +14,19 @@
 namespace xmax {
 
 /**
- * 实时控制器的独立业务配置。
+ * The model and initial quality-adaptation policy for an individual realtime controller.
  */
 struct RealtimeConfiguration {
 
     /**
-     * 本次实时业务使用的模型。
+     * The model used by this realtime controller.
      */
     RealtimeModel model = RealtimeModel::x2_1;
+
+    /**
+     * Whether connections adapt uplink and downlink quality automatically. Disabled connections start at
+     * L1 without reading or writing quality history; manual level changes remain available.
+     */
+    bool is_adaptive_quality_enabled = true;
 };
 } // namespace xmax

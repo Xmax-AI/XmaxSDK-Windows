@@ -25,48 +25,56 @@ namespace xmax::detail {
 namespace {
 
 /**
- * 校验 HRESULT，保留错误码并记录摄像头访问被拒绝的诊断。
+ * Checks an HRESULT, preserving its code and diagnosing camera access denial.
  *
- * @param[in] result 需校验的 HRESULT，失败时保留其数值并抛出媒体错误。
- * @param[in] operation 当前原生摄像头操作的诊断名称。
+ * @param[in] result The HRESULT to check; failures preserve its value in a media error.
+ * @param[in] operation The diagnostic name of the native camera operation.
  */
 void checked(
     HRESULT result,
     const char* operation
 ) {
     if (result == E_ACCESSDENIED)
-        XmaxLogger::write(LogCategory::Permission, XMAX_LOG_ERROR, [](auto language) {
-            return XmaxLogger::localized(
-                language, "摄像头访问被系统拒绝 (Camera Access Denied)", "Camera Access Denied"
-            );
-        });
+        XmaxLogger::write(
+            LogCategory::Permission,
+            XMAX_LOG_ERROR,
+            [](auto language) {
+                return XmaxLogger::localized(
+                    language,
+                    "摄像头访问被系统拒绝 (Camera Access Denied)",
+                    "Camera Access Denied"
+                );
+            }
+        );
     require(
-        SUCCEEDED(result), result == E_ACCESSDENIED ? XMAX_CAMERA_PERMISSION_DENIED : XMAX_MEDIA_ERROR,
+        SUCCEEDED(result),
+        result == E_ACCESSDENIED ? XMAX_CAMERA_PERMISSION_DENIED : XMAX_MEDIA_ERROR,
         std::string(operation) + " failed (HRESULT " + std::to_string(uint32_t(result)) + ")"
     );
 }
 
 /**
- * 以独占所有权管理一个 COM 接口引用；移动操作转移引用而不增加引用计数。
+ * Exclusively owns a COM interface reference; moving transfers it without incrementing the reference count.
  *
- * @tparam T 当前所有者管理的句柄或接口类型。
+ * @tparam T The handle or interface type managed by this owner.
  */
-template <class T> class Com {
+template <class T>
+class Com {
 
     /**
-     * 独占拥有的 COM 接口引用；为空时不持有资源。
+     * The owned COM reference; null means no resource is retained.
      */
     T* value_ = nullptr;
 
   public:
 
     /**
-     * 创建空 COM 引用所有者，不持有任何接口引用。
+     * Creates an empty COM owner without retaining an interface.
      */
     Com() = default;
 
     /**
-     * 释放本对象独占拥有的 COM 接口引用。
+     * Releases the exclusively owned COM reference.
      */
     ~Com() {
         if (value_)
@@ -74,39 +82,43 @@ template <class T> class Com {
     }
 
     /**
-     * 禁止复制构造，避免同一资源被多个独占所有者重复释放。
+     * Disables copying to prevent multiple exclusive owners from releasing the same resource.
      *
-     * @param[in] other 复制源对象；此操作被禁止，不得调用。
+     * @param[in] other The copy source. This operation is deleted and cannot be called.
      */
     Com(
         const Com& other
     ) = delete;
 
     /**
-     * 禁止复制赋值，避免同一资源被多个独占所有者重复释放。
+     * Disables copy assignment to prevent duplicate ownership and release.
      *
-     * @param[in] other 复制源对象；此操作被禁止，不得调用。
+     * @param[in] other The copy source. This operation is deleted and cannot be called.
      */
     Com& operator=(
         const Com& other
     ) = delete;
 
     /**
-     * 接管源对象的资源所有权，移动后源对象为空。
+     * Transfers resource ownership and leaves the source empty.
      *
-     * @param[in,out] other 引用所有权的源对象，移动完成后源对象为空。
+     * @param[in,out] other The reference owner to move from, left empty after transfer.
      */
     Com(
         Com&& other
     ) noexcept
-        : value_(std::exchange(other.value_, nullptr)) {
+        : value_(std::exchange(
+            other.value_,
+            nullptr
+        )) {
     }
 
     /**
-     * 释放当前 COM 引用并接管源对象的引用。
+     * Releases the current COM reference and takes ownership from the source.
      *
-     * @param[in,out] other 引用所有权的源对象，移动完成后源对象为空；允许自移动赋值。
-     * @return 当前 COM 引用所有者的引用。
+     * @param[in,out] other The source owner, left empty after transfer; self-move assignment is supported.
+     *
+     * @return A reference to this COM owner.
      */
     Com& operator=(
         Com&& other
@@ -114,33 +126,36 @@ template <class T> class Com {
         if (this != &other) {
             if (value_)
                 value_->Release();
-            value_ = std::exchange(other.value_, nullptr);
+            value_ = std::exchange(
+                other.value_,
+                nullptr
+            );
         }
         return *this;
     }
 
     /**
-     * 借用当前 COM 接口指针，不增加引用计数。
+     * Returns a borrowed COM pointer without incrementing its reference count.
      *
-     * @return 借用的 COM 接口指针；未持有接口时为 nullptr。
+     * @return The borrowed COM pointer, or nullptr if no interface is held.
      */
     T* get() const {
         return value_;
     }
 
     /**
-     * 借用当前 COM 接口进行成员访问，不转移所有权。
+     * Provides borrowed COM member access without transferring ownership.
      *
-     * @return 借用的 COM 接口指针，不增加引用计数。
+     * @return The borrowed COM pointer without a reference-count increment.
      */
     T* operator->() const {
         return value_;
     }
 
     /**
-     * 提供用于接收已拥有 COM 引用的空指针槽位。
+     * Provides an empty slot for receiving an owned COM reference.
      *
-     * @return 接收一个已拥有 COM 引用的指针槽位；调用前本对象必须为空。
+     * @return The output slot for an owned COM reference; this owner must be empty before use.
      */
     T** put() {
         return &value_;
@@ -148,41 +163,54 @@ template <class T> class Com {
 };
 
 /**
- * 在当前线程配对管理 COM 与 Media Foundation 的初始化和释放。
+ * Pairs COM and Media Foundation initialization and shutdown on the current thread.
  */
 struct Platform {
 
     /**
-     * 当前线程是否需要在销毁时配对调用 CoUninitialize。
+     * Whether destruction must call CoUninitialize on the current thread.
      */
     bool uninitialize = false;
 
     /**
-     * 是否已成功启动 Media Foundation，决定销毁时是否执行关闭。
+     * Whether Media Foundation startup succeeded and requires shutdown.
      */
     bool started = false;
 
     /**
-     * 初始化当前线程的 COM 与 Media Foundation，部分失败时回滚已完成步骤。
+     * Initializes COM and Media Foundation on this thread, rolling back completed steps on partial failure.
      */
     Platform() {
-        const auto result = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
-        require(SUCCEEDED(result) || result == RPC_E_CHANGED_MODE, XMAX_MEDIA_ERROR, "Cannot initialize COM");
+        const auto result = CoInitializeEx(
+            nullptr,
+            COINIT_MULTITHREADED
+        );
+        require(
+            SUCCEEDED(result) || result == RPC_E_CHANGED_MODE,
+            XMAX_MEDIA_ERROR,
+            "Cannot initialize COM"
+        );
         uninitialize = SUCCEEDED(result);
 
-        const auto startup = MFStartup(MF_VERSION, MFSTARTUP_FULL);
+        const auto startup = MFStartup(
+            MF_VERSION,
+            MFSTARTUP_FULL
+        );
 
         if (FAILED(startup)) {
             if (uninitialize)
                 CoUninitialize();
-            checked(startup, "MFStartup");
+            checked(
+                startup,
+                "MFStartup"
+            );
         }
 
         started = true;
     }
 
     /**
-     * 在初始化所属线程关闭 Media Foundation，并配对释放 COM 初始化。
+     * Shuts down Media Foundation and balances COM initialization on the initializing thread.
      */
     ~Platform() {
         if (started)
@@ -193,27 +221,48 @@ struct Platform {
 };
 
 /**
- * 将具有明确长度的 Windows UTF-16 文本转换为 UTF-8。
+ * Converts Windows UTF-16 text with an explicit length to UTF-8.
  *
- * @param[in] value 具有 length 个 UTF-16 码元的只读 Windows 字符串。
- * @param[in] length 输入 UTF-16 码元数，不包含未显式传入的结尾 NUL。
+ * @param[in] value The read-only Windows string containing length UTF-16 code units.
+ * @param[in] length The UTF-16 code-unit count, excluding any terminator not explicitly included.
  */
 std::string utf8(
     const wchar_t* value,
     UINT32 length
 ) {
-    const int count = WideCharToMultiByte(CP_UTF8, 0, value, int(length), nullptr, 0, nullptr, nullptr);
-    std::string text(size_t(count), '\0');
-    WideCharToMultiByte(CP_UTF8, 0, value, int(length), text.data(), count, nullptr, nullptr);
+    const int count = WideCharToMultiByte(
+        CP_UTF8,
+        0,
+        value,
+        int(length),
+        nullptr,
+        0,
+        nullptr,
+        nullptr
+    );
+    std::string text(
+        size_t(count),
+        '\0'
+    );
+    WideCharToMultiByte(
+        CP_UTF8,
+        0,
+        value,
+        int(length),
+        text.data(),
+        count,
+        nullptr,
+        nullptr
+    );
 
     return text;
 }
 
 /**
- * 读取 Media Foundation 字符串属性，并释放系统分配的原生存储。
+ * Reads a Media Foundation string attribute and releases its native allocation.
  *
- * @param[in] value 保存原生属性的 Media Foundation 对象，调用期间有效。
- * @param[in] key 要读取的字符串属性 GUID。
+ * @param[in] value The Media Foundation attribute object, valid during the call.
+ * @param[in] key The GUID of the string attribute to read.
  */
 std::string attribute(
     IMFAttributes* value,
@@ -221,45 +270,73 @@ std::string attribute(
 ) {
     wchar_t* text = nullptr;
     UINT32 count = 0;
-    checked(value->GetAllocatedString(key, &text, &count), "Read camera identity");
+    checked(
+        value->GetAllocatedString(
+            key,
+            &text,
+            &count
+        ),
+        "Read camera identity"
+    );
 
-    std::unique_ptr<wchar_t, decltype(&CoTaskMemFree)> owned(text, CoTaskMemFree);
+    std::unique_ptr<wchar_t, decltype(&CoTaskMemFree)> owned(
+        text,
+        CoTaskMemFree
+    );
 
-    return utf8(text, count);
+    return utf8(
+        text,
+        count
+    );
 }
 
 /**
- * 拥有 Media Foundation 摄像头激活对象数组，并负责释放数组及接口引用。
+ * Owns the Media Foundation camera activation array and releases its storage and interface references.
  */
 struct Devices {
 
     /**
-     * 系统分配的设备激活对象数组；数组及其中的 COM 引用由本对象释放。
+     * The system-allocated activation array; this object releases the array and its COM references.
      */
     IMFActivate** values = nullptr;
 
     /**
-     * 系统分配的设备激活对象数量。
+     * The number of system-allocated activation objects.
      */
     UINT32 count = 0;
 
     /**
-     * 枚举并接管摄像头激活对象及其系统分配的数组。
+     * Enumerates and takes ownership of camera activation objects and their array.
      */
     Devices() {
         Com<IMFAttributes> attributes;
-        checked(MFCreateAttributes(attributes.put(), 1), "Camera enumeration attributes");
         checked(
-            attributes->SetGUID(
-                MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE, MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_GUID
+            MFCreateAttributes(
+                attributes.put(),
+                1
+            ),
+            "Camera enumeration attributes"
+        );
+        checked(
+            attributes
+                ->SetGUID(
+                MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE,
+                MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_GUID
             ),
             "Camera source type"
         );
-        checked(MFEnumDeviceSources(attributes.get(), &values, &count), "Enumerate camera devices");
+        checked(
+            MFEnumDeviceSources(
+                attributes.get(),
+                &values,
+                &count
+            ),
+            "Enumerate camera devices"
+        );
     }
 
     /**
-     * 释放摄像头激活接口引用及系统分配的数组。
+     * Releases the camera activation references and system-allocated array.
      */
     ~Devices() {
         for (UINT32 i = 0; i < count; ++i)
@@ -269,59 +346,69 @@ struct Devices {
 };
 
 /**
- * 保存异步样本读取器、协商后的像素布局和采集回调。
+ * Retains the asynchronous sample reader, negotiated pixel layout, and capture callbacks.
  */
 struct CaptureState {
 
     /**
-     * 保护读取器、媒体类型及停止状态，并串行交付样本的互斥锁。
+     * The mutex protecting the reader, media type, and stop state while serializing sample delivery.
      */
     std::mutex mutex;
 
     /**
-     * 当前采集会话拥有的异步样本读取器。
+     * The asynchronous reader owned by the current capture session.
      */
     Com<IMFSourceReader> reader;
 
     /**
-     * 当前采集会话的帧和错误交付回调。
+     * The current capture session's frame and failure callbacks.
      */
     CaptureCallbacks callbacks;
 
     /**
-     * 采集是否已进入停止或失败状态，禁止继续请求和交付样本。
+     * Whether capture has stopped or failed, preventing further sample requests and delivery.
      */
     bool stopping = false;
 
     /**
-     * 视频宽度，单位为像素。
+     * The video width, in pixels.
      */
     UINT32 width = 0;
 
     /**
-     * 视频高度，单位为像素。
+     * The video height, in pixels.
      */
     UINT32 height = 0;
 
     /**
-     * 协商后的 RGB 行步幅，单位为字节；负值表示反向行布局。
+     * The negotiated RGB row stride, in bytes; negative indicates reverse row layout.
      */
     LONG stride = 0;
 
     /**
-     * 读取并校验协商后的像素尺寸与 RGB 字节步幅。
+     * Reads and validates negotiated dimensions and RGB byte stride.
      */
     void type() {
         Com<IMFMediaType> output;
         checked(
-            reader->GetCurrentMediaType(MF_SOURCE_READER_FIRST_VIDEO_STREAM, output.put()),
+            reader->GetCurrentMediaType(
+                MF_SOURCE_READER_FIRST_VIDEO_STREAM,
+                output.put()
+            ),
             "Read camera output type"
         );
         checked(
-            MFGetAttributeSize(output.get(), MF_MT_FRAME_SIZE, &width, &height), "Read camera dimensions"
+            MFGetAttributeSize(
+                output.get(),
+                MF_MT_FRAME_SIZE,
+                &width,
+                &height
+            ),
+            "Read camera dimensions"
         );
         require(
-            width >= 2 && height >= 2 && uint64_t(width) * height <= 2100000, XMAX_MEDIA_ERROR,
+            width >= 2 && height >= 2 && uint64_t(width) * height <= 2100000,
+            XMAX_MEDIA_ERROR,
             "Camera output dimensions exceed the frame budget"
         );
 
@@ -331,21 +418,29 @@ struct CaptureState {
             stride = LONG(raw);
         else
             checked(
-                MFGetStrideForBitmapInfoHeader(MFVideoFormat_RGB32.Data1, width, &stride),
+                MFGetStrideForBitmapInfoHeader(
+                    MFVideoFormat_RGB32.Data1,
+                    width,
+                    &stride
+                ),
                 "Read camera stride"
             );
     }
 
     /**
-     * 按原生样本的行步幅复制 BGRA 像素，返回独立拥有的帧。
+     * Copies BGRA pixels using the native sample's row stride into an independently owned frame.
      *
-     * @param[in] sample 当前原生视频样本，借用有效期仅限回调或同步复制期间。
+     * @param[in] sample The borrowed native video sample, valid only during the callback or synchronous
+     * copy.
      */
     Frame copy(
         IMFSample* sample
     ) {
         Com<IMFMediaBuffer> buffer;
-        checked(sample->ConvertToContiguousBuffer(buffer.put()), "Read camera sample");
+        checked(
+            sample->ConvertToContiguousBuffer(buffer.put()),
+            "Read camera sample"
+        );
 
         Frame frame;
         frame.width = width;
@@ -360,29 +455,49 @@ struct CaptureState {
         LONG pitch = stride;
 
         if (SUCCEEDED(buffer->QueryInterface(IID_IMF2DBuffer, reinterpret_cast<void**>(plane.put())))) {
-            checked(plane->Lock2D(&pixels, &pitch), "Lock camera image");
+            checked(
+                plane->Lock2D(
+                    &pixels,
+                    &pitch
+                ),
+                "Lock camera image"
+            );
 
             if (size_t(pitch < 0 ? -int64_t(pitch) : pitch) < frame.strides[0]) {
                 plane->Unlock2D();
-                throw Error(XMAX_MEDIA_ERROR, "Camera row stride is shorter than its width");
+                throw Error(
+                    XMAX_MEDIA_ERROR,
+                    "Camera row stride is shorter than its width"
+                );
             }
 
             for (UINT32 y = 0; y < height; ++y)
                 std::memcpy(
-                    frame.planes[0].data() + y * frame.strides[0], pixels + ptrdiff_t(y) * pitch,
+                    frame.planes[0].data() + y * frame.strides[0],
+                    pixels + ptrdiff_t(y) * pitch,
                     frame.strides[0]
                 );
 
             plane->Unlock2D();
         } else {
             DWORD size = 0;
-            checked(buffer->Lock(&pixels, nullptr, &size), "Lock camera buffer");
+            checked(
+                buffer->Lock(
+                    &pixels,
+                    nullptr,
+                    &size
+                ),
+                "Lock camera buffer"
+            );
 
             const size_t row = size_t(pitch < 0 ? -int64_t(pitch) : pitch);
 
             if (row < frame.strides[0] || uint64_t(row) * (height - 1) + frame.strides[0] > size) {
                 buffer->Unlock();
-                throw Error(XMAX_MEDIA_ERROR, "Camera buffer is shorter than its layout");
+                throw Error(
+                    XMAX_MEDIA_ERROR,
+                    "Camera buffer is shorter than its layout"
+                );
             }
 
             if (pitch < 0)
@@ -390,7 +505,8 @@ struct CaptureState {
 
             for (UINT32 y = 0; y < height; ++y)
                 std::memcpy(
-                    frame.planes[0].data() + y * frame.strides[0], pixels + ptrdiff_t(y) * pitch,
+                    frame.planes[0].data() + y * frame.strides[0],
+                    pixels + ptrdiff_t(y) * pitch,
                     frame.strides[0]
                 );
 
@@ -407,24 +523,24 @@ struct CaptureState {
 };
 
 /**
- * 实现 Media Foundation 异步读取回调，以弱引用访问采集状态。
+ * Receives asynchronous Media Foundation reader callbacks through a weak capture-state reference.
  */
 class ReaderCallback final : public IMFSourceReaderCallback {
 
     /**
-     * 当前 COM 回调对象的原子引用计数。
+     * The callback object's atomic COM reference count.
      */
     std::atomic<ULONG> references_{1};
 
     /**
-     * 对采集状态的弱引用，避免读取器与回调形成所有权环。
+     * The weak capture-state reference preventing a reader/callback ownership cycle.
      */
     std::weak_ptr<CaptureState> state_;
 
   public:
 
     /**
-     * 保留采集状态的弱引用，避免读取器和回调形成所有权环。
+     * Retains a weak capture-state reference to avoid a reader/callback ownership cycle.
      */
     explicit ReaderCallback(
         std::shared_ptr<CaptureState> state
@@ -433,11 +549,12 @@ class ReaderCallback final : public IMFSourceReaderCallback {
     }
 
     /**
-     * 查询当前对象支持的 IUnknown 或样本读取回调接口。
+     * Queries the supported IUnknown or sample-reader callback interface.
      *
-     * @param[in] iid 待查询的 COM 接口标识。
-     * @param[out] out 接收已增加引用计数的 COM 接口指针；查询失败时置空。
-     * @return 成功返回 S_OK；输出指针为空返回 E_POINTER，不支持的接口返回 E_NOINTERFACE。
+     * @param[in] iid The requested COM interface identifier.
+     * @param[out] out Receives a retained COM interface pointer; cleared on query failure.
+     *
+     * @return S_OK on success, E_POINTER for a null output, or E_NOINTERFACE for unsupported interfaces.
      */
     STDMETHODIMP QueryInterface(
         REFIID iid,
@@ -458,20 +575,28 @@ class ReaderCallback final : public IMFSourceReaderCallback {
     }
 
     /**
-     * 原子增加当前 COM 回调对象的引用计数。
+     * Atomically increments this COM callback's reference count.
      *
-     * @return 递增后的 COM 引用计数。
+     * @return The incremented COM reference count.
      */
-    STDMETHODIMP_(ULONG) AddRef() override {
+    STDMETHODIMP_(
+        ULONG
+    )
+
+    AddRef() override {
         return ++references_;
     }
 
     /**
-     * 释放一个回调引用，并在引用计数归零时销毁对象。
+     * Releases one callback reference and destroys the object when the count reaches zero.
      *
-     * @return 递减后的 COM 引用计数；0 表示对象已销毁。
+     * @return The decremented reference count; 0 means the object was destroyed.
      */
-    STDMETHODIMP_(ULONG) Release() override {
+    STDMETHODIMP_(
+        ULONG
+    )
+
+    Release() override {
         const auto count = --references_;
         if (!count)
             delete this;
@@ -479,14 +604,17 @@ class ReaderCallback final : public IMFSourceReaderCallback {
     }
 
     /**
-     * 处理读取结果、媒体类型变化与错误，然后请求下一样本。
+     * Processes reader results, media-type changes, and failures, then requests the next sample.
      *
-     * @param[in] status 异步读取结果 HRESULT，失败时终止采集并报告媒体错误。
-     * @param[in] stream_index 触发回调的媒体流索引。
-     * @param[in] flags Media Foundation 样本读取状态标记。
-     * @param[in] timestamp Media Foundation 样本时间戳，单位为 100 纳秒；SDK 使用自己的单调时钟排序帧。
-     * @param[in] sample 当前原生视频样本，借用有效期仅限回调或同步复制期间。
-     * @return 返回 S_OK；读取失败通过采集错误回调报告。
+     * @param[in] status The asynchronous read HRESULT; failure stops capture and reports a media error.
+     * @param[in] stream_index The media stream index that triggered the callback.
+     * @param[in] flags The Media Foundation sample-reader status flags.
+     * @param[in] timestamp The native sample timestamp in 100-nanosecond units; XmaxSDK orders frames using
+     * its own monotonic clock.
+     * @param[in] sample The borrowed native video sample, valid only during the callback or synchronous
+     * copy.
+     *
+     * @return S_OK; read failures are reported through the capture failure callback.
      */
     STDMETHODIMP OnReadSample(
         HRESULT status,
@@ -506,8 +634,15 @@ class ReaderCallback final : public IMFSourceReaderCallback {
             return S_OK;
 
         try {
-            checked(status, "Camera capture");
-            require(!(flags & MF_SOURCE_READERF_ENDOFSTREAM), XMAX_MEDIA_ERROR, "Camera stream ended");
+            checked(
+                status,
+                "Camera capture"
+            );
+            require(
+                !(flags & MF_SOURCE_READERF_ENDOFSTREAM),
+                XMAX_MEDIA_ERROR,
+                "Camera stream ended"
+            );
 
             if (flags & MF_SOURCE_READERF_CURRENTMEDIATYPECHANGED)
                 state->type();
@@ -516,8 +651,14 @@ class ReaderCallback final : public IMFSourceReaderCallback {
                 state->callbacks.frame(state->copy(sample));
 
             checked(
-                state->reader->ReadSample(
-                    MF_SOURCE_READER_FIRST_VIDEO_STREAM, 0, nullptr, nullptr, nullptr, nullptr
+                state->reader
+                    ->ReadSample(
+                    MF_SOURCE_READER_FIRST_VIDEO_STREAM,
+                    0,
+                    nullptr,
+                    nullptr,
+                    nullptr,
+                    nullptr
                 ),
                 "Request camera sample"
             );
@@ -525,7 +666,10 @@ class ReaderCallback final : public IMFSourceReaderCallback {
             state->stopping = true;
             if (state->callbacks.failure) {
                 try {
-                    state->callbacks.failure(Error(XMAX_MEDIA_ERROR, error.what()));
+                    state->callbacks.failure(Error(
+                        XMAX_MEDIA_ERROR,
+                        error.what()
+                    ));
                 } catch (...) {
                 }
             }
@@ -535,11 +679,12 @@ class ReaderCallback final : public IMFSourceReaderCallback {
     }
 
     /**
-     * 确认无需额外处理的样本读取器事件。
+     * Acknowledges reader events that require no additional processing.
      *
-     * @param[in] stream_index 触发回调的媒体流索引。
-     * @param[in] media_event 原生媒体事件，仅在回调期间借用。
-     * @return S_OK，表示事件已处理。
+     * @param[in] stream_index The media stream index that triggered the callback.
+     * @param[in] media_event The native media event, borrowed during the callback.
+     *
+     * @return S_OK to acknowledge the event.
      */
     STDMETHODIMP OnEvent(
         [[maybe_unused]] DWORD stream_index,
@@ -549,10 +694,11 @@ class ReaderCallback final : public IMFSourceReaderCallback {
     }
 
     /**
-     * 确认停止采集期间的读取器排空事件。
+     * Acknowledges reader flushing during capture shutdown.
      *
-     * @param[in] stream_index 触发回调的媒体流索引。
-     * @return S_OK，表示读取器排空已确认。
+     * @param[in] stream_index The media stream index that triggered the callback.
+     *
+     * @return S_OK to acknowledge the reader flush.
      */
     STDMETHODIMP OnFlush(
         [[maybe_unused]] DWORD stream_index
@@ -562,38 +708,38 @@ class ReaderCallback final : public IMFSourceReaderCallback {
 };
 
 /**
- * 通过 Media Foundation 枚举并采集摄像头，向上层交付连续的 BGRA 帧。
+ * Enumerates and captures Media Foundation cameras, delivering continuous BGRA frames.
  */
 class MfCamera final : public CameraCapture {
 
     /**
-     * 为当前采集生命周期保留的 COM 和 Media Foundation 初始化状态。
+     * The COM and Media Foundation initialization retained for the capture lifecycle.
      */
     std::unique_ptr<Platform> platform_;
 
     /**
-     * 当前拥有的原生摄像头媒体源。
+     * The owned native camera media source.
      */
     Com<IMFMediaSource> source_;
 
     /**
-     * 由读取器回调共享的当前采集状态。
+     * The capture state shared with reader callbacks.
      */
     std::shared_ptr<CaptureState> state_;
 
   public:
 
     /**
-     * 停止摄像头采集并排空回调，然后释放拥有的媒体资源。
+     * Stops camera capture, drains callbacks, and releases owned media resources.
      */
     ~MfCamera() override {
         stop();
     }
 
     /**
-     * 枚举 Media Foundation 摄像头的符号标识和显示名称。
+     * Enumerates symbolic identifiers and display names of Media Foundation cameras.
      *
-     * @return 摄像头设备信息快照，不存在可用设备时为空集合。
+     * @return A camera information snapshot, or an empty collection if no cameras are available.
      */
     std::vector<CameraDevice> devices() override {
         Platform platform;
@@ -602,20 +748,29 @@ class MfCamera final : public CameraCapture {
 
         for (UINT32 i = 0; i < found.count; ++i)
             result.push_back(
-                {attribute(found.values[i], MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_SYMBOLIC_LINK),
-                 attribute(found.values[i], MF_DEVSOURCE_ATTRIBUTE_FRIENDLY_NAME), i == 0}
+                {attribute(
+                    found.values[i],
+                    MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_SYMBOLIC_LINK
+                ),
+                 attribute(
+                     found.values[i],
+                     MF_DEVSOURCE_ATTRIBUTE_FRIENDLY_NAME
+                 ),
+                 i == 0}
             );
 
         return result;
     }
 
     /**
-     * 打开选定摄像头，协商 BGRA 输出并启动异步样本读取。
+     * Opens the selected camera, negotiates BGRA output, and starts asynchronous reading.
      *
-     * @param[in] id UTF-8 摄像头设备标识，空文本选择默认摄像头。
-     * @param[in] format 请求的视频像素宽高及每秒帧数，须符合调用接口的规格限制。
-     * @param[in] callbacks 采集帧与失败回调，在原生媒体线程交付，停止返回前排空。
-     * @param[in] cancel 协作式取消判断函数；返回 true 时应终止当前操作。
+     * @param[in] id The UTF-8 camera identifier; an empty string selects the default camera.
+     * @param[in] format The requested pixel dimensions and frame rate, subject to the interface's format
+     * limits.
+     * @param[in] callbacks Capture frame and failure callbacks, delivered on the native media thread and
+     * drained before stop returns.
+     * @param[in] cancel A cooperative cancellation predicate; true requests termination of the operation.
      */
     void start(
         const std::string& id,
@@ -624,7 +779,11 @@ class MfCamera final : public CameraCapture {
         const Cancel& cancel
     ) override {
         stop();
-        require(!cancel(), XMAX_CANCELLED, "Camera startup cancelled");
+        require(
+            !cancel(),
+            XMAX_CANCELLED,
+            "Camera startup cancelled"
+        );
         platform_ = std::make_unique<Platform>();
 
         Devices found;
@@ -632,42 +791,89 @@ class MfCamera final : public CameraCapture {
 
         for (UINT32 i = 0; i < found.count; ++i)
             if ((id.empty() && i == 0) ||
-                attribute(found.values[i], MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_SYMBOLIC_LINK) == id) {
+                attribute(
+                    found.values[i],
+                    MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_SYMBOLIC_LINK
+                ) == id) {
                 selected = found.values[i];
                 break;
             }
 
-        require(selected != nullptr, XMAX_MEDIA_ERROR, "Requested camera is unavailable");
+        require(
+            selected != nullptr,
+            XMAX_MEDIA_ERROR,
+            "Requested camera is unavailable"
+        );
 
-        const auto name = attribute(selected, MF_DEVSOURCE_ATTRIBUTE_FRIENDLY_NAME);
-        XmaxLogger::write(LogCategory::Media, XMAX_LOG_INFO, [&](auto language) {
-            return XmaxLogger::localized(language, "选择摄像头 (Selected Camera)", "Selected Camera") +
-                   "\n└─ " + name;
-        });
+        const auto name = attribute(
+            selected,
+            MF_DEVSOURCE_ATTRIBUTE_FRIENDLY_NAME
+        );
+        XmaxLogger::write(
+            LogCategory::Media,
+            XMAX_LOG_INFO,
+            [&](auto language) {
+                return XmaxLogger::localized(
+                    language,
+                    "选择摄像头 (Selected Camera)",
+                    "Selected Camera"
+                ) +
+                       "\n└─ " + name;
+            }
+        );
         checked(
-            selected->ActivateObject(IID_IMFMediaSource, reinterpret_cast<void**>(source_.put())),
+            selected->ActivateObject(
+                IID_IMFMediaSource,
+                reinterpret_cast<void**>(source_.put())
+            ),
             "Open camera; check Windows camera permissions"
         );
         state_ = std::make_shared<CaptureState>();
         state_->callbacks = std::move(callbacks);
 
         Com<IMFAttributes> attributes;
-        checked(MFCreateAttributes(attributes.put(), 2), "Capture attributes");
+        checked(
+            MFCreateAttributes(
+                attributes.put(),
+                2
+            ),
+            "Capture attributes"
+        );
 
         auto callback = new ReaderCallback(state_);
-        const auto result = attributes->SetUnknown(MF_SOURCE_READER_ASYNC_CALLBACK, callback);
+        const auto result = attributes->SetUnknown(
+            MF_SOURCE_READER_ASYNC_CALLBACK,
+            callback
+        );
         callback->Release();
-        checked(result, "Capture callback");
         checked(
-            attributes->SetUINT32(MF_SOURCE_READER_ENABLE_VIDEO_PROCESSING, TRUE), "Camera RGB conversion"
+            result,
+            "Capture callback"
         );
         checked(
-            MFCreateSourceReaderFromMediaSource(source_.get(), attributes.get(), state_->reader.put()),
+            attributes->SetUINT32(
+                MF_SOURCE_READER_ENABLE_VIDEO_PROCESSING,
+                TRUE
+            ),
+            "Camera RGB conversion"
+        );
+        checked(
+            MFCreateSourceReaderFromMediaSource(
+                source_.get(),
+                attributes.get(),
+                state_->reader.put()
+            ),
             "Create camera reader"
         );
-        state_->reader->SetStreamSelection(MF_SOURCE_READER_ALL_STREAMS, FALSE);
+        state_->reader->SetStreamSelection(
+            MF_SOURCE_READER_ALL_STREAMS,
+            FALSE
+        );
         checked(
-            state_->reader->SetStreamSelection(MF_SOURCE_READER_FIRST_VIDEO_STREAM, TRUE),
+            state_->reader->SetStreamSelection(
+                MF_SOURCE_READER_FIRST_VIDEO_STREAM,
+                TRUE
+            ),
             "Select camera video"
         );
 
@@ -688,7 +894,12 @@ class MfCamera final : public CameraCapture {
                 h % 2 || uint64_t(w) * h > 2100000)
                 continue;
 
-            MFGetAttributeRatio(type.get(), MF_MT_FRAME_RATE, &numerator, &denominator);
+            MFGetAttributeRatio(
+                type.get(),
+                MF_MT_FRAME_RATE,
+                &numerator,
+                &denominator
+            );
 
             const double fps = denominator ? double(numerator) / denominator : 0;
             const auto score = uint64_t(
@@ -703,32 +914,63 @@ class MfCamera final : public CameraCapture {
             }
         }
 
-        require(best.get() != nullptr, XMAX_MEDIA_ERROR, "Camera has no supported capture format");
+        require(
+            best.get() != nullptr,
+            XMAX_MEDIA_ERROR,
+            "Camera has no supported capture format"
+        );
         checked(
-            state_->reader->SetCurrentMediaType(MF_SOURCE_READER_FIRST_VIDEO_STREAM, nullptr, best.get()),
+            state_->reader->SetCurrentMediaType(
+                MF_SOURCE_READER_FIRST_VIDEO_STREAM,
+                nullptr,
+                best.get()
+            ),
             "Select camera capture format"
         );
 
         Com<IMFMediaType> output;
-        checked(MFCreateMediaType(output.put()), "Create RGB camera format");
-        output->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video);
-        output->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_RGB32);
         checked(
-            state_->reader->SetCurrentMediaType(MF_SOURCE_READER_FIRST_VIDEO_STREAM, nullptr, output.get()),
+            MFCreateMediaType(output.put()),
+            "Create RGB camera format"
+        );
+        output->SetGUID(
+            MF_MT_MAJOR_TYPE,
+            MFMediaType_Video
+        );
+        output->SetGUID(
+            MF_MT_SUBTYPE,
+            MFVideoFormat_RGB32
+        );
+        checked(
+            state_->reader->SetCurrentMediaType(
+                MF_SOURCE_READER_FIRST_VIDEO_STREAM,
+                nullptr,
+                output.get()
+            ),
             "Negotiate BGRA camera output"
         );
         state_->type();
-        require(!cancel(), XMAX_CANCELLED, "Camera startup cancelled");
+        require(
+            !cancel(),
+            XMAX_CANCELLED,
+            "Camera startup cancelled"
+        );
         checked(
-            state_->reader->ReadSample(
-                MF_SOURCE_READER_FIRST_VIDEO_STREAM, 0, nullptr, nullptr, nullptr, nullptr
+            state_->reader
+                ->ReadSample(
+                MF_SOURCE_READER_FIRST_VIDEO_STREAM,
+                0,
+                nullptr,
+                nullptr,
+                nullptr,
+                nullptr
             ),
             "Start camera capture"
         );
     }
 
     /**
-     * 停止样本交付、解除回调并释放原生摄像头资源。
+     * Stops sample delivery, clears callbacks, and releases native camera resources.
      */
     void stop() noexcept override {
         if (state_) {
@@ -756,16 +998,16 @@ class MfCamera final : public CameraCapture {
 } // namespace
 
 /**
- * 检查当前 SDK 构建是否提供原生摄像头采集后端。
+ * Reports whether this SDK build provides native camera capture.
  */
 bool camera_available() noexcept {
     return true;
 }
 
 /**
- * 创建原生摄像头适配器，不支持的平台返回明确的能力错误。
+ * Creates a native camera adapter or reports unsupported capability on other platforms.
  *
- * @return 独占拥有的原生摄像头适配器；平台不支持时抛出能力错误。
+ * @return An exclusively owned camera adapter; unsupported platforms throw a capability error.
  */
 std::unique_ptr<CameraCapture> make_camera_capture() {
     return std::make_unique<MfCamera>();

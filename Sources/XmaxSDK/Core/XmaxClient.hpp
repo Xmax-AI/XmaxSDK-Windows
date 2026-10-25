@@ -16,37 +16,49 @@
 namespace xmax::detail {
 
 /**
- * 提供共享 API 配置以及独立的实时会话和存储控制器工厂。
+ * Provides shared API configuration and independent realtime and storage controller factories.
  */
 class XmaxClient {
 
   public:
 
     /**
-     * 复制 API 配置并保留共享 HTTP 传输器，供子控制器使用。
+     * Copies API configuration and retains the HTTP transport for child controllers.
      *
-     * @param[in] config 复制后保留的 API 凭证、模型标识和 HTTP 超时配置。
-     * @param[in] http 共享的底层 HTTP 传输器，其生命周期由服务保留。
+     * @param[in] config The copied API credentials, model identifier, and HTTP timeout.
+     * @param[in] http The shared HTTP transport retained by services.
      */
     explicit XmaxClient(
         Config config,
         std::shared_ptr<Http> http = make_http()
     )
-        : api_(std::make_shared<ApiService>(std::move(config), std::move(http))) {
-        XmaxLogger::write(LogCategory::Realtime, XMAX_LOG_INFO, [&](auto language) {
-            return XmaxLogger::localized(language, "创建 SDK Client (Client Created)", "Client Created") +
-                   "\n└─ model=" + api_->config().model;
-        });
+        : api_(std::make_shared<ApiService>(
+            std::move(config),
+            std::move(http)
+        )) {
+        XmaxLogger::write(
+            LogCategory::Realtime,
+            XMAX_LOG_INFO,
+            [&](auto language) {
+                return XmaxLogger::localized(
+                    language,
+                    "创建 SDK Client (Client Created)",
+                    "Client Created"
+                ) +
+                       "\n└─ model=" + api_->config().model;
+            }
+        );
     }
 
     /**
-     * 执行经过鉴权的 API 请求，支持协作式取消。
+     * Performs authenticated API requests with cooperative cancellation.
      *
-     * @param[in] method HTTP 请求方法。
-     * @param[in] path 相对当前模型 API 根地址的资源路径。
-     * @param[in] body 可选 JSON 请求体，空指针表示不发送请求体。
-     * @param[in] cancel 协作式取消判断函数；返回 true 时应终止当前操作。
-     * @return 服务响应中已通过状态校验的 data 负载。
+     * @param[in] method The HTTP request method.
+     * @param[in] path The resource path relative to the current model's API root.
+     * @param[in] body An optional JSON request body; a null pointer omits it.
+     * @param[in] cancel A cooperative cancellation predicate; true requests termination of the operation.
+     *
+     * @return The data payload of a successfully validated service response.
      */
     json request(
         const std::string& method,
@@ -54,60 +66,83 @@ class XmaxClient {
         const json* body,
         const Cancel& cancel
     ) const {
-        return api_->request(method, path, body, cancel);
+        return api_->request(
+            method,
+            path,
+            body,
+            cancel
+        );
     }
 
     /**
-     * 创建具有独立生命周期和画质历史的实时控制器。
+     * Creates a realtime controller with its own lifecycle and quality history.
      *
-     * @param[in] model 实时模型标识，空文本沿用客户端配置的模型。
-     * @return 独占拥有的实时控制器，客户端对象销毁后仍可使用其配置。
+     * @param[in] model The realtime model identifier; empty retains the client's configured model.
+     * @param[in] adaptive_quality Whether to use automatic quality adaptation and persisted history.
+     *
+     * @return An exclusively owned realtime controller whose configuration survives client destruction.
      */
     std::unique_ptr<XmaxRealtimeManager> create_realtime(
-        const std::string& model = ""
+        const std::string& model = "",
+        bool adaptive_quality = true
     ) const {
         auto api = api_;
         if (!model.empty() && model != api_->config().model) {
             auto config = api_->config();
             config.model = model;
-            api = std::make_shared<ApiService>(std::move(config), api_->transport());
+            api = std::make_shared<ApiService>(
+                std::move(config),
+                api_->transport()
+            );
         }
-        auto history = std::make_shared<QualityHistory>(api->config().model, make_preference_store());
-        return std::make_unique<XmaxRealtimeManager>(
-            api, make_rtc, std::chrono::seconds(10), make_camera_capture, std::move(history)
+
+        auto history = std::make_shared<QualityHistory>(
+            api->config().model,
+            make_preference_store()
         );
+        auto manager = std::make_unique<XmaxRealtimeManager>(
+            api,
+            make_rtc,
+            std::chrono::seconds(10),
+            make_camera_capture,
+            std::move(history)
+        );
+        manager->adaptive(adaptive_quality);
+        return manager;
     }
 
     /**
-     * 检查当前 SDK 构建是否提供原生 RTC 后端。
+     * Reports whether this SDK build provides a native RTC backend.
      */
     bool has_rtc() const {
         return rtc_available();
     }
 
     /**
-     * 读取当前构建提供的 C ABI 能力位。
+     * Returns the build's C ABI capability flags.
      *
-     * @return 由 XMAX_CAP_* 常量组成的能力位掩码。
+     * @return The bitmask of XMAX_CAP_* capabilities.
      */
     uint64_t capabilities() const {
-        return (rtc_available() ? XMAX_CAP_RTC : 0) | (camera_available() ? XMAX_CAP_CAMERA : 0) |
-               (native_window_available() ? XMAX_CAP_NATIVE_WINDOW : 0) | XMAX_CAP_STORAGE | XMAX_CAP_TRAJECTORY;
+        return (rtc_available() ? XMAX_CAP_RTC | XMAX_CAP_REMOTE_MEDIA_OUTPUT : 0) |
+               (camera_available() ? XMAX_CAP_CAMERA : 0) |
+               (native_window_available() ? XMAX_CAP_NATIVE_WINDOW : 0) | XMAX_CAP_STORAGE |
+               XMAX_CAP_TRAJECTORY;
     }
 
     /**
-     * 枚举平台摄像头设备，不启动采集。
+     * Enumerates platform cameras without starting capture.
      *
-     * @return 摄像头设备信息快照，不存在可用设备时为空集合。
+     * @return A camera information snapshot, or an empty collection if no cameras are available.
      */
     std::vector<CameraDevice> cameras() const {
         return make_camera_capture()->devices();
     }
 
     /**
-     * 创建保留共享 API 服务的独立存储控制器。
+     * Creates an independent storage controller retaining shared API services.
      *
-     * @return 独占拥有的存储控制器，客户端对象销毁后仍可使用其配置。
+     * @return An exclusively owned storage controller whose configuration survives client destruction.
      */
     std::unique_ptr<XmaxStorageManager> create_storage() const {
         return std::make_unique<XmaxStorageManager>(api_);
@@ -116,7 +151,7 @@ class XmaxClient {
   private:
 
     /**
-     * 保留共享 API 服务，使子控制器在客户端句柄释放后仍可使用。
+     * Retains the shared API service so child controllers survive destruction of the client handle.
      */
     std::shared_ptr<ApiService> api_;
 };

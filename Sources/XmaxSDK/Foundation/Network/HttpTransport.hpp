@@ -14,92 +14,93 @@
 namespace xmax::detail {
 
 /**
- * 描述 HTTP 请求及其响应大小限制、进度回调、流式接收和超时配置。
+ * The HTTP request, response-size limit, progress and streaming callbacks, and timeout.
  */
 struct HttpRequest {
 
     /**
-     * HTTP 请求方法。
+     * The HTTP request method.
      */
     std::string method;
 
     /**
-     * 完整的 HTTPS 请求地址，需符合传输器的地址与重定向策略。
+     * The absolute HTTPS URL, subject to the transport's URL and redirect policy.
      */
     std::string url;
 
     /**
-     * 本次请求要发送的完整字节内容。
+     * The complete request-body bytes to send.
      */
     std::string body;
 
     /**
-     * HTTP 头名称与值的有序集合。
+     * The ordered collection of HTTP header names and values.
      */
     std::vector<std::pair<std::string, std::string>> headers;
 
     /**
-     * HTTP 请求超时，单位为毫秒。
+     * The HTTP request timeout, in milliseconds.
      */
     uint32_t timeout_ms = 15000;
 
     /**
-     * 允许接收的最大响应字节数，超出时中止传输。
+     * The maximum response size, in bytes; exceeding it aborts transfer.
      */
     uint64_t response_limit = 4 * 1024 * 1024;
 
     /**
-     * 传输进度回调，参数依次为已传输字节数与总字节数；未知总数为 0。
+     * The progress callback receiving transferred bytes and then total bytes; unknown totals are 0.
      */
     std::function<void(uint64_t, uint64_t)> progress;
 
     /**
-     * 流式响应接收回调，参数依次为借用数据指针和字节数；仅在回调期间有效。
+     * The streaming receiver taking a borrowed data pointer and byte count, valid only during the callback.
      */
     std::function<void(const char*, size_t)> receive;
 };
 
 /**
- * 保存 HTTP 状态码、响应头和已接收的响应体。
+ * The HTTP status, headers, and received response body.
  */
 struct HttpResponse {
 
     /**
-     * 服务端返回的 HTTP 状态码。
+     * The server's HTTP response status.
      */
     long status = 0;
 
     /**
-     * 已接收的响应字节；使用流式接收时可不在内存保存完整响应。
+     * Received body bytes; streaming reception need not retain the full response in memory.
      */
     std::string body;
 
     /**
-     * HTTP 头名称与值的有序集合。
+     * The ordered collection of HTTP header names and values.
      */
     std::vector<std::pair<std::string, std::string>> headers{};
 };
 
 /**
- * 定义同步 HTTP 请求接口，支持取消、响应大小限制和流式接收。
+ * A synchronous HTTP transport supporting cancellation, response limits, and streaming reception.
  */
 class Http {
 
   public:
 
     /**
-     * 在所有请求结束后释放字节传输器。
+     * Releases the byte transport after all requests finish.
      *
-     * @note 销毁前应结束使用本对象的并发调用。
+     * @note Finish concurrent calls using this object before destroying it.
      */
     virtual ~Http() = default;
 
     /**
-     * 执行同步 HTTP 请求，支持取消、响应大小限制、传输进度和流式接收。
+     * Performs a synchronous HTTP request with cancellation, limits, progress, and streaming reception.
      *
-     * @param[in] request 本次请求的 URL、超时、响应大小限制和流式接收回调。
-     * @param[in] cancel 协作式取消判断函数；返回 true 时应终止当前操作。
-     * @return HTTP 状态码、响应头和非流式响应体；传输失败时抛出 SDK 异常。
+     * @param[in] request The request URL, timeout, response-size limit, and streaming receive callback.
+     * @param[in] cancel A cooperative cancellation predicate; true requests termination of the operation.
+     *
+     * @return The HTTP status, headers, and nonstreamed body; transport failures throw an SDK exception.
      */
     virtual HttpResponse request(
         const HttpRequest& request,
@@ -108,9 +109,9 @@ class Http {
 };
 
 /**
- * 创建当前平台的 HTTPS 字节传输器。
+ * Creates the platform's HTTPS byte transport.
  *
- * @return 可共享的当前平台 HTTP 传输器。
+ * @return A shared HTTP transport for the current platform.
  */
 std::shared_ptr<Http> make_http();
 } // namespace xmax::detail

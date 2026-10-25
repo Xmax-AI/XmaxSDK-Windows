@@ -15,27 +15,27 @@
 namespace xmax {
 
 /**
- * 创建客户端时使用的全局业务配置。
+ * The global configuration used to create a client.
  */
 struct XmaxConfiguration {
 
     /**
-     * 创建时复制的 API 凭证，空文本仅允许本地准备。
+     * The API credential copied at creation; empty permits local preparation only.
      */
     std::string api_key;
 
     /**
-     * 通用 API 与实时会话的服务环境。
+     * The service environment for general and realtime APIs.
      */
     XmaxEnvironment environment = XmaxEnvironment::china;
 
     /**
-     * 进程级日志选项；默认关闭。
+     * The process-wide logging options, disabled by default.
      */
     uint32_t logger_options = XMAX_LOG_NONE;
 
     /**
-     * HTTP 超时，单位为毫秒。
+     * The HTTP timeout, in milliseconds.
      */
     uint32_t http_timeout_ms = 15000;
 };

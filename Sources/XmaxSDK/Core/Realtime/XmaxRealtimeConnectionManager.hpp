@@ -15,16 +15,16 @@
 namespace xmax::detail {
 
 /**
- * 管理服务端会话与 RTC 连接的成对分配、保活和释放。
+ * Coordinates allocation, keepalive, and release of the server session and RTC connection.
  */
 class XmaxRealtimeConnectionManager {
 
   public:
 
     /**
-     * 保留执行会话请求的共享 API 服务。
+     * Retains the shared API service for session requests.
      *
-     * @param[in] api 当前实时模型与环境的 API 服务。
+     * @param[in] api The API service for the realtime model and environment.
      */
     explicit XmaxRealtimeConnectionManager(
         std::shared_ptr<ApiService> api
@@ -33,11 +33,13 @@ class XmaxRealtimeConnectionManager {
     }
 
     /**
-     * 先校验 RTC 后端，再分配服务端会话，避免能力不足时创建计费资源。
+     * Validates RTC capability before allocating a server session to avoid creating billable resources
+     * without a backend.
      *
-     * @param[in,out] stream 当前实时传输控制器。
-     * @param[in] cancel 协作式取消判断。
-     * @return 已验证的服务端会话，生命周期由当前对象管理。
+     * @param[in,out] stream The current realtime transport controller.
+     * @param[in] cancel The cooperative cancellation predicate.
+     *
+     * @return The validated server session owned by this controller.
      */
     const RealtimeSession& create(
         StreamController& stream,
@@ -48,21 +50,21 @@ class XmaxRealtimeConnectionManager {
     }
 
     /**
-     * 获取当前活动会话，未分配时标识为空。
+     * Returns the current session; its identifier is empty before allocation.
      */
     const RealtimeSession& active() const {
         return service_.active();
     }
 
     /**
-     * 按已创建会话加入 RTC 房间。
+     * Joins the RTC room assigned by the server session.
      *
-     * @param[in,out] stream 当前实时传输控制器。
-     * @param[in] format 媒体编码基准。
-     * @param[in] microphone 是否启用麦克风。
-     * @param[in] callbacks RTC 帧与生命周期回调。
-     * @param[in] cancel 协作式取消判断。
-     * @param[in] canvas 模型生成画布。
+     * @param[in,out] stream The current realtime transport controller.
+     * @param[in] format The baseline media encoding format.
+     * @param[in] microphone Whether to enable the microphone.
+     * @param[in] callbacks The RTC frame and lifecycle callbacks.
+     * @param[in] cancel The cooperative cancellation predicate.
+     * @param[in] canvas The model's generation canvas.
      */
     void join(
         StreamController& stream,
@@ -72,14 +74,21 @@ class XmaxRealtimeConnectionManager {
         const Cancel& cancel,
         xmax_video_format canvas
     ) {
-        stream.join(service_.active().room, format, microphone, std::move(callbacks), cancel, canvas);
+        stream.join(
+            service_.active().room,
+            format,
+            microphone,
+            std::move(callbacks),
+            cancel,
+            canvas
+        );
     }
 
     /**
-     * 同时维持服务端会话和 RTC 房间的活跃状态。
+     * Keeps both the server session and RTC room alive.
      *
-     * @param[in,out] stream 当前实时传输控制器。
-     * @param[in] cancel 协作式取消判断。
+     * @param[in,out] stream The current realtime transport controller.
+     * @param[in] cancel The cooperative cancellation predicate.
      */
     void heartbeat(
         StreamController& stream,
@@ -90,9 +99,9 @@ class XmaxRealtimeConnectionManager {
     }
 
     /**
-     * 先停止 RTC 发布与回调，再释放服务端会话。
+     * Stops RTC publication and drains callbacks before releasing the server session.
      *
-     * @param[in,out] stream 当前实时传输控制器。
+     * @param[in,out] stream The current realtime transport controller.
      */
     void close(
         StreamController& stream
@@ -104,7 +113,7 @@ class XmaxRealtimeConnectionManager {
   private:
 
     /**
-     * 当前模型对应的服务端会话资源。
+     * The server-session resource for the current model.
      */
     RealtimeSessionService service_;
 };

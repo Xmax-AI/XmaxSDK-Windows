@@ -15,58 +15,58 @@ namespace xmax::detail {
 namespace {
 
 /**
- * 按时间窗口汇总摄像头帧校验及同步交付成本，避免逐帧输出日志。
+ * Aggregates camera validation and synchronous delivery costs by time window rather than logging each frame.
  */
 struct CameraMetrics {
 
     /**
-     * 保护性能采样窗口和累计帧处理指标的互斥锁。
+     * The mutex protecting the sampling window and accumulated frame metrics.
      */
     std::mutex mutex;
 
     /**
-     * 配置版本，用于丢弃旧配置下产生的日志。
+     * The configuration revision used to discard records from earlier configurations.
      */
     uint64_t generation = 0;
 
     /**
-     * 当前性能采样窗口内已记录的视频帧数量。
+     * The recorded frame count in the current sampling window.
      */
     uint64_t count = 0;
 
     /**
-     * 当前性能采样窗口的单调时钟起点。
+     * The sampling window's monotonic start time.
      */
     Clock::time_point since{};
 
     /**
-     * 当前窗口帧校验累计耗时，单位为毫秒。
+     * The window's accumulated frame-validation time, in milliseconds.
      */
     double validation_ms = 0;
 
     /**
-     * 当前窗口同步媒体交付累计耗时，单位为毫秒。
+     * The window's accumulated synchronous delivery time, in milliseconds.
      */
     double delivery_ms = 0;
 
     /**
-     * 当前窗口单帧校验最大耗时，单位为毫秒。
+     * The maximum per-frame validation time in the window, in milliseconds.
      */
     double validation_max_ms = 0;
 
     /**
-     * 当前窗口单帧同步媒体交付最大耗时，单位为毫秒。
+     * The maximum per-frame synchronous delivery time in the window, in milliseconds.
      */
     double delivery_max_ms = 0;
 
     /**
-     * 按两秒窗口汇总实际帧率、校验耗时和同步交付耗时。
+     * Aggregates actual frame rate, validation time, and synchronous delivery time over two-second windows.
      *
-     * @param[in] begin 当前帧开始校验的单调时间点。
-     * @param[in] validated 当前帧完成校验的单调时间点。
-     * @param[in] delivered 当前帧完成同步交付的单调时间点。
-     * @param[in] width 输入视频宽度，单位为像素。
-     * @param[in] height 输入视频高度，单位为像素。
+     * @param[in] begin The monotonic time when frame validation started.
+     * @param[in] validated The monotonic time when frame validation finished.
+     * @param[in] delivered The monotonic time when synchronous delivery finished.
+     * @param[in] width The input width, in pixels.
+     * @param[in] height The input height, in pixels.
      */
     void record(
         Clock::time_point begin,
@@ -101,12 +101,14 @@ struct CameraMetrics {
                 return;
 
             XmaxLogger::write(
-                LogCategory::Media, XMAX_LOG_DEBUG,
+                LogCategory::Media,
+                XMAX_LOG_DEBUG,
                 [&](auto language) {
                     return XmaxLogger::localized(
-                               language, "摄像头处理性能 (Camera Pipeline Performance)",
-                               "Camera Pipeline Performance"
-                           ) +
+                        language,
+                        "摄像头处理性能 (Camera Pipeline Performance)",
+                        "Camera Pipeline Performance"
+                    ) +
                            "\n├─ input=" + std::to_string(width) + "x" + std::to_string(height) +
                            ", output_fps=" + std::to_string(count / seconds) +
                            "\n├─ validation_avg_ms=" + std::to_string(validation_ms / count) +
@@ -118,19 +120,20 @@ struct CameraMetrics {
             );
             since = {};
         } catch (...) {
-            // 隔离诊断异常，确保视频采集和发布继续执行。
+            // Keep diagnostic failures from interrupting capture and publication.
         }
     }
 };
 } // namespace
 
 /**
- * 启动原生采集并直接交付原始尺寸的视频帧，等待首帧、错误或取消。
+ * Starts native capture and delivers frames at their original dimensions, waiting for the first frame,
+ * failure, or cancellation.
  *
- * @param[in] device UTF-8 摄像头设备标识，空文本选择默认摄像头。
- * @param[in] format 请求的视频像素宽高及每秒帧数，须符合调用接口的规格限制。
- * @param[in] output 接收原始采集帧和采集错误的回调，在原生媒体线程同步触发。
- * @param[in] cancel 协作式取消判断函数；返回 true 时应终止当前操作。
+ * @param[in] device The UTF-8 camera identifier; an empty string selects the default camera.
+ * @param[in] format The requested pixel dimensions and frame rate, subject to the interface's format limits.
+ * @param[in] output The synchronous native-thread callbacks for capture frames and errors.
+ * @param[in] cancel A cooperative cancellation predicate; true requests termination of the operation.
  */
 void CameraController::start(
     const std::string& device,
@@ -139,11 +142,20 @@ void CameraController::start(
     const Cancel& cancel
 ) {
     stop();
-    XmaxLogger::write(LogCategory::Media, XMAX_LOG_INFO, [&](auto language) {
-        return XmaxLogger::localized(language, "准备摄像头 (Prepare Camera)", "Prepare Camera") + "\n└─ " +
-               std::to_string(format.width) + " × " + std::to_string(format.height) + " @ " +
-               std::to_string(format.fps) + " fps";
-    });
+    XmaxLogger::write(
+        LogCategory::Media,
+        XMAX_LOG_INFO,
+        [&](auto language) {
+            return XmaxLogger::localized(
+                language,
+                "准备摄像头 (Prepare Camera)",
+                "Prepare Camera"
+            ) +
+                   "\n└─ " +
+                   std::to_string(format.width) + " × " + std::to_string(format.height) + " @ " +
+                   std::to_string(format.fps) + " fps";
+        }
+    );
     capture_ = factory_();
     {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -170,7 +182,13 @@ void CameraController::start(
             output.frame(std::move(frame));
 
             if (profiling)
-                metrics->record(begin, validated, Clock::now(), width, height);
+                metrics->record(
+                    begin,
+                    validated,
+                    Clock::now(),
+                    width,
+                    height
+                );
 
             {
                 std::lock_guard<std::mutex> lock(mutex_);
@@ -184,7 +202,10 @@ void CameraController::start(
             }
             changed_.notify_all();
             if (output.failure)
-                output.failure(Error(XMAX_MEDIA_ERROR, "Camera frame processing failed"));
+                output.failure(Error(
+                    XMAX_MEDIA_ERROR,
+                    "Camera frame processing failed"
+                ));
         }
     };
     callbacks.failure = [this, output](Error error) {
@@ -198,24 +219,54 @@ void CameraController::start(
     };
 
     try {
-        capture_->start(device, format, std::move(callbacks), cancel);
+        capture_->start(
+            device,
+            format,
+            std::move(callbacks),
+            cancel
+        );
 
         const auto deadline = Clock::now() + std::chrono::seconds(12);
         std::unique_lock<std::mutex> lock(mutex_);
 
         while (!ready_) {
-            require(!cancel(), XMAX_CANCELLED, "Camera startup cancelled");
-            require(failure_.empty(), XMAX_MEDIA_ERROR, failure_);
-            require(Clock::now() < deadline, XMAX_TIMEOUT, "Camera produced no frames");
-            changed_.wait_for(lock, std::chrono::milliseconds(20));
+            require(
+                !cancel(),
+                XMAX_CANCELLED,
+                "Camera startup cancelled"
+            );
+            require(
+                failure_.empty(),
+                XMAX_MEDIA_ERROR,
+                failure_
+            );
+            require(
+                Clock::now() < deadline,
+                XMAX_TIMEOUT,
+                "Camera produced no frames"
+            );
+            changed_.wait_for(
+                lock,
+                std::chrono::milliseconds(20)
+            );
         }
 
-        require(!cancel(), XMAX_CANCELLED, "Camera startup cancelled");
-        XmaxLogger::write(LogCategory::Media, XMAX_LOG_INFO, [](auto language) {
-            return XmaxLogger::localized(
-                language, "摄像头首帧就绪 (Camera First Frame Ready)", "Camera First Frame Ready"
-            );
-        });
+        require(
+            !cancel(),
+            XMAX_CANCELLED,
+            "Camera startup cancelled"
+        );
+        XmaxLogger::write(
+            LogCategory::Media,
+            XMAX_LOG_INFO,
+            [](auto language) {
+                return XmaxLogger::localized(
+                    language,
+                    "摄像头首帧就绪 (Camera First Frame Ready)",
+                    "Camera First Frame Ready"
+                );
+            }
+        );
     } catch (...) {
         stop();
         throw;
@@ -223,15 +274,23 @@ void CameraController::start(
 }
 
 /**
- * 停止摄像头采集，并在返回前排空帧与错误回调。
+ * Stops camera capture and drains frame and failure callbacks before returning.
  */
 void CameraController::stop() noexcept {
     if (capture_) {
         capture_->stop();
         capture_.reset();
-        XmaxLogger::write(LogCategory::Media, XMAX_LOG_INFO, [](auto language) {
-            return XmaxLogger::localized(language, "摄像头已停止 (Camera Stopped)", "Camera Stopped");
-        });
+        XmaxLogger::write(
+            LogCategory::Media,
+            XMAX_LOG_INFO,
+            [](auto language) {
+                return XmaxLogger::localized(
+                    language,
+                    "摄像头已停止 (Camera Stopped)",
+                    "Camera Stopped"
+                );
+            }
+        );
     }
 }
 } // namespace xmax::detail

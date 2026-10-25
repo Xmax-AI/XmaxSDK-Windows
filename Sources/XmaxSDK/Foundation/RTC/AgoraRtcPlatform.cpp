@@ -28,140 +28,162 @@ namespace media_base = agora::media::base;
 namespace {
 
 /**
- * 保护进程级 RTC 引擎独占标记的互斥锁。
+ * The mutex protecting the process-wide exclusive RTC engine flag.
  */
 std::mutex engine_lease;
 
 /**
- * 进程内是否已有活动 RTC 引擎适配器。
+ * Whether a native RTC engine adapter is active in this process.
  */
 bool engine_in_use = false;
 
 /**
- * 将负数原生 RTC 结果转换为保留原始错误码的 SDK 异常。
+ * Translates negative native RTC results to SDK exceptions preserving the native code.
  *
- * @param[in] code 原生 RTC 操作结果；0 表示成功，非零值转换为 SDK 错误。
- * @param[in] operation 当前原生 RTC 操作的诊断名称。
+ * @param[in] code The native RTC result; 0 succeeds and nonzero results become SDK errors.
+ * @param[in] operation The diagnostic name of the native RTC operation.
  */
 void check_rtc(
     int code,
     const char* operation
 ) {
     if (code < 0)
-        throw Error(XMAX_RTC_ERROR, std::string(operation) + " failed (" + std::to_string(code) + ")");
+        throw Error(
+            XMAX_RTC_ERROR,
+            std::string(operation) + " failed (" + std::to_string(code) + ")"
+        );
 }
 
 /**
- * 管理 RTC 引擎、外部视频发布和结果帧观察；进程内同时只允许一个引擎实例。
+ * Manages the RTC engine, external publication, and result observation; only one engine instance may be
+ * active per process.
  */
-class AgoraRtc final : public Rtc, private IRtcEngineEventHandler, private IVideoFrameObserver {
+class AgoraRtc final : public Rtc,
+                       private IRtcEngineEventHandler,
+                       private IVideoFrameObserver,
+                       private agora::media::IAudioFrameObserver {
 
     /**
-     * 本适配器是否持有进程级 RTC 引擎独占租约。
+     * The native PCM callback layout, distinct from the SDK's owned audio packet.
+     */
+    using NativeAudioFrame = agora::media::IAudioFrameObserverBase::AudioFrame;
+
+    /**
+     * The native audio callback configuration type.
+     */
+    using NativeAudioParams = agora::media::IAudioFrameObserverBase::AudioParams;
+
+    /**
+     * Whether this adapter holds the process-wide exclusive engine lease.
      */
     bool owns_lease_ = false;
 
     /**
-     * 保护原生 RTC 引擎调用及引擎生命周期的互斥锁。
+     * The mutex protecting native engine calls and lifecycle.
      */
     std::mutex engine_mutex_;
 
     /**
-     * 保护房间加入、结果首帧及错误元数据的互斥锁。
+     * The mutex protecting join, first-result, and failure metadata.
      */
     std::mutex metadata_mutex_;
 
     /**
-     * 通知房间加入、结果首帧或 RTC 错误已发生的条件变量。
+     * Notifies waiters of room join, first result, or RTC failure.
      */
     std::condition_variable changed_;
 
     /**
-     * 本适配器拥有的原生 RTC 引擎指针。
+     * The native RTC engine owned by this adapter.
      */
     IRtcEngine* engine_ = nullptr;
 
     /**
-     * 借用当前引擎的媒体接口，用于外部视频帧推送。
+     * The engine's borrowed media interface for external frame submission.
      */
     IMediaEngine* media_ = nullptr;
 
     /**
-     * RTC 是否正在停止，回调需据此拒绝继续交付。
+     * Whether RTC is stopping; callbacks reject further delivery.
      */
     std::atomic<bool> stopping_{false};
 
     /**
-     * RTC 是否已成功加入当前房间。
+     * Whether current native PCM callbacks should copy result-user audio for application output.
+     */
+    std::atomic<bool> audio_observing_{false};
+
+    /**
+     * Whether RTC successfully joined the current room.
      */
     std::atomic<bool> joined_{false};
 
     /**
-     * 当前生成是否已收到结果首帧。
+     * Whether the current generation has received its first result frame.
      */
     bool first_frame_ = false;
 
     /**
-     * 当前或下一次连接使用的远端播放音量，范围为 [0, 1]。
+     * The remote playback volume in [0, 1] for the current or next connection.
      */
     float volume_ = 0;
 
     /**
-     * 经过凭证脱敏的最近一次 RTC 失败原因，供等待者及错误回调读取。
+     * The latest redacted RTC failure reason, shared with waiters and error callbacks.
      */
     std::string failure_;
 
     /**
-     * 当前原生错误对应的 SDK 分类，由元数据锁保护。
+     * The current native error's SDK category, protected by the metadata mutex.
      */
     xmax_result failure_code_ = XMAX_RTC_ERROR;
 
     /**
-     * 当前 RTC 房间标识。
+     * The current RTC room identifier.
      */
     std::string room_;
 
     /**
-     * 服务端结果用户的账号标识。
+     * The account identifier of the service result user.
      */
     std::string bot_;
 
     /**
-     * 已解析的结果服务用户 UID，用于过滤结果帧及统计。
+     * The resolved result user's UID used to filter frames and statistics.
      */
     std::atomic<uid_t> bot_uid_{0};
 
     /**
-     * 原生可靠数据流标识，用于发送房间信令。
+     * The reliable native data stream identifier used for room signaling.
      */
     int stream_id_ = 0;
 
     /**
-     * 当前连接的帧、事件、错误和发布通知回调。
+     * The connection's frame, event, failure, and publication callbacks.
      */
     RtcCallbacks callbacks_;
 
     /**
-     * 为多平面输入临时拼接的连续视频字节缓冲区。
+     * The temporary contiguous byte buffer used to pack multiplane input.
      */
     std::vector<uint8_t> packed_;
 
     /**
-     * 媒体单调时间到原生 RTC 单调时钟的毫秒偏移，首帧推送时建立。
+     * The millisecond offset from media time to RTC monotonic time, established on first submission.
      */
     std::optional<int64_t> timestamp_offset_ms_;
 
     /**
-     * 保持当前 RTC 凭证在日志脱敏集合中注册的保护对象。
+     * The guard keeping RTC credentials registered for log redaction.
      */
     std::shared_ptr<const std::string> log_token_;
 
     /**
-     * 等待房间加入或结果首帧，期间响应取消并执行保活。
+     * Waits for room join or the first result, checking cancellation and maintaining keepalives.
      *
-     * @param[in] first true 等待结果首帧，false 等待 RTC 加入房间。
-     * @param[in] cancel 协作式取消判断函数；返回 true 时应终止当前操作。
-     * @param[in] keepalive 等待期间周期执行的保活函数，不得持有跨线程生命周期锁。
+     * @param[in] first True waits for the first result; false waits for room join.
+     * @param[in] cancel A cooperative cancellation predicate; true requests termination of the operation.
+     * @param[in] keepalive The periodic keepalive callback; it must not hold a cross-thread lifecycle lock.
      */
     void wait(
         bool first,
@@ -174,21 +196,33 @@ class AgoraRtc final : public Rtc, private IRtcEngineEventHandler, private IVide
             lock.unlock();
             keepalive();
             lock.lock();
-            require(!cancel(), XMAX_CANCELLED, "RTC operation cancelled");
-            require(failure_.empty(), failure_code_, failure_);
             require(
-                Clock::now() < deadline, XMAX_TIMEOUT,
+                !cancel(),
+                XMAX_CANCELLED,
+                "RTC operation cancelled"
+            );
+            require(
+                failure_.empty(),
+                failure_code_,
+                failure_
+            );
+            require(
+                Clock::now() < deadline,
+                XMAX_TIMEOUT,
                 first ? "Timed out waiting for generated video" : "RTC join timed out"
             );
-            changed_.wait_for(lock, std::chrono::milliseconds(20));
+            changed_.wait_for(
+                lock,
+                std::chrono::milliseconds(20)
+            );
         }
     }
 
     /**
-     * 保存脱敏后的 RTC 错误，唤醒等待者并通知内部错误接收器。
+     * Retains a redacted RTC error, wakes waiters, and notifies the internal failure receiver.
      *
-     * @param[in] message 以 NUL 结尾的 RTC 失败原因，保存和交付前执行凭证脱敏。
-     * @param[in] code 原生错误对应的 SDK 分类。
+     * @param[in] message The NUL-terminated RTC failure message, redacted before storage and delivery.
+     * @param[in] code The SDK category corresponding to the native error.
      */
     void failure(
         const char* message,
@@ -198,9 +232,18 @@ class AgoraRtc final : public Rtc, private IRtcEngineEventHandler, private IVide
             return;
 
         const auto safe = XmaxLogger::redact(message);
-        XmaxLogger::write(LogCategory::RTC, XMAX_LOG_ERROR, [&](auto language) {
-            return XmaxLogger::localized(language, "RTC 失败 (RTC Failure)", "RTC Failure") + "\n└─ " + safe;
-        });
+        XmaxLogger::write(
+            LogCategory::RTC,
+            XMAX_LOG_ERROR,
+            [&](auto language) {
+                return XmaxLogger::localized(
+                    language,
+                    "RTC 失败 (RTC Failure)",
+                    "RTC Failure"
+                ) +
+                       "\n└─ " + safe;
+            }
+        );
         {
             std::lock_guard<std::mutex> lock(metadata_mutex_);
             failure_ = safe;
@@ -209,38 +252,44 @@ class AgoraRtc final : public Rtc, private IRtcEngineEventHandler, private IVide
         changed_.notify_all();
 
         if (callbacks_.failure)
-            callbacks_.failure(Error(code, safe));
+            callbacks_.failure(Error(
+                code,
+                safe
+            ));
     }
 
   public:
 
     /**
-     * 取得进程级 RTC 引擎租约，在服务端会话分配前拒绝引擎冲突。
+     * Acquires the process-wide engine lease, rejecting conflicts before server-session allocation.
      */
     AgoraRtc() {
         std::lock_guard<std::mutex> lock(engine_lease);
         require(
-            !engine_in_use, XMAX_INVALID_STATE, "Another Xmax RTC session owns the process-wide Agora engine"
+            !engine_in_use,
+            XMAX_INVALID_STATE,
+            "Another Xmax RTC session owns the process-wide Agora engine"
         );
         engine_in_use = true;
         owns_lease_ = true;
     }
 
     /**
-     * 离开 RTC 并释放进程级引擎租约。
+     * Leaves RTC and releases the exclusive engine lease.
      */
     ~AgoraRtc() override {
         leave();
     }
 
     /**
-     * 初始化 RTC 引擎、配置外部视频与音频策略，并等待成功加入房间。
+     * Initializes RTC, configures external video and audio policy, and waits for room join.
      *
-     * @param[in] c 包含应用、房间、用户、令牌和结果服务账号的已验证连接配置。
-     * @param[in] encoding 已解析的编码尺寸、帧率、码率和降级策略。
-     * @param[in] mic 是否在加入 RTC 房间时启动麦克风采集。
-     * @param[in] cb 接收结果帧、RTC 事件、错误和首次发布通知的回调；停止后不再触发。
-     * @param[in] cancel 协作式取消判断函数；返回 true 时应终止当前操作。
+     * @param[in] c The validated app, room, user, token, and service-result account configuration.
+     * @param[in] encoding The resolved encoding dimensions, frame rate, bitrate, and degradation policy.
+     * @param[in] mic Whether to start microphone capture when joining the RTC room.
+     * @param[in] cb Callbacks for result frames, RTC events, failures, and first publication; drained before
+     * stop returns.
+     * @param[in] cancel A cooperative cancellation predicate; true requests termination of the operation.
      */
     void join(
         const Connection& c,
@@ -256,25 +305,68 @@ class AgoraRtc final : public Rtc, private IRtcEngineEventHandler, private IVide
         const auto f = encoding.format;
         callbacks_ = std::move(cb);
         engine_ = createAgoraRtcEngine();
-        require(engine_, XMAX_RTC_ERROR, "Cannot create Agora engine");
+        require(
+            engine_,
+            XMAX_RTC_ERROR,
+            "Cannot create Agora engine"
+        );
 
         RtcEngineContext context;
         context.appId = c.app_id.c_str();
         context.eventHandler = this;
         context.channelProfile = CHANNEL_PROFILE_LIVE_BROADCASTING;
-        check_rtc(engine_->initialize(context), "initialize");
-        check_rtc(engine_->enableVideo(), "enableVideo");
-        check_rtc(engine_->enableLocalVideo(false), "enableLocalVideo");
-        check_rtc(engine_->enableLocalAudio(mic), "enableLocalAudio");
         check_rtc(
-            engine_->queryInterface(AGORA_IID_MEDIA_ENGINE, reinterpret_cast<void**>(&media_)),
+            engine_->initialize(context),
+            "initialize"
+        );
+        check_rtc(
+            engine_->enableVideo(),
+            "enableVideo"
+        );
+        check_rtc(
+            engine_->enableLocalVideo(false),
+            "enableLocalVideo"
+        );
+        check_rtc(
+            engine_->enableLocalAudio(mic),
+            "enableLocalAudio"
+        );
+        check_rtc(
+            engine_->queryInterface(
+                AGORA_IID_MEDIA_ENGINE,
+                reinterpret_cast<void**>(&media_)
+            ),
             "query media engine"
         );
-        check_rtc(media_->setExternalVideoSource(true, false), "setExternalVideoSource");
-        check_rtc(media_->registerVideoFrameObserver(this), "registerVideoFrameObserver");
+        check_rtc(
+            media_->setExternalVideoSource(
+                true,
+                false
+            ),
+            "setExternalVideoSource"
+        );
+        check_rtc(
+            media_->registerVideoFrameObserver(this),
+            "registerVideoFrameObserver"
+        );
+
+        check_rtc(
+            engine_->setPlaybackAudioFrameBeforeMixingParameters(
+                48000,
+                1
+            ),
+            "setPlaybackAudioFrameBeforeMixingParameters"
+        );
+        check_rtc(
+            media_->registerAudioFrameObserver(this),
+            "registerAudioFrameObserver"
+        );
 
         VideoEncoderConfiguration encoder;
-        encoder.dimensions = VideoDimensions(int(f.width), int(f.height));
+        encoder.dimensions = VideoDimensions(
+            int(f.width),
+            int(f.height)
+        );
         encoder.frameRate = int(f.fps);
         encoder.orientationMode =
             f.width >= f.height ? ORIENTATION_MODE_FIXED_LANDSCAPE : ORIENTATION_MODE_FIXED_PORTRAIT;
@@ -285,9 +377,15 @@ class AgoraRtc final : public Rtc, private IRtcEngineEventHandler, private IVide
                 ? MAINTAIN_AUTO
                 : (encoding.preference == XMAX_ENCODER_MAINTAIN_QUALITY ? MAINTAIN_QUALITY
                                                                         : MAINTAIN_FRAMERATE);
-        encoder.mirrorMode = VIDEO_MIRROR_MODE_DISABLED;
-        check_rtc(engine_->setVideoEncoderConfiguration(encoder), "setVideoEncoderConfiguration");
-        check_rtc(engine_->adjustPlaybackSignalVolume(int(volume_ * 100)), "adjustPlaybackSignalVolume");
+        encoder.mirrorMode = encoding.mirrored ? VIDEO_MIRROR_MODE_ENABLED : VIDEO_MIRROR_MODE_DISABLED;
+        check_rtc(
+            engine_->setVideoEncoderConfiguration(encoder),
+            "setVideoEncoderConfiguration"
+        );
+        check_rtc(
+            engine_->adjustPlaybackSignalVolume(int(volume_ * 100)),
+            "adjustPlaybackSignalVolume"
+        );
 
         ChannelMediaOptions options;
         options.channelProfile = CHANNEL_PROFILE_LIVE_BROADCASTING;
@@ -298,34 +396,60 @@ class AgoraRtc final : public Rtc, private IRtcEngineEventHandler, private IVide
         options.autoSubscribeVideo = true;
         options.autoSubscribeAudio = false;
         check_rtc(
-            engine_->joinChannelWithUserAccount(c.token.c_str(), c.room.c_str(), c.user.c_str(), options),
+            engine_->joinChannelWithUserAccount(
+                c.token.c_str(),
+                c.room.c_str(),
+                c.user.c_str(),
+                options
+            ),
             "joinChannelWithUserAccount"
         );
-        wait(false, cancel);
+        wait(
+            false,
+            cancel
+        );
 
         DataStreamConfig stream;
         stream.ordered = true;
         stream.syncWithAudio = false;
-        check_rtc(engine_->createDataStream(&stream_id_, stream), "createDataStream");
+        check_rtc(
+            engine_->createDataStream(
+                &stream_id_,
+                stream
+            ),
+            "createDataStream"
+        );
     }
 
     /**
-     * 发送一个房间信令分片，传递原生传输错误。
+     * Sends one room signaling fragment and propagates native transport failures.
      *
-     * @param[in] bytes 待处理的编码字节，本次同步调用返回前必须有效。
+     * @param[in] bytes The encoded bytes to process; they must remain valid until this synchronous call
+     * returns.
      */
     void send(
         const std::string& bytes
     ) override {
         std::lock_guard<std::mutex> lock(engine_mutex_);
-        require(engine_ && joined_ && !stopping_, XMAX_RTC_ERROR, "RTC room is not joined");
-        check_rtc(engine_->sendStreamMessage(stream_id_, bytes.data(), bytes.size()), "sendStreamMessage");
+        require(
+            engine_ && joined_ && !stopping_,
+            XMAX_RTC_ERROR,
+            "RTC room is not joined"
+        );
+        check_rtc(
+            engine_->sendStreamMessage(
+                stream_id_,
+                bytes.data(),
+                bytes.size()
+            ),
+            "sendStreamMessage"
+        );
     }
 
     /**
-     * 封装已拥有的视频像素，使用原生单调时钟偏移发布外部帧。
+     * Publishes owned external pixels using the native monotonic clock offset.
      *
-     * @param[in] f 待校验或交付的视频帧，调用期间其像素存储必须有效。
+     * @param[in] f The frame to validate or deliver, with pixel storage valid throughout the call.
      */
     void push(
         const Frame& f
@@ -354,28 +478,39 @@ class AgoraRtc final : public Rtc, private IRtcEngineEventHandler, private IVide
         else {
             packed_.clear();
             for (const auto& plane : f.planes)
-                packed_.insert(packed_.end(), plane.begin(), plane.end());
+                packed_.insert(
+                    packed_.end(),
+                    plane.begin(),
+                    plane.end()
+                );
             frame.buffer = packed_.data();
         }
 
-        check_rtc(media_->pushVideoFrame(&frame), "pushVideoFrame");
+        check_rtc(
+            media_->pushVideoFrame(&frame),
+            "pushVideoFrame"
+        );
     }
 
     /**
-     * 等待真实结果流首帧，同时响应取消并执行保活。
+     * Waits for the first real result frame, checking cancellation and maintaining keepalives.
      *
-     * @param[in] cancel 协作式取消判断函数；返回 true 时应终止当前操作。
-     * @param[in] keepalive 等待期间周期执行的保活函数，不得持有跨线程生命周期锁。
+     * @param[in] cancel A cooperative cancellation predicate; true requests termination of the operation.
+     * @param[in] keepalive The periodic keepalive callback; it must not hold a cross-thread lifecycle lock.
      */
     void wait_remote(
         const Cancel& cancel,
         const std::function<void()>& keepalive
     ) override {
-        wait(true, cancel, keepalive);
+        wait(
+            true,
+            cancel,
+            keepalive
+        );
     }
 
     /**
-     * 为下一次生成清除结果首帧等待标记。
+     * Clears first-result tracking for the next generation.
      */
     void begin_generation() override {
         std::lock_guard<std::mutex> lock(metadata_mutex_);
@@ -383,32 +518,60 @@ class AgoraRtc final : public Rtc, private IRtcEngineEventHandler, private IVide
     }
 
     /**
-     * 更新当前引擎和后续用户加入时使用的远端播放音量。
+     * Updates remote volume for the current engine and future user joins.
      *
-     * @param[in] volume 范围为 [0, 1] 的有限音量值，0 表示静音。
+     * @param[in] volume A finite volume in [0, 1]; 0 mutes playback.
      */
     void volume(
         float volume
     ) override {
         std::lock_guard<std::mutex> lock(engine_mutex_);
         if (engine_ && !stopping_)
-            check_rtc(engine_->adjustPlaybackSignalVolume(int(volume * 100)), "adjustPlaybackSignalVolume");
+            check_rtc(
+                engine_->adjustPlaybackSignalVolume(int(volume * 100)),
+                "adjustPlaybackSignalVolume"
+            );
         volume_ = volume;
     }
 
     /**
-     * 应用生效的视频尺寸、帧率、码率限制和降级偏好。
+     * Enables result-user PCM observation without changing playback volume or audio subscription policy.
      *
-     * @param[in] value 已解析的编码尺寸、帧率、码率限制与降级偏好。
+     * @param[in] enabled Whether to copy remote PCM for application delivery.
+     */
+    void observe_remote_media(
+        bool enabled
+    ) override {
+        std::lock_guard<std::mutex> lock(engine_mutex_);
+        require(
+            engine_ && media_ && !stopping_,
+            XMAX_INVALID_STATE,
+            "RTC is not connected"
+        );
+        audio_observing_ = enabled;
+    }
+
+    /**
+     * Applies effective dimensions, frame rate, bitrate limits, and degradation preference.
+     *
+     * @param[in] value The resolved encoding dimensions, frame rate, bitrate limits, and degradation
+     * preference.
      */
     void configure_encoding(
         VideoEncodingConfiguration value
     ) override {
         std::lock_guard<std::mutex> lock(engine_mutex_);
-        require(engine_ && !stopping_, XMAX_INVALID_STATE, "RTC is not connected");
+        require(
+            engine_ && !stopping_,
+            XMAX_INVALID_STATE,
+            "RTC is not connected"
+        );
 
         VideoEncoderConfiguration encoder;
-        encoder.dimensions = VideoDimensions(int(value.format.width), int(value.format.height));
+        encoder.dimensions = VideoDimensions(
+            int(value.format.width),
+            int(value.format.height)
+        );
         encoder.frameRate = int(value.format.fps);
         encoder.orientationMode = value.format.width >= value.format.height ? ORIENTATION_MODE_FIXED_LANDSCAPE
                                                                             : ORIENTATION_MODE_FIXED_PORTRAIT;
@@ -418,12 +581,15 @@ class AgoraRtc final : public Rtc, private IRtcEngineEventHandler, private IVide
             value.preference == XMAX_ENCODER_AUTO
                 ? MAINTAIN_AUTO
                 : (value.preference == XMAX_ENCODER_MAINTAIN_QUALITY ? MAINTAIN_QUALITY : MAINTAIN_FRAMERATE);
-        encoder.mirrorMode = VIDEO_MIRROR_MODE_DISABLED;
-        check_rtc(engine_->setVideoEncoderConfiguration(encoder), "setVideoEncoderConfiguration");
+        encoder.mirrorMode = value.mirrored ? VIDEO_MIRROR_MODE_ENABLED : VIDEO_MIRROR_MODE_DISABLED;
+        check_rtc(
+            engine_->setVideoEncoderConfiguration(encoder),
+            "setVideoEncoderConfiguration"
+        );
     }
 
     /**
-     * 停止发布，在回调锁之外释放引擎，并等待回调交付排空。
+     * Stops publication, releases the engine outside callback locks, and drains callback delivery.
      */
     void leave() noexcept override {
         stopping_ = true;
@@ -434,12 +600,20 @@ class AgoraRtc final : public Rtc, private IRtcEngineEventHandler, private IVide
         IMediaEngine* media = nullptr;
         {
             std::lock_guard<std::mutex> lock(engine_mutex_);
-            engine = std::exchange(engine_, nullptr);
-            media = std::exchange(media_, nullptr);
+            engine = std::exchange(
+                engine_,
+                nullptr
+            );
+            media = std::exchange(
+                media_,
+                nullptr
+            );
         }
 
-        // 释放引擎期间会等待回调线程结束，此处不能持有应用互斥锁。
+        // Engine release waits for callback threads; do not hold application mutexes here.
+        audio_observing_ = false;
         if (media) {
+            media->registerAudioFrameObserver(nullptr);
             media->registerVideoFrameObserver(nullptr);
             media->release();
         }
@@ -449,7 +623,7 @@ class AgoraRtc final : public Rtc, private IRtcEngineEventHandler, private IVide
             engine->release();
         }
 
-        // 最后一个共享引用可能由媒体线程释放，因此引擎租约不持有跨生命周期的线程互斥锁。
+        // The last reference may be released on a media thread; the engine lease must not retain a thread-owned lock.
         std::lock_guard<std::mutex> lock(engine_lease);
 
         if (owns_lease_) {
@@ -461,11 +635,11 @@ class AgoraRtc final : public Rtc, private IRtcEngineEventHandler, private IVide
   private:
 
     /**
-     * 记录成功加入 RTC 房间，并唤醒加入等待者。
+     * Records successful room join and wakes join waiters.
      *
-     * @param[in] channel 触发回调的 RTC 房间名称。
-     * @param[in] uid 原生 RTC 用户数值标识，用于结果流识别与过滤。
-     * @param[in] elapsed 原生 SDK 报告的操作耗时，单位为毫秒。
+     * @param[in] channel The RTC room name that triggered the callback.
+     * @param[in] uid The native numeric RTC user identifier used to identify and filter the result stream.
+     * @param[in] elapsed The operation duration reported by the native SDK, in milliseconds.
      */
     void onJoinChannelSuccess(
         [[maybe_unused]] const char* channel,
@@ -477,31 +651,34 @@ class AgoraRtc final : public Rtc, private IRtcEngineEventHandler, private IVide
     }
 
     /**
-     * 保留原生 RTC 错误码与描述，并通过 SDK 错误通道报告。
+     * Preserves native RTC error codes and descriptions through the SDK error channel.
      *
-     * @param[in] code 原生 RTC 回调报告的错误码，诊断中保留其数值。
-     * @param[in] description 原生错误描述；为空指针时使用缺省诊断。
+     * @param[in] code The native RTC callback's error code, preserved numerically in diagnostics.
+     * @param[in] description The native error description; a null pointer uses the default diagnostic.
      */
     void onError(
         int code,
         const char* description
     ) override {
-        const auto message = RtcStatsLogger::error_message(code, description);
+        const auto message = RtcStatsLogger::error_message(
+            code,
+            description
+        );
         failure(message.c_str());
     }
 
     /**
-     * 通过 SDK 错误通道报告 RTC 连接丢失。
+     * Reports RTC connection loss through the SDK error channel.
      */
     void onConnectionLost() override {
         failure("RTC connection was lost");
     }
 
     /**
-     * 在原生引擎确认首帧已发布时记录启动时序。
+     * Records startup timing when the native engine confirms first publication.
      *
-     * @param[in] source_type 原生视频源类型。
-     * @param[in] elapsed 原生 SDK 报告的操作耗时，单位为毫秒。
+     * @param[in] source_type The native video source type.
+     * @param[in] elapsed The operation duration reported by the native SDK, in milliseconds.
      */
     void onFirstLocalVideoFramePublished(
         [[maybe_unused]] VIDEO_SOURCE_TYPE source_type,
@@ -512,10 +689,10 @@ class AgoraRtc final : public Rtc, private IRtcEngineEventHandler, private IVide
     }
 
     /**
-     * 识别结果服务用户并应用已保存的播放音量。
+     * Identifies the result user and applies the retained playback volume.
      *
-     * @param[in] uid 原生 RTC 用户数值标识，用于结果流识别与过滤。
-     * @param[in] elapsed 原生 SDK 报告的操作耗时，单位为毫秒。
+     * @param[in] uid The native numeric RTC user identifier used to identify and filter the result stream.
+     * @param[in] elapsed The operation duration reported by the native SDK, in milliseconds.
      */
     void onUserJoined(
         uid_t uid,
@@ -529,18 +706,24 @@ class AgoraRtc final : public Rtc, private IRtcEngineEventHandler, private IVide
         {
             std::lock_guard<std::mutex> lock(engine_mutex_);
             if (engine_ && !stopping_)
-                result = engine_->getUserInfoByUid(uid, &info);
+                result = engine_->getUserInfoByUid(
+                    uid,
+                    &info
+                );
         }
 
         if (result == 0)
-            onUserInfoUpdated(uid, info);
+            onUserInfoUpdated(
+                uid,
+                info
+            );
     }
 
     /**
-     * 将结果服务账号解析为 UID，用于过滤结果帧和统计信息。
+     * Resolves the service result account to a UID for frame and statistics filtering.
      *
-     * @param[in] uid 原生 RTC 用户数值标识，用于结果流识别与过滤。
-     * @param[in] info 原生 RTC 用户信息，用于账号与 UID 关联。
+     * @param[in] uid The native numeric RTC user identifier used to identify and filter the result stream.
+     * @param[in] info The native RTC user information linking an account to its UID.
      */
     void onUserInfoUpdated(
         uid_t uid,
@@ -554,14 +737,17 @@ class AgoraRtc final : public Rtc, private IRtcEngineEventHandler, private IVide
         std::lock_guard<std::mutex> lock(engine_mutex_);
 
         if (engine_ && !stopping_)
-            engine_->muteRemoteAudioStream(uid, false);
+            engine_->muteRemoteAudioStream(
+                uid,
+                false
+            );
     }
 
     /**
-     * 在原生麦克风采集失败时报告 RTC 错误。
+     * Reports an RTC error when native microphone capture fails.
      *
-     * @param[in] state 当前原生媒体状态或与回调共享的采集状态。
-     * @param[in] reason 原生媒体状态变化原因或经过脱敏的传输错误原因。
+     * @param[in] state The current native media state or shared capture state.
+     * @param[in] reason The native media-state change reason or redacted transport failure reason.
      */
     void onLocalAudioStateChanged(
         LOCAL_AUDIO_STREAM_STATE state,
@@ -576,10 +762,10 @@ class AgoraRtc final : public Rtc, private IRtcEngineEventHandler, private IVide
     }
 
     /**
-     * 将实际采集、编码和发送统计转换为 SDK 上行事件及日志。
+     * Converts capture, encoding, and send statistics to SDK uplink events and logs.
      *
-     * @param[in] source_type 原生视频源类型。
-     * @param[in] stats 原生 RTC 统计快照，仅在回调期间借用。
+     * @param[in] source_type The native video source type.
+     * @param[in] stats The native RTC statistics snapshot, borrowed for the callback.
      */
     void onLocalVideoStats(
         [[maybe_unused]] VIDEO_SOURCE_TYPE source_type,
@@ -598,7 +784,11 @@ class AgoraRtc final : public Rtc, private IRtcEngineEventHandler, private IVide
         e.packet_loss_percent = stats.txPacketLossRate;
         e.quality = -1;
         e.e2e_ms = -1;
-        RtcStatsLogger::video(e, stats.captureFrameRate, stats.encoderOutputFrameRate);
+        RtcStatsLogger::video(
+            e,
+            stats.captureFrameRate,
+            stats.encoderOutputFrameRate
+        );
 
         if (callbacks_.event)
             callbacks_.event(e);
@@ -614,9 +804,9 @@ class AgoraRtc final : public Rtc, private IRtcEngineEventHandler, private IVide
     }
 
     /**
-     * 将实际解码与渲染统计转换为 SDK 下行事件及日志。
+     * Converts decoding and rendering statistics to SDK downlink events and logs.
      *
-     * @param[in] stats 原生 RTC 统计快照，仅在回调期间借用。
+     * @param[in] stats The native RTC statistics snapshot, borrowed for the callback.
      */
     void onRemoteVideoStats(
         const RemoteVideoStats& stats
@@ -634,18 +824,22 @@ class AgoraRtc final : public Rtc, private IRtcEngineEventHandler, private IVide
         e.packet_loss_percent = stats.packetLossRate;
         e.e2e_ms = stats.e2eDelay;
         e.quality = -1;
-        RtcStatsLogger::video(e, -1, stats.decoderOutputFrameRate);
+        RtcStatsLogger::video(
+            e,
+            -1,
+            stats.decoderOutputFrameRate
+        );
 
         if (callbacks_.event)
             callbacks_.event(e);
     }
 
     /**
-     * 向自适应策略和诊断接收器转发双向网络质量。
+     * Forwards directional network quality to adaptation and diagnostic receivers.
      *
-     * @param[in] uid 原生 RTC 用户数值标识，用于结果流识别与过滤。
-     * @param[in] up 上行原生网络质量枚举值。
-     * @param[in] down 下行原生网络质量枚举值。
+     * @param[in] uid The native numeric RTC user identifier used to identify and filter the result stream.
+     * @param[in] up The native uplink network-quality value.
+     * @param[in] down The native downlink network-quality value.
      */
     void onNetworkQuality(
         uid_t uid,
@@ -667,11 +861,13 @@ class AgoraRtc final : public Rtc, private IRtcEngineEventHandler, private IVide
     }
 
     /**
-     * 保持原生采集帧不变；SDK 视频通过外部输入路径发布。
+     * Leaves native capture frames unchanged; SDK video is published through external input.
      *
-     * @param[in] source_type 原生视频源类型。
-     * @param[in] video 原生视频帧，仅在回调期间借用；需保留时必须复制像素。
-     * @return true，保留当前原生帧处理流程。
+     * @param[in] source_type The native video source type.
+     * @param[in] video The borrowed native video frame, valid only during the callback. Copy pixels to
+     * retain them.
+     *
+     * @return True to preserve native frame processing.
      */
     bool onCaptureVideoFrame(
         [[maybe_unused]] VIDEO_SOURCE_TYPE source_type,
@@ -681,11 +877,13 @@ class AgoraRtc final : public Rtc, private IRtcEngineEventHandler, private IVide
     }
 
     /**
-     * 保持原生预编码帧不变。
+     * Leaves native pre-encode frames unchanged.
      *
-     * @param[in] source_type 原生视频源类型。
-     * @param[in] video 原生视频帧，仅在回调期间借用；需保留时必须复制像素。
-     * @return true，保留当前原生帧处理流程。
+     * @param[in] source_type The native video source type.
+     * @param[in] video The borrowed native video frame, valid only during the callback. Copy pixels to
+     * retain them.
+     *
+     * @return True to preserve native frame processing.
      */
     bool onPreEncodeVideoFrame(
         [[maybe_unused]] VIDEO_SOURCE_TYPE source_type,
@@ -695,11 +893,13 @@ class AgoraRtc final : public Rtc, private IRtcEngineEventHandler, private IVide
     }
 
     /**
-     * 保持播放器视频帧不变，不将其作为生成结果交付。
+     * Leaves player frames unchanged and does not deliver them as generation results.
      *
-     * @param[in] video 原生视频帧，仅在回调期间借用；需保留时必须复制像素。
-     * @param[in] player_id 原生媒体播放器标识。
-     * @return true，保留当前原生帧处理流程。
+     * @param[in] video The borrowed native video frame, valid only during the callback. Copy pixels to
+     * retain them.
+     * @param[in] player_id The native media player identifier.
+     *
+     * @return True to preserve native frame processing.
      */
     bool onMediaPlayerVideoFrame(
         [[maybe_unused]] VideoFrame& video,
@@ -709,10 +909,12 @@ class AgoraRtc final : public Rtc, private IRtcEngineEventHandler, private IVide
     }
 
     /**
-     * 保持转码视频帧不变，不将其作为生成结果交付。
+     * Leaves transcoded frames unchanged and does not deliver them as generation results.
      *
-     * @param[in] video 原生视频帧，仅在回调期间借用；需保留时必须复制像素。
-     * @return true，保留当前原生帧处理流程。
+     * @param[in] video The borrowed native video frame, valid only during the callback. Copy pixels to
+     * retain them.
+     *
+     * @return True to preserve native frame processing.
      */
     bool onTranscodedVideoFrame(
         [[maybe_unused]] VideoFrame& video
@@ -721,48 +923,199 @@ class AgoraRtc final : public Rtc, private IRtcEngineEventHandler, private IVide
     }
 
     /**
-     * 请求以 BGRA 像素格式接收原生结果帧。
+     * Preserves local capture; local microphone PCM is excluded from remote output.
      *
-     * @return VIDEO_PIXEL_BGRA。
+     * @param[in] channel The callback room identifier.
+     * @param[in,out] frame The borrowed PCM, left unchanged.
+     *
+     * @return True to preserve the native audio pipeline.
+     */
+    bool onRecordAudioFrame(
+        [[maybe_unused]] const char* channel,
+        [[maybe_unused]] NativeAudioFrame& frame
+    ) override {
+        return true;
+    }
+
+    /**
+     * Preserves mixed playback; output uses only result-user PCM before mixing.
+     *
+     * @param[in] channel The callback room identifier.
+     * @param[in,out] frame The borrowed PCM, left unchanged.
+     *
+     * @return True to preserve the native audio pipeline.
+     */
+    bool onPlaybackAudioFrame(
+        [[maybe_unused]] const char* channel,
+        [[maybe_unused]] NativeAudioFrame& frame
+    ) override {
+        return true;
+    }
+
+    /**
+     * Preserves mixed local and remote audio without copying it to application output.
+     *
+     * @param[in] channel The callback room identifier.
+     * @param[in,out] frame The borrowed PCM, left unchanged.
+     *
+     * @return True to preserve the native audio pipeline.
+     */
+    bool onMixedAudioFrame(
+        [[maybe_unused]] const char* channel,
+        [[maybe_unused]] NativeAudioFrame& frame
+    ) override {
+        return true;
+    }
+
+    /**
+     * Preserves ear monitoring without observing local audio.
+     *
+     * @param[in,out] frame The borrowed PCM, left unchanged.
+     *
+     * @return True to preserve the native audio pipeline.
+     */
+    bool onEarMonitoringAudioFrame(
+        [[maybe_unused]] NativeAudioFrame& frame
+    ) override {
+        return true;
+    }
+
+    /**
+     * Supplies read-only 10 ms, 48 kHz mono parameters for an unobserved native audio stage.
+     *
+     * @return The native PCM configuration; only the before-mixing position is enabled.
+     */
+    NativeAudioParams getRecordAudioParams() override {
+        return {48000, 1, RAW_AUDIO_FRAME_OP_MODE_READ_ONLY, 480};
+    }
+
+    /**
+     * Supplies read-only 10 ms, 48 kHz mono parameters for an unobserved native audio stage.
+     *
+     * @return The native PCM configuration; only the before-mixing position is enabled.
+     */
+    NativeAudioParams getPlaybackAudioParams() override {
+        return {48000, 1, RAW_AUDIO_FRAME_OP_MODE_READ_ONLY, 480};
+    }
+
+    /**
+     * Supplies read-only 10 ms, 48 kHz mono parameters for an unobserved native audio stage.
+     *
+     * @return The native PCM configuration; only the before-mixing position is enabled.
+     */
+    NativeAudioParams getMixedAudioParams() override {
+        return {48000, 1, RAW_AUDIO_FRAME_OP_MODE_READ_ONLY, 480};
+    }
+
+    /**
+     * Supplies read-only 10 ms, 48 kHz mono parameters for an unobserved native audio stage.
+     *
+     * @return The native PCM configuration; only the before-mixing position is enabled.
+     */
+    NativeAudioParams getEarMonitoringAudioParams() override {
+        return {48000, 1, RAW_AUDIO_FRAME_OP_MODE_READ_ONLY, 480};
+    }
+
+    /**
+     * Selects individual remote-user PCM before remote-user mixing.
+     *
+     * @return The before-mixing audio observation flag.
+     */
+    int getObservedAudioFramePosition() override {
+        return agora::media::IAudioFrameObserverBase::AUDIO_FRAME_POSITION_BEFORE_MIXING;
+    }
+
+    /**
+     * Copies current result-user PCM before native storage is reused, preserving normal playback.
+     *
+     * @param[in] channel The room identifier used to exclude packets from other connections.
+     * @param[in] uid The remote UID, filtered against the service result account.
+     * @param[in,out] native The borrowed native PCM, never modified by observation.
+     *
+     * @return True to preserve native playback even when observation discards invalid data.
+     */
+    bool onPlaybackAudioFrameBeforeMixing(
+        const char* channel,
+        uid_t uid,
+        NativeAudioFrame& native
+    ) override {
+        if (stopping_ || !audio_observing_ || !channel || room_ != channel || bot_uid_ == 0 ||
+            uid != bot_uid_ || !callbacks_.audio)
+            return true;
+
+        try {
+            xmax::detail::AudioFrame frame;
+            frame.sample_rate = uint32_t(native.samplesPerSec);
+            frame.channels = uint32_t(native.channels);
+            frame.samples_per_channel = uint32_t(native.samplesPerChannel);
+            frame.render_time_ms = native.renderTimeMs;
+            if (native.buffer && native.bytesPerSample == TWO_BYTES_PER_SAMPLE &&
+                native.samplesPerSec >= 8000 && native.samplesPerSec <= 192000 && native.channels >= 1 &&
+                native.channels <= 2 && native.samplesPerChannel >= 1 && native.samplesPerChannel <= 192000) {
+                const auto size = size_t(native.samplesPerChannel) * native.channels * 2;
+                const auto* bytes = static_cast<const uint8_t*>(native.buffer);
+                frame.data.assign(
+                    bytes,
+                    bytes + size
+                );
+            }
+            callbacks_.audio(std::move(frame));
+        } catch (...) {
+            // Invalid or unavailable PCM must break output continuity without interrupting native playback.
+            try {
+                callbacks_.audio({});
+            } catch (...) {
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Requests native result frames in BGRA format.
+     *
+     * @return VIDEO_PIXEL_BGRA.
      */
     media_base::VIDEO_PIXEL_FORMAT getVideoFormatPreference() override {
         return media_base::VIDEO_PIXEL_BGRA;
     }
 
     /**
-     * 指定在原生渲染呈现之前观察结果帧。
+     * Observes result frames before native rendering.
      *
-     * @return 原生渲染前视频帧观察位置的标记。
+     * @return The pre-renderer frame-observation flag.
      */
     uint32_t getObservedFramePosition() override {
         return media_base::POSITION_PRE_RENDERER;
     }
 
     /**
-     * 请求原生引擎将旋转应用到像素。
+     * Requests that the native engine apply rotation to pixels.
      *
-     * @return true，表示由原生引擎将旋转应用到像素。
+     * @return True to have the native engine apply pixel rotation.
      */
     bool getRotationApplied() override {
         return true;
     }
 
     /**
-     * 保持结果像素不做镜像。
+     * Requests unmirrored result pixels.
      *
-     * @return false，表示不请求原生镜像处理。
+     * @return False to disable native pixel mirroring.
      */
     bool getMirrorApplied() override {
         return false;
     }
 
     /**
-     * 复制结果服务用户的像素并交付结果帧，满足首帧就绪条件。
+     * Copies and delivers the result user's pixels, satisfying first-result readiness.
      *
-     * @param[in] channel 触发回调的 RTC 房间名称。
-     * @param[in] uid 原生 RTC 用户数值标识，用于结果流识别与过滤。
-     * @param[in] video 原生视频帧，仅在回调期间借用；需保留时必须复制像素。
-     * @return true，保留原生渲染流程；有效结果帧会另外复制交付。
+     * @param[in] channel The RTC room name that triggered the callback.
+     * @param[in] uid The native numeric RTC user identifier used to identify and filter the result stream.
+     * @param[in] video The borrowed native video frame, valid only during the callback. Copy pixels to
+     * retain them.
+     *
+     * @return True to preserve native rendering; valid result frames are also copied and delivered
+     * separately.
      */
     bool onRenderVideoFrame(
         const char* channel,
@@ -775,7 +1128,8 @@ class AgoraRtc final : public Rtc, private IRtcEngineEventHandler, private IVide
             require(
                 video.type == media_base::VIDEO_PIXEL_BGRA && video.width > 0 && video.height > 0 &&
                     video.yStride > 0,
-                XMAX_RTC_ERROR, "Unsupported decoded video format"
+                XMAX_RTC_ERROR,
+                "Unsupported decoded video format"
             );
 
             xmax_video_frame v{};
@@ -789,7 +1143,7 @@ class AgoraRtc final : public Rtc, private IRtcEngineEventHandler, private IVide
             size_t stride = size_t(video.yStride);
             const size_t row_bytes = size_t(video.width) * 4;
 
-            // 兼容原生帧将 stride 表示为连续总字节数或每行字节数的布局。
+            // Accept native stride layouts expressed as total contiguous bytes or bytes per row.
             if (stride == row_bytes * size_t(video.height))
                 stride = row_bytes;
             else if (stride >= size_t(video.width) && stride < row_bytes)
@@ -800,7 +1154,7 @@ class AgoraRtc final : public Rtc, private IRtcEngineEventHandler, private IVide
 
             auto frame = Frame::copy(v);
 
-            // RTC 视频按不透明画面呈现，统一设置解码器可能置零的 BGRA 透明通道。
+            // Treat RTC video as opaque; decoders may leave BGRA alpha at zero.
             for (size_t i = 3; i < frame.planes[0].size(); i += 4)
                 frame.planes[0][i] = 255;
 
@@ -821,16 +1175,16 @@ class AgoraRtc final : public Rtc, private IRtcEngineEventHandler, private IVide
 } // namespace
 
 /**
- * 检查当前构建是否包含原生 RTC 后端。
+ * Reports whether the current build includes a native RTC backend.
  */
 bool rtc_available() noexcept {
     return true;
 }
 
 /**
- * 创建原生 RTC 适配器，不支持的平台返回明确的能力错误。
+ * Creates a native RTC adapter or reports unsupported capability on other platforms.
  *
- * @return 可共享的原生 RTC 适配器；平台不支持时抛出能力错误。
+ * @return A shared native RTC adapter; unsupported platforms throw a capability error.
  */
 std::shared_ptr<Rtc> make_rtc() {
     return std::make_shared<AgoraRtc>();

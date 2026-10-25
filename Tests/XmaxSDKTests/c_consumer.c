@@ -14,6 +14,12 @@ typedef char original_client_layout[sizeof(xmax_client_config) == 32 ? 1 : -1];
 typedef char original_frame_layout[sizeof(xmax_video_frame) == 96 ? 1 : -1];
 typedef char original_context_layout[sizeof(xmax_generation_context) == 32 ? 1 : -1];
 typedef char original_event_layout[sizeof(xmax_event) == 856 ? 1 : -1];
+typedef char original_realtime_config_layout[sizeof(xmax_realtime_config) == 16 ? 1 : -1];
+typedef char media_time_layout[sizeof(xmax_media_time) == 16 ? 1 : -1];
+typedef char audio_frame_layout[sizeof(xmax_audio_frame) == 32 ? 1 : -1];
+typedef char media_view_layout[sizeof(xmax_media_frame_view) == 184 ? 1 : -1];
+typedef char media_pcm_offset[offsetof(xmax_media_frame_view, audio) == 56 ? 1 : -1];
+typedef char media_video_offset[offsetof(xmax_media_frame_view, video) == 88 ? 1 : -1];
 #endif
 #define CHECK(expr)                                                                                          \
     do {                                                                                                     \
@@ -22,6 +28,13 @@ typedef char original_event_layout[sizeof(xmax_event) == 856 ? 1 : -1];
             return 1;                                                                                        \
         }                                                                                                    \
     } while (0)
+static void XMAX_CALL offline_media_callback(void* user_data, xmax_media_frame frame) {
+    (void)user_data;
+    (void)frame;
+}
+static void XMAX_CALL release_offline_context(void* user_data) {
+    ++*(int*)user_data;
+}
 int main(void) {
     uint32_t log_options = 99;
     xmax_log_language log_language = XMAX_LOG_ENGLISH;
@@ -49,6 +62,59 @@ int main(void) {
     xmax_storage storage = NULL;
     CHECK(xmax_storage_create(client, &storage) == XMAX_OK);
     CHECK(xmax_realtime_create(client, &realtime) == XMAX_OK);
+    xmax_video_mirror_config mirror = {sizeof(mirror), 0, 0, 0};
+    CHECK(sizeof(mirror) == 16);
+    CHECK(xmax_realtime_get_video_mirror(realtime, &mirror) == XMAX_OK && !mirror.local_preview);
+    mirror.local_preview = mirror.remote_view = 1;
+    CHECK(xmax_realtime_set_video_mirror(realtime, &mirror) == XMAX_OK);
+    mirror.published_video = 2;
+    CHECK(xmax_realtime_set_video_mirror(realtime, &mirror) == XMAX_INVALID_ARGUMENT);
+    CHECK(xmax_realtime_get_video_mirror(realtime, &mirror) == XMAX_OK && !mirror.published_video);
+    CHECK(xmax_realtime_set_video_mirror(realtime, NULL) == XMAX_INVALID_ARGUMENT);
+    mirror.struct_size = 1;
+    CHECK(xmax_realtime_get_video_mirror(realtime, &mirror) == XMAX_INVALID_ARGUMENT);
+    /* New creation options and source-bound failures work through the shared-library C boundary. */
+    xmax_realtime configured = NULL;
+    xmax_realtime_options realtime_options = {sizeof(realtime_options), "x2.1", 0};
+    CHECK(xmax_realtime_create_with_options(client, &realtime_options, &configured) == XMAX_OK);
+    xmax_quality_status configured_quality = {0};
+    configured_quality.struct_size = sizeof(configured_quality);
+    CHECK(xmax_realtime_get_quality(configured, &configured_quality) == XMAX_OK);
+    CHECK(!configured_quality.adaptive_enabled);
+    int released_contexts = 0;
+    xmax_remote_media_listener listener = {
+        sizeof(listener), offline_media_callback, &released_contexts, release_offline_context
+    };
+    CHECK(xmax_realtime_set_remote_media_frame_listener(configured, &listener) == XMAX_OK);
+    xmax_external_frame_sink previous_sink = NULL, current_sink = NULL;
+    xmax_video_format small = {4, 4, 30};
+    CHECK(xmax_realtime_bind_external_video(configured, &small, &previous_sink) == XMAX_OK);
+    CHECK(xmax_realtime_bind_external_video(configured, &small, &current_sink) == XMAX_OK);
+    xmax_error_info source_failure = {0};
+    source_failure.struct_size = sizeof(source_failure);
+    source_failure.code = XMAX_MEDIA_ERROR;
+    strcpy(source_failure.message, "Capture failed");
+    CHECK(xmax_external_frame_sink_report_error(previous_sink, &source_failure) == XMAX_OK);
+    xmax_event_info source_state = {0};
+    source_state.struct_size = sizeof(source_state);
+    CHECK(xmax_realtime_get_state_info(configured, &source_state) == XMAX_OK);
+    CHECK(source_state.event.state == XMAX_READY && source_state.reason == XMAX_REASON_NORMAL);
+    CHECK(xmax_external_frame_sink_report_error(current_sink, &source_failure) == XMAX_OK);
+    CHECK(xmax_realtime_get_state_info(configured, &source_state) == XMAX_OK);
+    CHECK(source_state.event.state == XMAX_IDLE && source_state.error.code == XMAX_MEDIA_ERROR);
+    CHECK(xmax_realtime_set_remote_media_frame_listener(configured, NULL) == XMAX_OK);
+    CHECK(released_contexts == 1);
+    xmax_realtime_destroy(configured);
+    int32_t demand = 1;
+    CHECK(xmax_external_frame_sink_is_requesting_frames(current_sink, &demand) == XMAX_OK && demand == 0);
+    CHECK(xmax_external_frame_sink_get_format(current_sink, &small) == XMAX_OK && small.width == 4);
+    xmax_external_frame_sink_release(previous_sink);
+    xmax_external_frame_sink_release(current_sink);
+    xmax_external_frame_sink_release(NULL);
+    xmax_media_frame packet = (xmax_media_frame)1;
+    CHECK(xmax_media_frame_retain(NULL, &packet) == XMAX_INVALID_ARGUMENT && packet == NULL);
+    CHECK(xmax_media_frame_get_view(NULL, NULL) == XMAX_INVALID_ARGUMENT);
+    xmax_media_frame_release(NULL);
     xmax_client_destroy(client); /* Children own their configuration and transport. */
     xmax_video_format f = {1920, 1024, 30};
     CHECK(xmax_realtime_prepare_external(realtime, &f) == XMAX_OK);
@@ -102,6 +168,14 @@ int main(void) {
     xmax_video_frame view = {0};
     view.struct_size = sizeof(view);
     CHECK(xmax_frame_get_view(held, &view) == XMAX_OK && view.planes[0][0] == 41);
+    int32_t mirrored = 0;
+    CHECK(xmax_frame_get_mirrored(held, &mirrored) == XMAX_OK && mirrored == 1);
+    CHECK(xmax_frame_get_mirrored(held, NULL) == XMAX_INVALID_ARGUMENT);
+    CHECK(xmax_frame_get_mirrored(NULL, &mirrored) == XMAX_INVALID_ARGUMENT && mirrored == 0);
+    mirror.struct_size = sizeof(mirror);
+    mirror.local_preview = 0;
+    CHECK(xmax_realtime_set_video_mirror(realtime, &mirror) == XMAX_OK);
+    CHECK(xmax_frame_get_mirrored(held, &mirrored) == XMAX_OK && mirrored == 1);
     CHECK(xmax_realtime_set_remote_volume(realtime, 2.0f) == XMAX_INVALID_ARGUMENT);
     CHECK(strlen(xmax_last_error()) > 0);
     CHECK(xmax_realtime_close(realtime) == XMAX_OK);

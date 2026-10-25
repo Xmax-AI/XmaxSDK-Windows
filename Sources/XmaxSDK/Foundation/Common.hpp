@@ -23,21 +23,22 @@
 namespace xmax::detail {
 
 /**
- * 用于超时、取消和媒体时间戳的单调时钟，不受系统日期校时影响。
+ * The monotonic clock for timeouts, cancellation, and media timestamps, unaffected by wall-clock
+ * adjustments.
  */
 using Clock = std::chrono::steady_clock;
 
 /**
- * 协作式取消判断回调；返回 true 表示调用方应终止当前操作。
+ * The cancellation callback; true requests termination of the operation.
  */
 using Cancel = std::function<bool()>;
 
 /**
- * 在条件不成立时抛出指定错误码和诊断的 SDK 异常。
+ * Throws the specified SDK error when a required condition fails.
  *
- * @param[in] value 必须成立的条件，false 时抛出指定 SDK 错误。
- * @param[in] code 条件不成立时抛出的 SDK 错误码。
- * @param[in] message 条件不成立时保存在异常中的诊断文本。
+ * @param[in] value The required condition; false throws the specified SDK error.
+ * @param[in] code The SDK error code to throw if the condition fails.
+ * @param[in] message The diagnostic message retained in the exception if the condition fails.
  */
 inline void require(
     bool value,
@@ -45,6 +46,9 @@ inline void require(
     const std::string& message
 ) {
     if (!value)
-        throw Error(code, message);
+        throw Error(
+            code,
+            message
+        );
 }
 } // namespace xmax::detail

@@ -39,6 +39,7 @@ class XLabController final : public QObject {
     Q_PROPERTY(QVariantList cameras READ cameras NOTIFY camerasChanged)
     Q_PROPERTY(QString cameraId READ cameraId WRITE setCameraId NOTIFY camerasChanged)
     Q_PROPERTY(QString cameraName READ cameraName NOTIFY camerasChanged)
+    Q_PROPERTY(bool videoMirrored READ videoMirrored WRITE setVideoMirrored NOTIFY changed)
     Q_PROPERTY(bool statisticsVisible MEMBER statisticsVisible NOTIFY changed)
     Q_PROPERTY(QString error MEMBER error NOTIFY changed)
     Q_PROPERTY(QString mode READ mode WRITE setMode NOTIFY changed)
@@ -74,6 +75,9 @@ class XLabController final : public QObject {
 
     /// @brief Return the selected device name for the selector and local video label.
     QString cameraName() const;
+
+    bool videoMirrored() const { return video_mirrored_; }
+    void setVideoMirrored(bool mirrored);
 
     /// @brief Refresh SDK devices while stopped without opening capture or a cloud session.
     Q_INVOKABLE void refreshCameras();
@@ -123,6 +127,7 @@ class XLabController final : public QObject {
     QVariantList presets_, uploads_;
     QVariantList cameras_;
     QString camera_id_;
+    bool video_mirrored_ = true;
     std::shared_ptr<SdkHandles> handles_;
     QVideoSink* local_sink_ = nullptr;
     QVideoSink* remote_sink_ = nullptr;

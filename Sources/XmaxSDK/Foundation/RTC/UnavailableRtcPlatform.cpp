@@ -13,21 +13,22 @@
 namespace xmax::detail {
 
 /**
- * 检查当前构建是否包含原生 RTC 后端。
+ * Reports whether the current build includes a native RTC backend.
  */
 bool rtc_available() noexcept {
     return false;
 }
 
 /**
- * 创建原生 RTC 适配器，不支持的平台返回明确的能力错误。
+ * Creates a native RTC adapter or reports unsupported capability on other platforms.
  *
- * @return 可共享的原生 RTC 适配器；平台不支持时抛出能力错误。
+ * @return A shared native RTC adapter; unsupported platforms throw a capability error.
  */
 std::shared_ptr<Rtc> make_rtc() {
     throw Error(
-        XMAX_UNSUPPORTED, "This SDK was built without Agora. Reconfigure with XMAX_WITH_AGORA=ON and "
-                          "XMAX_AGORA_ROOT pointing to the native SDK."
+        XMAX_UNSUPPORTED,
+        "This SDK was built without Agora. Reconfigure with XMAX_WITH_AGORA=ON and "
+        "XMAX_AGORA_ROOT pointing to the native SDK."
     );
 }
 } // namespace xmax::detail

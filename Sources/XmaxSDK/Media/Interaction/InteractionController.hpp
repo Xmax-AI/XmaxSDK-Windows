@@ -17,38 +17,39 @@
 namespace xmax::detail {
 
 /**
- * 合并待发送轨迹采样；调用线程仅保存最新点集，不等待 RTC 发送。
+ * Coalesces pending trajectory samples without waiting for RTC sends on the submitting thread.
  */
 class InteractionController {
 
   public:
 
     /**
-     * 一次采样所属的生命周期批次和点集。
+     * The lifecycle revision and points belonging to one sample.
      */
     struct Sample {
 
         /**
-         * 提交时的连接取消批次，用于拒收旧连接采样。
+         * The connection cancellation revision captured at submission, rejecting older connections.
          */
         uint64_t epoch;
 
         /**
-         * 提交时的生成任务，切换摄像头后不得发送到新任务。
+         * The task captured at submission; never reused for a new task after camera switching.
          */
         std::string task;
 
         /**
-         * 已映射的归一化点集。
+         * The mapped normalized points.
          */
         std::vector<xmax_point> points;
     };
 
     /**
-     * 替换尚未发送的采样，并申请最多一个待执行发送任务。
+     * Replaces unsent samples and reserves at most one pending send task.
      *
-     * @param[in] sample 已复制且携带任务身份的采样。
-     * @return true 表示调用方应安排一次发送任务。
+     * @param[in] sample The copied sample carrying its task identity.
+     *
+     * @return True when the caller should schedule one send task.
      */
     bool submit(
         Sample sample
@@ -62,18 +63,21 @@ class InteractionController {
     }
 
     /**
-     * 取出最新采样；无采样时释放任务预约，允许下一次提交再次预约。
+     * Takes the latest sample; no sample releases the reservation so later submissions can schedule again.
      */
     std::optional<Sample> take() {
         std::lock_guard<std::mutex> lock(mutex_);
-        auto value = std::exchange(pending_, {});
+        auto value = std::exchange(
+            pending_,
+            {}
+        );
         if (!value)
             scheduled_ = false;
         return value;
     }
 
     /**
-     * 清除尚未发送的采样；已预约任务仍负责释放预约。
+     * Clears unsent samples; an already reserved task remains responsible for releasing its reservation.
      */
     void clear() {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -83,17 +87,17 @@ class InteractionController {
   private:
 
     /**
-     * 保护最新采样与任务预约的互斥锁。
+     * The mutex protecting the latest sample and task reservation.
      */
     std::mutex mutex_;
 
     /**
-     * 尚未发送的最新采样，旧采样可被替换。
+     * The latest unsent sample, which may replace older samples.
      */
     std::optional<Sample> pending_;
 
     /**
-     * 是否已经有一个发送任务在执行或等待执行。
+     * Whether a send task is already running or queued.
      */
     bool scheduled_ = false;
 };

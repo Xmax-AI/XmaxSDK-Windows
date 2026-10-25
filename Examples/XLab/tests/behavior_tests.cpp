@@ -14,6 +14,24 @@ class BehaviorTests : public QObject {
   private slots:
     void init() {
         QSettings().remove("xmax.xlab.cameraId");
+        QSettings().remove("xmax.xlab.videoMirrored");
+    }
+
+    void displayMirrorIsRememberedWithoutStartingCapture() {
+        XLabController controller;
+        QVERIFY(controller.videoMirrored());
+        controller.setVideoMirrored(false);
+        QVERIFY(!controller.videoMirrored());
+        QVERIFY(!controller.active && !controller.busy);
+
+        XLabController reopened;
+        QVERIFY(!reopened.videoMirrored());
+        reopened.setVideoMirrored(true);
+        QVERIFY(reopened.videoMirrored());
+
+        XLabController preview(true);
+        preview.setVideoMirrored(false);
+        QVERIFY(QSettings().value("xmax.xlab.videoMirrored").toBool());
     }
 
     void cameraSelectionIsExplicitAndRemembered() {

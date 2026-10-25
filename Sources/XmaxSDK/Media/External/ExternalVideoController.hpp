@@ -15,120 +15,133 @@
 namespace xmax::detail {
 
 /**
- * 同步接收视频帧；回调返回后仍需使用像素时，接收方必须自行复制。
+ * Receives frames synchronously; receivers must copy pixels needed after the callback returns.
  */
 using VideoFrameSink = std::function<void(const Frame&)>;
 
 /**
- * 管理外部输入绑定、严格递增的时间戳以及推流和预览交付。
+ * Manages external input binding, increasing timestamps, and publication and preview delivery.
  */
 class ExternalVideoController {
 
   public:
 
     /**
-     * 校验并绑定输入规格，重置当前绑定的时间戳状态。
+     * Validates and binds an input format, resetting timestamp tracking for the binding.
      *
-     * @param[in] format 输入尺寸和帧率，支持范围见 xmax_video_format。
+     * @param[in] format The input dimensions and frame rate; see xmax_video_format for limits.
+     * @param[in] binding The source revision; zero reserves the channel for unversioned camera delivery.
      */
     void prepare(
-        xmax_video_format format
+        xmax_video_format format,
+        uint64_t binding = 0
     );
 
     /**
-     * 安装发布接收器并开始请求输入帧。
+     * Installs a publication receiver and starts requesting input frames.
      *
-     * @param[in] sink 接收视频帧的同步回调，在提交帧的媒体线程调用。
+     * @param[in] sink The synchronous frame receiver, invoked on the submitting media thread.
      */
     void start(
         VideoFrameSink sink
     );
 
     /**
-     * 停止发布交付，保留输入规格和本地预览。
+     * Stops publication delivery while retaining the input format and local preview.
      */
     void stop();
 
     /**
-     * 清除输入规格、发布状态和时间戳，释放当前输入绑定。
+     * Releases the input binding, clearing format, publication state, and timestamp tracking.
      */
     void close();
 
     /**
-     * 校验并复制借用的外部帧，同步交付给推流和本地预览接收器。
+     * Validates and copies a borrowed external frame, delivering it synchronously to publication and preview
+     * receivers.
      *
-     * @param[in] source 待读取的视频帧或借用视图，需包含有效的像素布局。
+     * @param[in] source The frame or borrowed view to read, with a valid pixel layout.
+     * @param[in] binding The source revision; zero uses the current legacy binding. Stale revisions are ignored.
      */
     void push(
-        const xmax_video_frame& source
+        const xmax_video_frame& source,
+        uint64_t binding = 0
     );
 
     /**
-     * 按实际采集尺寸交付摄像头帧，由 RTC 根据编码目标处理尺寸和比例。
+     * Delivers camera frames at capture dimensions; RTC handles encoding dimensions and aspect ratio.
      *
-     * @param[in] frame 待交付的视频帧或借用视图；同步调用返回前像素必须有效。
+     * @param[in] frame The frame or borrowed view to deliver; its pixels must remain valid until this
+     * synchronous call returns.
      */
     void push_owned(
         Frame frame
     );
 
     /**
-     * 检查是否已绑定有效的外部输入规格。
+     * Reports whether a valid external input format is bound.
      */
     bool bound() const;
 
     /**
-     * 非阻塞检查当前是否需要向发布接收器供帧。
+     * Reports whether the publication receiver currently requests frames without blocking.
      */
     bool requesting() const {
         return requesting_.load();
     }
 
     /**
-     * 在绑定锁保护下读取当前输入规格。
+     * Returns the input format under the binding lock.
      *
-     * @return 当前绑定的视频输入规格，未绑定时宽高和帧率为 0。
+     * @return The bound input format; dimensions and frame rate are 0 when unbound.
      */
     xmax_video_format format() const;
 
     /**
-     * 替换本地预览接收器，回调在提交帧的媒体线程执行。
+     * Replaces the local preview receiver, invoked on the submitting media thread.
      *
-     * @param[in] sink 接收视频帧的同步回调，在提交帧的媒体线程调用。
+     * @param[in] sink The synchronous frame receiver, invoked on the submitting media thread.
+     * @param[in] binding A nonzero replacement revision invalidates previous sources before preview changes.
      */
     void preview(
-        std::function<void(Frame)> sink
+        std::function<void(Frame)> sink,
+        uint64_t binding = 0
     );
 
   private:
 
     /**
-     * 保护输入绑定、时间戳及帧接收器，并协调停止与交付的互斥锁。
+     * The mutex protecting binding, timestamps, and receivers while coordinating stop and delivery.
      */
     mutable std::mutex mutex_;
 
     /**
-     * 外部输入规格或摄像头编码目标，不限制摄像头帧的实际采集尺寸。
+     * The external input format or camera encoding target; camera capture dimensions may differ.
      */
     xmax_video_format format_{};
 
     /**
-     * 当前输入绑定最近一次已接收的单调微秒时间戳。
+     * The latest accepted monotonic timestamp for this input binding, in microseconds.
      */
     int64_t last_timestamp_ = -1;
 
     /**
-     * 当前输入是否正在向活动 RTC 接收器交付帧。
+     * The bound external source revision, checked under the delivery lock before pixels are read.
+     */
+    uint64_t binding_ = 0;
+
+    /**
+     * Whether this input currently delivers frames to an active RTC receiver.
      */
     std::atomic<bool> requesting_{false};
 
     /**
-     * 当前发布帧接收器，在提交帧的媒体线程同步执行。
+     * The publication receiver, invoked synchronously on the submitting media thread.
      */
     VideoFrameSink sink_;
 
     /**
-     * 当前本地预览接收器，在提交帧的媒体线程同步执行。
+     * The local preview receiver, invoked synchronously on the submitting media thread.
      */
     std::function<void(Frame)> preview_;
 };

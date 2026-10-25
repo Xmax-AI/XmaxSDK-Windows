@@ -14,32 +14,32 @@
 namespace xmax::detail {
 
 /**
- * 保存加入生成服务 RTC 房间所需的应用、账号、令牌和结果流身份。
+ * The app, account, token, and result-stream identity required to join the generation RTC room.
  */
 struct Connection {
 
     /**
-     * RTC 应用标识。
+     * The RTC application identifier.
      */
     std::string app_id;
 
     /**
-     * 加入 RTC 时使用的房间标识。
+     * The RTC room identifier used when joining.
      */
     std::string room;
 
     /**
-     * 发布本地输入视频的 RTC 账号。
+     * The RTC account publishing local input video.
      */
     std::string user;
 
     /**
-     * 加入房间使用的 RTC 临时凭证，不得写入未脱敏日志。
+     * The temporary RTC room credential; never write it to unredacted logs.
      */
     std::string token;
 
     /**
-     * 生成结果服务用户的 RTC 账号。
+     * The RTC account of the generation result user.
      */
     std::string bot;
 };

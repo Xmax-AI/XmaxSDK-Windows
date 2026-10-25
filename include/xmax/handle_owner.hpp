@@ -17,17 +17,18 @@ namespace xmax {
 namespace detail {
 
 /**
- * 独占管理一个 C 句柄，通过匹配的 SDK 释放函数销毁资源；禁止复制，允许移动。
+ * Exclusively owns a C handle and releases it through its matching SDK function; movable but not copyable.
  *
- * @tparam T 当前所有者管理的句柄或接口类型。
- * @tparam Release 与句柄类型匹配的 SDK 释放函数，必须接受空句柄。
+ * @tparam T The handle or interface type managed by this owner.
+ * @tparam Release The matching SDK release function, which must accept an empty handle.
  */
-template <class T, void(XMAX_CALL* Release)(T)> class owner {
+template <class T, void(XMAX_CALL* Release)(T)>
+class owner {
 
   public:
 
     /**
-     * 接管可为空的 C 句柄，并使用匹配释放函数管理其生命周期。
+     * Takes ownership of a possibly empty C handle and manages it through the matching release function.
      */
     explicit owner(
         T value = nullptr
@@ -36,72 +37,79 @@ template <class T, void(XMAX_CALL* Release)(T)> class owner {
     }
 
     /**
-     * 使用匹配的 SDK 释放函数销毁当前句柄。
+     * Destroys the handle using its matching SDK release function.
      *
-     * @note 销毁前应结束使用本对象的并发调用。
+     * @note Finish concurrent calls using this object before destroying it.
      */
     ~owner() {
         Release(value_);
     }
 
     /**
-     * 禁止复制构造，避免同一资源被多个独占所有者重复释放。
+     * Disables copying to prevent multiple exclusive owners from releasing the same resource.
      *
-     * @param[in] other 复制源对象；此操作被禁止，不得调用。
+     * @param[in] other The copy source. This operation is deleted and cannot be called.
      */
     owner(
         const owner& other
     ) = delete;
 
     /**
-     * 禁止复制赋值，避免同一资源被多个独占所有者重复释放。
+     * Disables copy assignment to prevent duplicate ownership and release.
      *
-     * @param[in] other 复制源对象；此操作被禁止，不得调用。
+     * @param[in] other The copy source. This operation is deleted and cannot be called.
      */
     owner& operator=(
         const owner& other
     ) = delete;
 
     /**
-     * 接管源对象的资源所有权，移动后源对象为空。
+     * Transfers resource ownership and leaves the source empty.
      *
-     * @param[in,out] other 转移资源所有权的源对象；移动完成后源对象为空。
+     * @param[in,out] other The ownership source, left empty after the move.
      */
     owner(
         owner&& other
     ) noexcept
-        : value_(std::exchange(other.value_, nullptr)) {
+        : value_(std::exchange(
+            other.value_,
+            nullptr
+        )) {
     }
 
     /**
-     * 释放当前句柄并接管源对象，源对象在移动后为空。
+     * Releases the current handle and moves ownership from the source, leaving it empty.
      *
-     * @param[in,out] other 转移资源所有权的源对象；移动完成后源对象为空。
-     * @return 当前句柄所有者的引用。
+     * @param[in,out] other The ownership source, left empty after the move.
+     *
+     * @return A reference to this handle owner.
      */
     owner& operator=(
         owner&& other
     ) noexcept {
         if (this != &other) {
             Release(value_);
-            value_ = std::exchange(other.value_, nullptr);
+            value_ = std::exchange(
+                other.value_,
+                nullptr
+            );
         }
         return *this;
     }
 
     /**
-     * 借用当前 C 句柄，不转移所有权。
+     * Returns a borrowed C handle without transferring ownership.
      *
-     * @return 借用的 C 句柄；空所有者返回 nullptr。
+     * @return The borrowed C handle, or nullptr for an empty owner.
      */
     T get() const noexcept {
         return value_;
     }
 
     /**
-     * 检查当前对象是否持有非空句柄。
+     * Reports whether this owner holds a nonempty handle.
      *
-     * @return 持有非空句柄时为 true，否则为 false。
+     * @return True for a nonempty handle; otherwise false.
      */
     explicit operator bool() const noexcept {
         return value_ != nullptr;
@@ -110,7 +118,8 @@ template <class T, void(XMAX_CALL* Release)(T)> class owner {
   protected:
 
     /**
-     * 独占拥有的 C 句柄；移动后源对象置空，由匹配释放函数销毁。
+     * The exclusively owned C handle; the source becomes empty after a move and the matching release
+     * function destroys the handle.
      */
     T value_;
 };

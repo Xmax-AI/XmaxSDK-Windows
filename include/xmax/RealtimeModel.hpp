@@ -14,21 +14,22 @@
 namespace xmax {
 
 /**
- * SDK 当前支持的实时生成模型。
+ * The realtime generation models supported by XmaxSDK.
  */
 enum class RealtimeModel {
 
     /**
-     * X2.1 实时生成模型。
+     * The X2.1 realtime generation model.
      */
     x2_1
 };
 
 /**
- * 返回服务端接受的模型标识；返回文本具有静态生命周期。
+ * Returns the server model identifier as a string with static lifetime.
  *
- * @param[in] model SDK 支持的模型。
- * @return 未识别的枚举值返回空文本，应由创建接口拒绝。
+ * @param[in] model The supported SDK model.
+ *
+ * @return Unknown enum values return an empty string and must be rejected by creation APIs.
  */
 inline constexpr const char* model_identifier(
     RealtimeModel model
@@ -41,10 +42,11 @@ inline constexpr const char* model_identifier(
 }
 
 /**
- * 读取模型支持的视频规格与默认值，不创建客户端或网络会话。
+ * Returns supported video formats and defaults without creating a client or network session.
  *
- * @param[in] model SDK 支持的实时模型。
- * @return 模型能力快照；未知枚举值返回空标识和零规格。
+ * @param[in] model The supported realtime model.
+ *
+ * @return The capability snapshot; unknown values return an empty identifier and zero formats.
  */
 inline constexpr xmax_model_info model_capabilities(
     RealtimeModel model

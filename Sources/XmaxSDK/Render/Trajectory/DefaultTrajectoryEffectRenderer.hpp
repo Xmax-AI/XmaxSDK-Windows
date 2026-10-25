@@ -14,19 +14,19 @@
 namespace xmax::detail {
 
 /**
- * 在原生窗口的视频画面上绘制当前任务的默认轨迹效果。
+ * Draws the current task's default trajectory over native-window video.
  */
 class DefaultTrajectoryEffectRenderer {
 
   public:
 
     /**
-     * 绘制归一化轨迹，布局规则与当前视频画面一致。
+     * Draws normalized trajectories using the displayed video's layout.
      *
-     * @param[in] window 当前线程拥有的 HWND。
-     * @param[in] format 当前显示帧的实际尺寸。
-     * @param[in] content_mode 等比例适应或居中填满。
-     * @param[in] points 当前任务尚未过期的归一化采样。
+     * @param[in] window An HWND owned by the calling thread.
+     * @param[in] format The displayed frame's actual dimensions.
+     * @param[in] content_mode Aspect fit or centered aspect fill.
+     * @param[in] points The current task's unexpired normalized samples.
      */
     void render(
         void* window,
@@ -34,7 +34,12 @@ class DefaultTrajectoryEffectRenderer {
         int32_t content_mode,
         const std::vector<xmax_point>& points
     ) const {
-        render_trajectory(window, format, content_mode, points);
+        render_trajectory(
+            window,
+            format,
+            content_mode,
+            points
+        );
     }
 };
 } // namespace xmax::detail

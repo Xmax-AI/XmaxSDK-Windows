@@ -21,9 +21,9 @@ namespace xmax::detail {
 namespace {
 
 /**
- * 解析当前用户用于非凭证偏好的应用缓存目录。
+ * Resolves the current user's application cache directory for noncredential preferences.
  *
- * @return 当前用户应用缓存目录下的非凭证偏好路径。
+ * @return The noncredential preference path under the user's application cache.
  */
 std::filesystem::path cache_directory() {
 #ifdef _WIN32
@@ -40,24 +40,24 @@ std::filesystem::path cache_directory() {
 }
 
 /**
- * 在指定目录下以尽力而为的方式读写非凭证偏好缓存，失败不影响媒体操作。
+ * Provides best-effort noncredential caching in a directory; failures do not affect media operations.
  */
 class FileStore final : public PreferenceStore {
 
     /**
-     * 当前缓存后端的根目录。
+     * The cache backend's root directory.
      */
     std::filesystem::path directory_;
 
     /**
-     * 串行协调当前缓存后端文件读写的互斥锁。
+     * The mutex serializing this cache backend's file access.
      */
     std::mutex mutex_;
 
     /**
-     * 校验缓存键并解析到当前缓存根目录内的文件。
+     * Validates a cache key and resolves its file beneath the cache root.
      *
-     * @param[in] key 有效的非凭证偏好缓存键，不得包含目录穿越字符。
+     * @param[in] key A valid noncredential preference key without path-traversal components.
      */
     std::filesystem::path file(
         const std::string& key
@@ -67,7 +67,8 @@ class FileStore final : public PreferenceStore {
                 key.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.") ==
                     std::string::npos &&
                 key.find("..") == std::string::npos,
-            XMAX_INVALID_ARGUMENT, "Invalid preference key"
+            XMAX_INVALID_ARGUMENT,
+            "Invalid preference key"
         );
         return directory_ / std::filesystem::u8path(key + ".json");
     }
@@ -75,7 +76,7 @@ class FileStore final : public PreferenceStore {
   public:
 
     /**
-     * 保存非凭证偏好缓存的根目录。
+     * Retains the root directory for noncredential preference caching.
      */
     explicit FileStore(
         std::filesystem::path directory
@@ -84,9 +85,9 @@ class FileStore final : public PreferenceStore {
     }
 
     /**
-     * 读取受大小限制的缓存内容，不存在、格式无效或不可访问时返回 std::nullopt。
+     * Reads bounded cached content; missing, invalid, or inaccessible entries return std::nullopt.
      *
-     * @param[in] key 有效的非凭证偏好缓存键，不得包含目录穿越字符。
+     * @param[in] key A valid noncredential preference key without path-traversal components.
      */
     std::optional<std::string> read(
         const std::string& key
@@ -95,14 +96,26 @@ class FileStore final : public PreferenceStore {
             std::lock_guard<std::mutex> lock(mutex_);
             const auto path = file(key);
             std::error_code error;
-            const auto size = std::filesystem::file_size(path, error);
+            const auto size = std::filesystem::file_size(
+                path,
+                error
+            );
 
             if (error || size > 4096)
                 return {};
 
-            std::ifstream stream(path, std::ios::binary);
-            std::string value(size_t(size), '\0');
-            stream.read(value.data(), std::streamsize(value.size()));
+            std::ifstream stream(
+                path,
+                std::ios::binary
+            );
+            std::string value(
+                size_t(size),
+                '\0'
+            );
+            stream.read(
+                value.data(),
+                std::streamsize(value.size())
+            );
 
             if (!stream)
                 return {};
@@ -114,10 +127,10 @@ class FileStore final : public PreferenceStore {
     }
 
     /**
-     * 通过临时文件发布缓存内容，忽略缓存写入失败。
+     * Publishes cached content through a temporary file, ignoring write failures.
      *
-     * @param[in] key 有效的非凭证偏好缓存键，不得包含目录穿越字符。
-     * @param[in] value 需要持久化的非凭证字节内容。
+     * @param[in] key A valid noncredential preference key without path-traversal components.
+     * @param[in] value The noncredential bytes to persist.
      */
     void write(
         const std::string& key,
@@ -127,29 +140,52 @@ class FileStore final : public PreferenceStore {
         try {
             std::lock_guard<std::mutex> lock(mutex_);
             const auto destination = file(key);
-            require(value.size() <= 4096, XMAX_INVALID_ARGUMENT, "Preference is too large");
+            require(
+                value.size() <= 4096,
+                XMAX_INVALID_ARGUMENT,
+                "Preference is too large"
+            );
             std::filesystem::create_directories(directory_);
             temporary = directory_ / std::filesystem::u8path(".pending-" + random_id());
 
-            std::ofstream stream(temporary, std::ios::binary | std::ios::trunc);
-            stream.write(value.data(), std::streamsize(value.size()));
+            std::ofstream stream(
+                temporary,
+                std::ios::binary | std::ios::trunc
+            );
+            stream.write(
+                value.data(),
+                std::streamsize(value.size())
+            );
             stream.flush();
-            require(bool(stream), XMAX_IO_ERROR, "Cannot write preference");
+            require(
+                bool(stream),
+                XMAX_IO_ERROR,
+                "Cannot write preference"
+            );
             stream.close();
 #ifdef _WIN32
             require(
                 MoveFileExW(
-                    temporary.c_str(), destination.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH
+                    temporary.c_str(),
+                    destination.c_str(),
+                    MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH
                 ),
-                XMAX_IO_ERROR, "Cannot publish preference"
+                XMAX_IO_ERROR,
+                "Cannot publish preference"
             );
 #else
-            std::filesystem::rename(temporary, destination);
+            std::filesystem::rename(
+                temporary,
+                destination
+            );
 #endif
         } catch (...) {
             if (!temporary.empty()) {
                 std::error_code ignored;
-                std::filesystem::remove(temporary, ignored);
+                std::filesystem::remove(
+                    temporary,
+                    ignored
+                );
             }
         }
     }
@@ -157,10 +193,11 @@ class FileStore final : public PreferenceStore {
 } // namespace
 
 /**
- * 创建非凭证缓存后端；空目录参数使用当前用户的应用缓存目录。
+ * Creates a noncredential cache backend; an empty directory selects the current user's application cache.
  *
- * @param[in] directory 非凭证缓存根目录，空文本使用当前用户应用缓存目录。
- * @return 可共享的非凭证偏好后端。
+ * @param[in] directory The noncredential cache root; empty selects the current user's application cache.
+ *
+ * @return A shared noncredential preference backend.
  */
 std::shared_ptr<PreferenceStore> make_preference_store(
     std::filesystem::path directory

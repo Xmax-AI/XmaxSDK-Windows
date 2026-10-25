@@ -16,12 +16,13 @@
 namespace xmax::detail {
 
 /**
- * 按滑动预算发送 UTF-8 信令分片，等待期间检查取消并执行保活。
+ * Sends UTF-8 fragments under a sliding budget, checking cancellation and maintaining keepalives while
+ * waiting.
  *
- * @param[in] rtc 已连接且可发送信令分片的 RTC 适配器借用引用。
- * @param[in] message 待序列化并分片发送的房间 JSON 信令。
- * @param[in] cancelled 协作式取消判断函数；返回 true 时应终止当前操作。
- * @param[in] maintain 等待或限速期间执行的维护回调，空函数表示无需额外维护。
+ * @param[in] rtc A borrowed connected RTC adapter that can send signaling fragments.
+ * @param[in] message The room JSON message to serialize, fragment, and send.
+ * @param[in] cancelled A cooperative cancellation predicate; true requests termination of the operation.
+ * @param[in] maintain The maintenance callback invoked while waiting or throttled; empty omits maintenance.
  */
 void RoomMessageSender::send(
     Rtc& rtc,
@@ -29,17 +30,32 @@ void RoomMessageSender::send(
     const Cancel& cancelled,
     const std::function<void()>& maintain
 ) {
-    const auto packets = encode_message(message.dump(), random_id());
-    XmaxLogger::write(LogCategory::Room, XMAX_LOG_DEBUG, [&](auto language) {
-        // 日志不输出生成条件、提示词、参考地址、房间凭证和原始信令分片。
-        return XmaxLogger::localized(language, "发送房间信令 (Send Room Signal)", "Send Room Signal") +
-               "\n└─ packets=" + std::to_string(packets.size());
-    });
+    const auto packets = encode_message(
+        message.dump(),
+        random_id()
+    );
+    XmaxLogger::write(
+        LogCategory::Room,
+        XMAX_LOG_DEBUG,
+        [&](auto language) {
+            // Exclude generation conditions, prompts, reference URLs, credentials, and raw fragments from logs.
+            return XmaxLogger::localized(
+                language,
+                "发送房间信令 (Send Room Signal)",
+                "Send Room Signal"
+            ) +
+                   "\n└─ packets=" + std::to_string(packets.size());
+        }
+    );
     for (const auto& packet : packets) {
         for (;;) {
-            require(!cancelled(), XMAX_CANCELLED, "Operation cancelled");
+            require(
+                !cancelled(),
+                XMAX_CANCELLED,
+                "Operation cancelled"
+            );
 
-            // 较长的信令发送期间持续执行保活；保活信令不附带该回调，避免递归发送。
+            // Maintain keepalives during long sends; keepalive messages omit this callback to prevent recursion.
             if (maintain)
                 maintain();
 
@@ -59,7 +75,10 @@ void RoomMessageSender::send(
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
         rtc.send(packet);
-        sent_.emplace_back(Clock::now(), packet.size());
+        sent_.emplace_back(
+            Clock::now(),
+            packet.size()
+        );
     }
 }
 } // namespace xmax::detail

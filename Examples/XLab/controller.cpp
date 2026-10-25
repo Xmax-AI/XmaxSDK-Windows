@@ -33,6 +33,7 @@ XLabController::XLabController(bool uiPreview, bool sessionPreview, QObject* par
     : QObject(parent), preview(uiPreview) {
     key_ = preview ? QString() : QSettings().value("xmax.xlab.apiKey").toString();
     camera_id_ = preview ? QString() : QSettings().value("xmax.xlab.cameraId").toString();
+    video_mirrored_ = preview || QSettings().value("xmax.xlab.videoMirrored", true).toBool();
     if (!preview)
         refreshCameras();
     QFile f(":/qt/qml/XLab/assets/presets.json");
@@ -80,6 +81,24 @@ QString XLabController::cameraName() const {
             return camera["name"].toString();
     }
     return {};
+}
+
+void XLabController::setVideoMirrored(bool mirrored) {
+    if (busy || video_mirrored_ == mirrored)
+        return;
+
+    if (handles_) {
+        const xmax_video_mirror_config config{sizeof(config), mirrored, mirrored, 0};
+        error = sdkError(xmax_realtime_set_video_mirror(handles_->realtime, &config));
+        if (!error.isEmpty()) {
+            emit changed();
+            return;
+        }
+    }
+    video_mirrored_ = mirrored;
+    if (!preview)
+        QSettings().setValue("xmax.xlab.videoMirrored", mirrored);
+    emit changed();
 }
 
 void XLabController::setCameraId(const QString& id) {
@@ -245,7 +264,11 @@ void XLabController::start() {
     const auto camera = camera_id_.toUtf8();
     emit changed();
     async(
-        [handles, mic, camera] {
+        [handles, mic, camera, mirrored = video_mirrored_] {
+            const xmax_video_mirror_config mirror{sizeof(mirror), mirrored, mirrored, 0};
+            auto error = sdkError(xmax_realtime_set_video_mirror(handles->realtime, &mirror));
+            if (!error.isEmpty())
+                return error;
             const xmax_camera_config config{sizeof(config), camera.constData(), {1920, 1024, 30}, mic};
             return sdkError(xmax_realtime_prepare_camera(handles->realtime, &config));
         },
@@ -468,7 +491,12 @@ void XLabController::tick() {
         if (local_sink_ && xmax_frame_get_view(local, &view) == XMAX_OK && view.pixel_format == XMAX_BGRA) {
             QImage image(view.planes[0], int(view.width), int(view.height), qsizetype(view.strides[0]),
                          QImage::Format_ARGB32);
-            local_sink_->setVideoFrame(QVideoFrame(image.copy()));
+            int32_t mirrored = 0;
+            if (xmax_frame_get_mirrored(local, &mirrored) == XMAX_OK) {
+                QVideoFrame frame(image.copy());
+                frame.setMirrored(mirrored != 0);
+                local_sink_->setVideoFrame(frame);
+            }
         }
         xmax_frame_release(local);
     }
@@ -479,7 +507,12 @@ void XLabController::tick() {
         if (remote_sink_ && xmax_frame_get_view(frame, &view) == XMAX_OK && view.pixel_format == XMAX_BGRA) {
             QImage image(view.planes[0], int(view.width), int(view.height), qsizetype(view.strides[0]),
                          QImage::Format_ARGB32);
-            remote_sink_->setVideoFrame(QVideoFrame(image.copy()));
+            int32_t mirrored = 0;
+            if (xmax_frame_get_mirrored(frame, &mirrored) == XMAX_OK) {
+                QVideoFrame video(image.copy());
+                video.setMirrored(mirrored != 0);
+                remote_sink_->setVideoFrame(video);
+            }
             if (!remoteReady) {
                 remoteReady = true;
                 updated = true;

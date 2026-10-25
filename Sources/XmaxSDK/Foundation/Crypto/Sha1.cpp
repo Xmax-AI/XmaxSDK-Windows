@@ -20,18 +20,22 @@
 namespace xmax::detail {
 
 /**
- * 将摘要字节编码为小写十六进制文本。
+ * Encodes digest bytes as lowercase hexadecimal text.
  *
- * @param[in] data 参与十六进制编码的摘要字节指针。
- * @param[in] length 摘要字节数。
- * @return 小写十六进制文本，每个输入字节对应两个字符。
+ * @param[in] data The digest bytes to encode.
+ * @param[in] length The number of digest bytes.
+ *
+ * @return Lowercase hexadecimal text, with two characters per input byte.
  */
 static std::string hex(
     const uint8_t* data,
     size_t length
 ) {
     const char* digits = "0123456789abcdef";
-    std::string result(length * 2, '0');
+    std::string result(
+        length * 2,
+        '0'
+    );
 
     for (size_t i = 0; i < length; ++i) {
         result[i * 2] = digits[data[i] >> 4];
@@ -42,10 +46,10 @@ static std::string hex(
 }
 
 /**
- * 使用系统加密后端计算 SHA-1 或 HMAC-SHA1 摘要。
+ * Computes SHA-1 or HMAC-SHA1 using the system crypto backend.
  *
- * @param[in] data 参与摘要计算的完整字节内容。
- * @param[in] key HMAC 密钥；空指针表示执行不带密钥的 SHA-1。
+ * @param[in] data The complete bytes to hash.
+ * @param[in] key The HMAC key; null selects unkeyed SHA-1.
  */
 static std::string digest(
     const std::string& data,
@@ -57,59 +61,101 @@ static std::string digest(
     BCRYPT_HASH_HANDLE hash = nullptr;
     require(
         BCryptOpenAlgorithmProvider(
-            &algorithm, BCRYPT_SHA1_ALGORITHM, nullptr, key ? BCRYPT_ALG_HANDLE_HMAC_FLAG : 0
+            &algorithm,
+            BCRYPT_SHA1_ALGORITHM,
+            nullptr,
+            key ? BCRYPT_ALG_HANDLE_HMAC_FLAG : 0
         ) == 0,
-        XMAX_INTERNAL_ERROR, "Cannot initialize COS request signing"
+        XMAX_INTERNAL_ERROR,
+        "Cannot initialize COS request signing"
     );
 
     const auto created = BCryptCreateHash(
-        algorithm, &hash, nullptr, 0,
+        algorithm,
+        &hash,
+        nullptr,
+        0,
         key ? reinterpret_cast<PUCHAR>(const_cast<char*>(key->data())) : nullptr,
-        key ? ULONG(key->size()) : 0, 0
+        key ? ULONG(key->size()) : 0,
+        0
     );
-    const bool success =
-        created == 0 &&
-        BCryptHashData(
-            hash, reinterpret_cast<PUCHAR>(const_cast<char*>(data.data())), ULONG(data.size()), 0
-        ) == 0 &&
-        BCryptFinishHash(hash, output, sizeof(output), 0) == 0;
+    const bool success = created == 0 &&
+                         BCryptHashData(
+                             hash,
+                             reinterpret_cast<PUCHAR>(const_cast<char*>(data.data())),
+                             ULONG(data.size()),
+                             0
+                         ) == 0 &&
+                         BCryptFinishHash(
+                             hash,
+                             output,
+                             sizeof(output),
+                             0
+                         ) == 0;
 
     if (hash)
         BCryptDestroyHash(hash);
 
-    BCryptCloseAlgorithmProvider(algorithm, 0);
-    require(success, XMAX_INTERNAL_ERROR, "COS request signing failed");
+    BCryptCloseAlgorithmProvider(
+        algorithm,
+        0
+    );
+    require(
+        success,
+        XMAX_INTERNAL_ERROR,
+        "COS request signing failed"
+    );
 #else
     if (key)
-        CCHmac(kCCHmacAlgSHA1, key->data(), key->size(), data.data(), data.size(), output);
+        CCHmac(
+            kCCHmacAlgSHA1,
+            key->data(),
+            key->size(),
+            data.data(),
+            data.size(),
+            output
+        );
     else
-        CC_SHA1(data.data(), CC_LONG(data.size()), output);
+        CC_SHA1(
+            data.data(),
+            CC_LONG(data.size()),
+            output
+        );
 #endif
 
-    return hex(output, sizeof(output));
+    return hex(
+        output,
+        sizeof(output)
+    );
 }
 
 /**
- * 计算输入字节的 SHA-1 小写十六进制摘要。
+ * Computes the input's lowercase hexadecimal SHA-1 digest.
  *
- * @param[in] data 参与 SHA-1 摘要计算的完整字节内容。
+ * @param[in] data The complete bytes used to compute the SHA-1 digest.
  */
 std::string sha1_hex(
     const std::string& data
 ) {
-    return digest(data, nullptr);
+    return digest(
+        data,
+        nullptr
+    );
 }
 
 /**
- * 计算用于存储鉴权的 HMAC-SHA1 小写十六进制签名。
+ * Computes a lowercase hexadecimal HMAC-SHA1 signature for storage authentication.
  *
- * @param[in] key 用于 HMAC-SHA1 计算的密钥字节。
- * @param[in] data 待处理的编码字节，本次同步调用返回前必须有效。
+ * @param[in] key The HMAC-SHA1 key bytes.
+ * @param[in] data The encoded bytes to process; they must remain valid until this synchronous call returns.
  */
 std::string hmac_sha1_hex(
     const std::string& key,
     const std::string& data
 ) {
-    return digest(data, &key);
+    return digest(
+        data,
+        &key
+    );
 }
 } // namespace xmax::detail

@@ -15,19 +15,20 @@
 namespace xmax::detail {
 
 /**
- * 字节进度回调，参数依次为已完成字节数与总字节数，未知总数为 0。
+ * The progress callback receiving completed bytes then total bytes; unknown totals are 0.
  */
 using TransferProgress = std::function<void(uint64_t, uint64_t)>;
 
 /**
- * 执行临时凭证获取、文件上传、可选图片安全检查及有大小限制的下载。
+ * Obtains temporary credentials, uploads files, optionally checks image safety, and performs bounded
+ * downloads.
  */
 class StorageService {
 
   public:
 
     /**
-     * 保留执行临时凭证、安全校验和文件传输所需的共享 API 服务。
+     * Retains shared API services for temporary credentials, safety checks, and file transfers.
      */
     explicit StorageService(
         std::shared_ptr<ApiService> api
@@ -36,15 +37,17 @@ class StorageService {
     }
 
     /**
-     * 使用临时存储凭证上传编码字节，可选择执行图片安全检查。
+     * Uploads encoded bytes with temporary storage credentials and an optional image safety check.
      *
-     * @param[in] data 待处理的编码字节，本次同步调用返回前必须有效。
-     * @param[in] name 文件名称，用于对象元数据及 MIME 类型推断。
-     * @param[in] content_type 可选 MIME 类型，空文本按文件名推断。
-     * @param[in] safety 是否对图片上传执行安全检查。
-     * @param[in] cancel 协作式取消判断函数；返回 true 时应终止当前操作。
-     * @param[in] progress 字节进度回调，参数顺序为已完成字节数、总字节数。
-     * @return 独立拥有的上传结果，包含文件访问地址、对象键和可选 ETag。
+     * @param[in] data The encoded bytes to process; they must remain valid until this synchronous call
+     * returns.
+     * @param[in] name The filename used for object metadata and MIME type inference.
+     * @param[in] content_type An optional MIME type; empty infers the type from the filename.
+     * @param[in] safety Whether to perform a safety check when uploading an image.
+     * @param[in] cancel A cooperative cancellation predicate; true requests termination of the operation.
+     * @param[in] progress The byte-progress callback, receiving completed bytes followed by total bytes.
+     *
+     * @return An owned upload result containing the URL, object key, and optional ETag.
      */
     StoredFile upload(
         const std::string& data,
@@ -56,15 +59,16 @@ class StorageService {
     );
 
     /**
-     * 读取本地编码图片或视频，并根据元数据配置执行上传。
+     * Reads a local encoded image or video and uploads it using the supplied metadata.
      *
-     * @param[in] path UTF-8 本地编码图片或视频路径。
-     * @param[in] name 文件名称，用于对象元数据及 MIME 类型推断。
-     * @param[in] type 可选 MIME 类型，空文本按文件名推断。
-     * @param[in] safety 是否对图片上传执行安全检查。
-     * @param[in] cancel 协作式取消判断函数；返回 true 时应终止当前操作。
-     * @param[in] progress 字节进度回调，参数顺序为已完成字节数、总字节数。
-     * @return 独立拥有的上传结果，包含文件访问地址、对象键和可选 ETag。
+     * @param[in] path The UTF-8 path to an encoded local image or video file.
+     * @param[in] name The filename used for object metadata and MIME type inference.
+     * @param[in] type An optional MIME type; empty infers the type from the filename.
+     * @param[in] safety Whether to perform a safety check when uploading an image.
+     * @param[in] cancel A cooperative cancellation predicate; true requests termination of the operation.
+     * @param[in] progress The byte-progress callback, receiving completed bytes followed by total bytes.
+     *
+     * @return An owned upload result containing the URL, object key, and optional ETag.
      */
     StoredFile upload_file(
         const std::string& path,
@@ -76,13 +80,14 @@ class StorageService {
     );
 
     /**
-     * 将 HTTPS 内容写入临时文件，成功后发布到不存在的目标路径。
+     * Downloads HTTPS content to a temporary file and publishes it to a nonexistent destination on success.
      *
-     * @param[in] url 完整 HTTPS 地址，需满足当前传输接口的地址策略。
-     * @param[in] path UTF-8 本地目标文件路径，目标必须尚不存在。
-     * @param[in] cancel 协作式取消判断函数；返回 true 时应终止当前操作。
-     * @param[in] progress 字节进度回调，参数顺序为已完成字节数、总字节数。
-     * @return 成功发布的目标文件字节数。
+     * @param[in] url An absolute HTTPS URL allowed by the transport's URL policy.
+     * @param[in] path The UTF-8 destination path; the file must not already exist.
+     * @param[in] cancel A cooperative cancellation predicate; true requests termination of the operation.
+     * @param[in] progress The byte-progress callback, receiving completed bytes followed by total bytes.
+     *
+     * @return The size of the completed destination file, in bytes.
      */
     uint64_t download(
         const std::string& url,
@@ -92,10 +97,11 @@ class StorageService {
     );
 
     /**
-     * 根据文件扩展名推断支持的图片或视频 MIME 类型。
+     * Infers a supported image or video MIME type from the filename extension.
      *
-     * @param[in] name 文件名称，用于对象元数据及 MIME 类型推断。
-     * @return 受支持的 MIME 类型；扩展名不支持时抛出 SDK 错误。
+     * @param[in] name The filename used for object metadata and MIME type inference.
+     *
+     * @return A supported MIME type; unsupported extensions throw an SDK error.
      */
     static std::string content_type(
         const std::string& name
@@ -104,7 +110,7 @@ class StorageService {
   private:
 
     /**
-     * 保留共享 API 服务，使子控制器在客户端句柄释放后仍可使用。
+     * Retains the shared API service so child controllers survive destruction of the client handle.
      */
     std::shared_ptr<ApiService> api_;
 };

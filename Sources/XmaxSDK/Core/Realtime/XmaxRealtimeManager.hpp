@@ -22,20 +22,21 @@
 namespace xmax::detail {
 
 /**
- * 管理媒体绑定、RTC 连接和视频生成生命周期；耗时操作在串行执行器中完成。
+ * Manages media bindings, RTC connections, and generation lifecycle on a serialized executor.
  */
 class XmaxRealtimeManager {
 
   public:
 
     /**
-     * 使用共享 API 服务及原生工厂构建独立的实时生命周期控制器。
+     * Creates an independent realtime lifecycle controller with shared API services and native factories.
      *
-     * @param[in] api 共享 API 服务，控制器在其生命周期内保留该引用。
-     * @param[in] factory 创建底层原生适配器的工厂，不得返回空对象。
-     * @param[in] heartbeat 活动会话心跳间隔，单位为毫秒。
-     * @param[in] camera 创建原生摄像头适配器的工厂。
-     * @param[in] history 可选的按模型和方向保存的画质历史，空引用表示不持久化。
+     * @param[in] api The shared API service, retained for the controller's lifetime.
+     * @param[in] factory The native adapter factory, which must not return an empty object.
+     * @param[in] heartbeat The active-session heartbeat interval, in milliseconds.
+     * @param[in] camera The native camera adapter factory.
+     * @param[in] history Optional quality history scoped by model and direction; an empty reference disables
+     * persistence.
      */
     explicit XmaxRealtimeManager(
         std::shared_ptr<ApiService> api,
@@ -46,26 +47,34 @@ class XmaxRealtimeManager {
     );
 
     /**
-     * 取消在途操作，关闭媒体与 RTC 资源并停止生命周期执行器。
+     * Cancels in-flight work, closes media and RTC resources, and stops lifecycle execution.
      */
     ~XmaxRealtimeManager();
 
     /**
-     * 绑定外部视频输入，并进入媒体就绪状态。
-     *
-     * @param[in] format 输入尺寸和帧率，支持范围见 xmax_video_format。
+     * Permanently closes native resources and drains application delivery before stopping lifecycle work.
+     * Safe to repeat; source receivers remain inert even while an in-flight call retains this object.
      */
-    void prepare(
+    void shutdown() noexcept;
+
+    /**
+     * Binds external video input and enters the media-ready state.
+     *
+     * @param[in] format The input dimensions and frame rate; see xmax_video_format for limits.
+     *
+     * @return The revision identifying this external source binding.
+     */
+    uint64_t prepare(
         xmax_video_format format
     );
 
     /**
-     * 在需要时建立连接并启动生成，阻塞等待结果首帧。
+     * Connects if needed and starts generation, blocking until the first result frame.
      *
-     * @param[in] prompt UTF-8 生成提示词。
-     * @param[in] reference 参考图片路径或服务可接受的地址，空文本表示不提供参考图片。
-     * @param[in] face 是否启用生成条件中的人脸修复。
-     * @param[in] microphone 是否在加入 RTC 房间时启动麦克风采集。
+     * @param[in] prompt The generation prompt, encoded as UTF-8.
+     * @param[in] reference A reference image path or service-supported URL; empty omits the reference.
+     * @param[in] face Whether to enable face restoration for generation.
+     * @param[in] microphone Whether to start microphone capture when joining the RTC room.
      */
     void start(
         std::string prompt,
@@ -75,11 +84,11 @@ class XmaxRealtimeManager {
     );
 
     /**
-     * 替换当前任务的生成条件。
+     * Replaces the current task's generation conditions.
      *
-     * @param[in] prompt UTF-8 生成提示词。
-     * @param[in] reference 参考图片路径或服务可接受的地址，空文本表示不提供参考图片。
-     * @param[in] face 是否启用生成条件中的人脸修复。
+     * @param[in] prompt The generation prompt, encoded as UTF-8.
+     * @param[in] reference A reference image path or service-supported URL; empty omits the reference.
+     * @param[in] face Whether to enable face restoration for generation.
      */
     void update(
         std::string prompt,
@@ -88,29 +97,64 @@ class XmaxRealtimeManager {
     );
 
     /**
-     * 取消在途操作并断开连接，可选择同时关闭本地媒体。
+     * Cancels in-flight work and disconnects, optionally closing local media.
      *
-     * @param[in] close 是否同时释放本地媒体和缓存生成条件。
+     * @param[in] close Whether to also release local media and cached generation conditions.
      */
     void disconnect(
         bool close
     );
 
     /**
-     * 同步复制并提交外部输入帧，允许从媒体线程调用。
+     * Copies and submits an external frame synchronously; may be called on a media thread.
      *
-     * @param[in] frame 待交付的视频帧或借用视图；同步调用返回前像素必须有效。
+     * @param[in] frame The frame or borrowed view to deliver; its pixels must remain valid until this
+     * synchronous call returns.
      */
     void push(
         const xmax_video_frame& frame
     );
 
     /**
-     * 启动指定摄像头并等待真实首帧，保留实际采集尺寸并进入就绪状态。
+     * Submits a source-bound external frame; replaced or closed bindings silently discard input.
      *
-     * @param[in] device UTF-8 摄像头设备标识，空文本选择默认摄像头。
-     * @param[in] format 输入尺寸和帧率，支持范围见 xmax_video_format。
-     * @param[in] microphone 是否在加入 RTC 房间时启动麦克风采集。
+     * @param[in] frame The borrowed pixels, copied before this call returns.
+     * @param[in] binding The revision returned when this source was bound.
+     */
+    void push(
+        const xmax_video_frame& frame,
+        uint64_t binding
+    );
+
+    /**
+     * Reports whether a particular external source currently supplies the active connection.
+     *
+     * @param[in] binding The revision returned when this source was bound.
+     *
+     * @return False for stale bindings, camera mode, or inactive publication.
+     */
+    bool requesting(
+        uint64_t binding
+    ) const;
+
+    /**
+     * Cancels work using a failed external source and schedules media, connection, and session cleanup.
+     *
+     * @param[in] binding The source revision; stale or already-failed bindings are ignored.
+     * @param[in] error The source failure, copied and redacted before application delivery.
+     */
+    void external_failure(
+        uint64_t binding,
+        Error error
+    );
+
+    /**
+     * Starts a camera, waits for its first frame, and enters ready state with native capture dimensions
+     * preserved.
+     *
+     * @param[in] device The UTF-8 camera identifier; an empty string selects the default camera.
+     * @param[in] format The input dimensions and frame rate; see xmax_video_format for limits.
+     * @param[in] microphone Whether to start microphone capture when joining the RTC room.
      */
     void prepare_camera(
         std::string device,
@@ -119,109 +163,138 @@ class XmaxRealtimeManager {
     );
 
     /**
-     * 切换正在使用的摄像头，并使用保留的生成条件恢复任务。
+     * Switches the active camera and resumes generation with retained conditions.
      *
-     * @param[in] device UTF-8 摄像头设备标识，空文本选择默认摄像头。
+     * @param[in] device The UTF-8 camera identifier; an empty string selects the default camera.
      */
     void switch_camera(
         std::string device
     );
 
     /**
-     * 在断开连接后释放本地采集和输入绑定。
+     * Releases local capture and input bindings after disconnection.
      */
     void stop_media();
 
     /**
-     * 创建服务端会话并加入 RTC，暂不启动生成任务。
+     * Creates a server session and joins RTC without starting generation.
      *
-     * @param[in] microphone 是否在加入 RTC 房间时启动麦克风采集。
+     * @param[in] microphone Whether to start microphone capture when joining the RTC room.
      */
     void connect(
         bool microphone
     );
 
     /**
-     * 使用指定或缓存的生成条件启动任务，阻塞等待结果首帧。
+     * Starts a task with supplied or cached conditions, blocking until the first result frame.
      *
-     * @param[in] value 可选生成条件；空指针复用此前条件，首次调用必须提供条件。
+     * @param[in] value Optional generation conditions; null reuses previous conditions, but the first call
+     * requires them.
      */
     void generate(
         const xmax_generation_context* value
     );
 
     /**
-     * 读取当前会话状态、会话标识和任务标识。
+     * Returns the session state, session identifier, and task identifier.
      */
     xmax_event state_snapshot();
 
     /**
-     * 读取当前绑定的视频输入规格。
+     * Returns the currently bound input video format.
      */
     xmax_video_format format();
 
     /**
-     * 读取当前或下次连接使用的远端播放音量。
+     * Returns the remote playback volume for the current or next connection.
      *
-     * @return 范围为 [0, 1] 的播放音量，初始值为 0。
+     * @return The playback volume in [0, 1], initially 0.
      */
     float volume();
 
     /**
-     * 设置帧插值开关；缺少插值后端时拒绝启用。
+     * Configures frame interpolation; enabling requires a native backend.
      *
-     * @param[in] enabled true 表示启用，false 表示关闭。
+     * @param[in] enabled True to enable; false to disable.
      */
     void interpolation(
         bool enabled
     );
 
     /**
-     * 校验并应用上行码率限制和降级偏好。
+     * Validates and applies uplink bitrate limits and degradation preference.
      *
-     * @param[in] value 上行码率限制与降级偏好，单位和特殊值见 xmax_encoding_config。
+     * @param[in] value The uplink bitrate limits and degradation preference; see xmax_encoding_config for
+     * units and special values.
      */
     void encoding(
         xmax_encoding_config value
     );
 
     /**
-     * 开启或关闭画质自适应，并重置网络观察窗口。
+     * Commits RTC publication mirroring before display settings, retaining the previous configuration on
+     * failure.
      *
-     * @param[in] enabled true 表示启用，false 表示关闭。
+     * @param[in] value The local preview, remote display, and published-video mirror settings.
+     */
+    void video_mirror(
+        xmax_video_mirror_config value
+    );
+
+    /**
+     * Returns the mirror configuration retained for the current and next connection.
+     */
+    xmax_video_mirror_config video_mirror();
+
+    /**
+     * Enables or disables quality adaptation and resets the network observation window.
+     *
+     * @param[in] enabled True to enable; false to disable.
      */
     void adaptive(
         bool enabled
     );
 
     /**
-     * 读取当前双向画质档位及生效的视频规格。
+     * Returns the current uplink and downlink quality levels and effective video formats.
      *
-     * @return 当前自适应开关、上下行画质档位以及实际使用的视频尺寸和帧率。
+     * @return The adaptation setting, directional quality levels, and effective dimensions and frame rates.
      */
     xmax_quality_status quality();
 
     /**
-     * 非阻塞检查当前外部输入是否请求供帧。
+     * Reports whether external input requests frames without waiting for lifecycle work.
      *
-     * @return 外部输入正在请求供帧时为 true；摄像头模式或未请求供帧时为 false。
+     * @return True when external input requests frames; false for camera mode or no request.
      */
     bool requesting() const;
 
     /**
-     * 设置并保存当前或下次连接使用的远端播放音量。
+     * Sets and retains the remote playback volume for the current or next connection.
      *
-     * @param[in] value 范围为 [0, 1] 的有限音量值，0 表示静音。
+     * @param[in] value A finite volume in [0, 1]; 0 mutes playback.
      */
     void volume(
         float value
     );
 
     /**
-     * 非阻塞消费最早的待处理应用事件。
+     * Replaces the serialized remote audio/video listener, preserving playback and the current listener
+     * if native audio observation cannot be enabled.
      *
-     * @param[out] event 接收最早的待处理应用事件，队列为空时保持原值。
-     * @return 取得事件返回 true；当前无事件返回 false。
+     * @param[in] listener The owned-packet callback, or an empty function to discard queued output and stop
+     * observation. An in-flight callback may finish after this method returns.
+     */
+    void media_listener(
+        RemoteMediaListener listener
+    );
+
+    /**
+     * Consumes the oldest pending application event without blocking.
+     *
+     * @param[out] event Receives the oldest pending event; unchanged if the queue is empty.
+     *
+     * @return True if an event was retrieved; false if no event is pending.
      */
     bool poll(
         xmax_event& event
@@ -230,42 +303,43 @@ class XmaxRealtimeManager {
     }
 
     /**
-     * 非阻塞取出最新的远端结果帧，并转移该帧的所有权。
+     * Acquires the latest remote result frame without blocking, transferring ownership.
      *
-     * @return 返回的帧持有像素数据；没有新帧时返回空对象。
+     * @return A frame that retains its pixels, or an empty object if no new frame is available.
      */
     std::shared_ptr<Frame> acquire_frame() {
         return render_.acquire_frame();
     }
 
     /**
-     * 非阻塞取出最新的本地预览帧，并转移该帧的所有权。
+     * Acquires the latest local preview frame without blocking, transferring ownership.
      *
-     * @return 返回的帧持有像素数据；没有新帧时返回空对象。
+     * @return A frame that retains its pixels, or an empty object if no new frame is available.
      */
     std::shared_ptr<Frame> acquire_local_frame() {
         return render_.acquire_local_frame();
     }
 
     /**
-     * 更新已就绪且未连接的摄像头编码规格，失败时尝试恢复原规格。
+     * Updates a ready, disconnected camera's encoding format, attempting to restore the previous format on
+     * failure.
      *
-     * @param[in] format 模型支持的目标尺寸和帧率。
+     * @param[in] format The target dimensions and frame rate supported by the model.
      */
     void update_camera_format(
         xmax_video_format format
     );
 
     /**
-     * 读取当前摄像头规格，没有摄像头流时返回全零。
+     * Returns the camera format, or an all-zero format if no camera stream exists.
      */
     xmax_video_format camera_format();
 
     /**
-     * 在生成中提交指定方向的档位，不锁定后续自动调档。
+     * Applies a directional quality level during generation without locking out subsequent adaptation.
      *
-     * @param[in] direction 0 为上行，1 为下行。
-     * @param[in] level 目标档位，范围为 [1, 5]。
+     * @param[in] direction 0 for uplink; 1 for downlink.
+     * @param[in] level The target quality level, in [1, 5].
      */
     void quality_level(
         int direction,
@@ -273,15 +347,16 @@ class XmaxRealtimeManager {
     );
 
     /**
-     * 读取包含原因和错误的当前状态快照。
+     * Returns the current state snapshot with its reason and error.
      */
     xmax_event_info state_info();
 
     /**
-     * 非阻塞读取带状态原因和错误详情的事件。
+     * Acquires an event with state reason and error details without blocking.
      *
-     * @param[out] info 接收最早的待处理事件。
-     * @return 是否取得事件。
+     * @param[out] info Receives the oldest pending event.
+     *
+     * @return Whether an event was retrieved.
      */
     bool poll(
         xmax_event_info& info
@@ -290,25 +365,26 @@ class XmaxRealtimeManager {
     }
 
     /**
-     * 按业务原因断开连接，保留本地媒体。
+     * Disconnects for the specified reason while retaining local media.
      *
-     * @param[in] reason 正常停止或方向变化原因。
+     * @param[in] reason The normal-stop or orientation-change reason.
      */
     void disconnect_reason(
         xmax_realtime_reason reason
     );
 
     /**
-     * 复制视口轨迹并预约异步发送，连续提交仅保留最新采样。
+     * Copies viewport trajectory samples and schedules asynchronous delivery, retaining only the latest
+     * pending sample.
      *
-     * @param[in] frame 采样点和实际视频布局。
+     * @param[in] frame The sampled points and actual video layout.
      */
     void submit_interaction(
         const xmax_interaction_frame& frame
     );
 
     /**
-     * 获取当前任务尚未过期的归一化轨迹副本。
+     * Returns a copy of unexpired normalized points for the current task.
      */
     std::vector<xmax_point> trajectory() const {
         if (coordinator_.state() != XMAX_GENERATING)
@@ -317,172 +393,220 @@ class XmaxRealtimeManager {
     }
 
     /**
-     * 读取本实时控制器使用的模型能力。
+     * Returns the model capabilities used by this realtime controller.
      */
     xmax_model_info model_info() const {
         return RealtimeModelDefinition::info(RealtimeModelDefinition::parse(api_->config().model));
     }
 
     /**
-     * 委托渲染层在原生窗口显示结果帧及当前交互效果。
+     * Delegates result-frame and interaction-effect presentation to the render layer.
      *
-     * @param[in] frame 待显示的结果帧，调用期间保持有效。
-     * @param[in] window 当前线程拥有的 HWND。
-     * @param[in] content_mode 等比例适应或居中填满。
+     * @param[in] frame The result frame to display, valid throughout the call.
+     * @param[in] window An HWND owned by the calling thread.
+     * @param[in] content_mode Aspect fit or centered aspect fill.
      */
     void render_window(
         const Frame& frame,
         void* window,
         int32_t content_mode
     ) const {
-        render_.render_window(frame, window, content_mode, coordinator_.state() == XMAX_GENERATING);
+        render_.render_window(
+            frame,
+            window,
+            content_mode,
+            coordinator_.state() == XMAX_GENERATING
+        );
     }
 
   private:
 
     /**
-     * 保留共享 API 服务，使子控制器在客户端句柄释放后仍可使用。
+     * Retains the shared API service so child controllers survive destruction of the client handle.
      */
     std::shared_ptr<ApiService> api_;
 
     /**
-     * 管理服务端会话创建、保活和关闭的服务。
+     * The service managing server-session creation, keepalive, and closing.
      */
     XmaxRealtimeConnectionManager connection_;
 
     /**
-     * 负责 RTC 发布、生成信令及画质策略的控制器。
+     * The controller for RTC publication, generation signaling, and quality policy.
      */
     StreamController stream_;
 
     /**
-     * 负责原生媒体或外部输入绑定的控制器。
+     * The controller for native media and external input bindings.
      */
     MediaController media_;
 
     /**
-     * 负责本地预览与远端结果最新帧缓冲区的控制器。
+     * The controller retaining the latest local preview and remote result frames.
      */
     RenderController render_;
 
     /**
-     * 与当前连接一致的输入请求批次，供媒体线程检查。
+     * The lifecycle-queue-owned mirror configuration, retained after disconnection.
+     */
+    xmax_video_mirror_config mirror_{
+        sizeof(xmax_video_mirror_config),
+        0,
+        0,
+        0
+    };
+
+    /**
+     * The input-request revision for the current connection, checked by media threads.
      */
     std::atomic<uint64_t> input_epoch_{0};
 
     /**
-     * 当前媒体绑定批次，用于拒收旧绑定回调。
+     * The media-binding revision used to reject old callbacks.
      */
     std::atomic<uint64_t> media_epoch_{0};
 
     /**
-     * 摄像头绑定时保存的麦克风连接策略。
+     * Serializes binding revision changes with asynchronous fault admission.
+     */
+    std::mutex media_binding_mutex_;
+
+    /**
+     * The binding whose first unrecoverable fault was accepted, protected by media_binding_mutex_.
+     */
+    uint64_t failed_media_epoch_ = 0;
+
+    /**
+     * The microphone connection policy saved with the camera binding.
      */
     bool camera_microphone_ = false;
 
     /**
-     * 生成条件及任务轨迹的统一管理器。
+     * The manager for generation conditions and task trajectories.
      */
     XmaxRealtimeGenerationManager generation_;
 
     /**
-     * 生成管理器使用的条件类型。
+     * The conditions type used by the generation manager.
      */
     using Context = XmaxRealtimeGenerationManager::Context;
 
     /**
-     * 当前生命周期状态的原因和原始错误管理组件。
+     * The component retaining the lifecycle state's reason and original error.
      */
     RealtimeErrorHandler errors_;
 
     /**
-     * 最近一次活动会话标识，在断开后的状态快照中保留。
+     * The latest active session identifier, retained in disconnected state snapshots.
      */
     std::string last_session_id_;
 
     /**
-     * 最近一次生成任务标识，在断开后的状态快照中保留。
+     * The latest generation task identifier, retained in disconnected state snapshots.
      */
     std::string last_task_id_;
 
     /**
-     * 连接与生成启动的统一阶段计时组件。
+     * The stage timer for connection and generation startup.
      */
     RealtimeTiming timing_;
 
     /**
-     * 活动会话的心跳间隔，使用毫秒时长表示。
+     * The active-session heartbeat interval as a millisecond duration.
      */
     std::chrono::milliseconds heartbeat_interval_;
 
     /**
-     * 执行生命周期操作、管理取消和投递应用事件的协调器。
+     * The coordinator for lifecycle execution, cancellation, and application events.
      */
     RealtimeCoordinator coordinator_;
 
     /**
-     * 保护可供界面线程读取的交互任务身份。
+     * Ensures final shutdown finishes once, independently of temporary source-call references.
+     */
+    std::once_flag shutdown_once_;
+
+    /**
+     * The mutex protecting the interaction task identity read by UI threads.
      */
     std::mutex interaction_mutex_;
 
     /**
-     * 当前允许交互的任务标识，非生成状态为空。
+     * The task accepting interaction, or empty when generation is inactive.
      */
     std::string interaction_task_;
 
     /**
-     * 公平调度单个轨迹采样，避免连续鼠标输入占满生命周期执行器。
+     * The latest generation request revision; superseded and explicitly terminated requests are cancelled.
+     */
+    std::atomic<uint64_t> generation_request_{0};
+
+    /**
+     * Replaces an unfinished generation request, then executes after its cleanup on the lifecycle queue.
+     *
+     * @param[in] context Conditions to commit on success; an empty value reuses the last committed conditions.
+     * @param[in] microphone Whether to enable microphone capture if a connection must be created.
+     */
+    void request_generation(
+        std::optional<Context> context,
+        bool microphone
+    );
+
+    /**
+     * Schedules one trajectory sample fairly so continuous input cannot monopolize lifecycle execution.
      */
     void drain_interaction();
 
     /**
-     * 更新会话状态，并向接入方投递对应状态事件。
+     * Updates session state and delivers its state event to your app.
      *
-     * @param[in] state 新的实时生命周期状态。
+     * @param[in] state The new realtime lifecycle state.
      */
     void change_state(
         xmax_state state
     );
 
     /**
-     * 清理 RTC 与服务端会话，并根据选项释放媒体和生成条件。
+     * Cleans up RTC and the server session, optionally releasing media and generation conditions.
      *
-     * @param[in] close 是否同时释放本地媒体和缓存生成条件。
-     * @return 服务端会话已成功关闭时返回 true；关闭请求失败时返回 false 并投递错误事件。
+     * @param[in] close Whether to also release local media and cached generation conditions.
+     *
+     * @return True if the server session closed; false if closing failed, with an error event delivered.
      */
     bool cleanup(
         bool close
     );
 
     /**
-     * 为活动连接执行到期的服务端与房间保活。
+     * Runs due server-session and RTC room keepalives for an active connection.
      */
     void heartbeat();
 
     /**
-     * 在生成等待期间检查取消，并维持服务端和房间活跃。
+     * Checks cancellation and keeps the session and room alive while waiting for generation.
      *
-     * @param[in] cancel 协作式取消判断函数；返回 true 时应终止当前操作。
+     * @param[in] cancel A cooperative cancellation predicate; true requests termination of the operation.
      */
     void keepalive(
         const Cancel& cancel
     );
 
     /**
-     * 清理失败操作持有的资源，并投递原始 SDK 错误。
+     * Releases resources held by a failed operation and delivers the original SDK error.
      *
-     * @param[in] error 需要保留错误码与诊断的原始 SDK 异常。
+     * @param[in] error The original SDK exception whose code and diagnostic must be preserved.
      */
     void fail(
         Error error
     );
 
     /**
-     * 创建服务端会话并加入 RTC；取消或失败时回滚已分配资源。
+     * Creates a server session and joins RTC, rolling back allocated resources on cancellation or failure.
      *
-     * @param[in] cancel 协作式取消判断函数；返回 true 时应终止当前操作。
-     * @param[in] epoch 调用开始时捕获的取消批次，用于识别失效操作。
-     * @param[in] microphone 是否在加入 RTC 房间时启动麦克风采集。
+     * @param[in] cancel A cooperative cancellation predicate; true requests termination of the operation.
+     * @param[in] epoch The cancellation revision captured when the operation starts, used to reject stale
+     * work.
+     * @param[in] microphone Whether to start microphone capture when joining the RTC room.
      */
     void connect_impl(
         const Cancel& cancel,
@@ -491,10 +615,10 @@ class XmaxRealtimeManager {
     );
 
     /**
-     * 发送生成条件并接通输入帧交付，等待结果流首帧。
+     * Sends generation conditions, enables input delivery, and waits for the first result frame.
      *
-     * @param[in] context 本次生成使用的提示词、参考图片和人脸修复条件。
-     * @param[in] cancel 协作式取消判断函数；返回 true 时应终止当前操作。
+     * @param[in] context The prompt, reference image, and face-restoration conditions for this generation.
+     * @param[in] cancel A cooperative cancellation predicate; true requests termination of the operation.
      */
     void generate_impl(
         const Context& context,
@@ -502,15 +626,21 @@ class XmaxRealtimeManager {
     );
 
     /**
-     * 将本地预览绑定到新的媒体批次，拒收旧绑定的帧。
+     * Binds local preview to a new media revision, rejecting earlier frames.
      */
     void bind_local();
 
     /**
-     * 创建仅处理当前媒体绑定错误的回调，忽略旧绑定的回调。
+     * Invalidates local source callbacks and clears preview after media has stopped.
+     */
+    void unbind_local();
+
+    /**
+     * Creates a failure callback that accepts only the current media binding's errors.
      *
-     * @param[in] token 当前连接或媒体绑定的批次，用于拒收旧回调。
-     * @return 当前媒体绑定的错误回调；旧绑定触发的错误会被忽略。
+     * @param[in] token The connection or media-binding revision used to reject stale callbacks.
+     *
+     * @return The current binding's failure callback; errors from previous bindings are ignored.
      */
     std::function<void(Error)> media_failure(
         uint64_t token

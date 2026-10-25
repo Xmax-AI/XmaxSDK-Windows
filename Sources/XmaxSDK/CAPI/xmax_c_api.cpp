@@ -9,6 +9,7 @@
 //
 
 #include "Core/XmaxClient.hpp"
+#include "CAPI/RealtimeHandle.hpp"
 #include "Foundation/Logging/XmaxLogger.hpp"
 #include <algorithm>
 #include <cctype>
@@ -16,19 +17,19 @@
 using namespace xmax::detail;
 
 /**
- * 保存 C 客户端句柄对应的配置与服务入口，由 xmax_client_destroy 释放。
+ * Owns the C client's configuration and service entry point; released by xmax_client_destroy.
  */
 struct xmax_client_impl {
 
     /**
-     * 由当前 C 客户端句柄独占拥有的内部客户端。
+     * The internal client exclusively owned by this C handle.
      */
     XmaxClient client;
 
     /**
-     * 复制客户端配置并交由当前不透明句柄管理。
+     * Copies the client configuration into the handle's owned client.
      *
-     * @param[in] config 复制后保留的 API 凭证、模型标识和 HTTP 超时配置。
+     * @param[in] config The copied API credentials, model identifier, and HTTP timeout.
      */
     explicit xmax_client_impl(
         Config config
@@ -38,78 +39,85 @@ struct xmax_client_impl {
 };
 
 /**
- * 保存实时会话句柄及其独占控制器，由 xmax_realtime_destroy 释放。
+ * Releases an adopted listener context only after all captured callback references have been released.
  */
-struct xmax_realtime_impl {
+struct RemoteListenerContext {
 
     /**
-     * 由当前 C 实时句柄独占拥有的实时控制器。
+     * The copied function pointers and context supplied by the integrating application.
      */
-    std::unique_ptr<XmaxRealtimeManager> session;
+    xmax_remote_media_listener listener;
 
     /**
-     * 接管实时控制器并交由当前不透明句柄管理。
-     *
-     * @param[in] value 由当前句柄接管独占所有权的实时控制器。
+     * Whether registration succeeded and transferred context release responsibility to the SDK.
      */
-    explicit xmax_realtime_impl(
-        std::unique_ptr<XmaxRealtimeManager> value
-    )
-        : session(std::move(value)) {
+    bool adopted = false;
+
+    /**
+     * Invokes the optional application context releaser after successful ownership transfer.
+     */
+    ~RemoteListenerContext() {
+        if (adopted && listener.release_user_data) {
+            try {
+                listener.release_user_data(listener.user_data);
+            } catch (...) {
+                // Foreign context cleanup must not propagate exceptions through SDK destruction.
+            }
+        }
     }
 };
 
 /**
- * 拥有一次摄像头枚举快照；设备名称和标识在快照释放前有效。
+ * Owns a camera enumeration snapshot whose names and identifiers remain valid until release.
  */
 struct xmax_camera_list_impl {
 
     /**
-     * 当前枚举快照独占拥有的摄像头信息集合。
+     * The camera information owned by this enumeration snapshot.
      */
     std::vector<CameraDevice> devices;
 };
 
 /**
- * 拥有存储传输控制器，由 xmax_storage_destroy 释放。
+ * Owns a storage transfer controller; released by xmax_storage_destroy.
  */
 struct xmax_storage_impl {
 
     /**
-     * 由当前 C 存储句柄独占拥有的传输控制器。
+     * The storage controller exclusively owned by this C handle.
      */
     std::unique_ptr<XmaxStorageManager> storage;
 };
 
 /**
- * 保存上传成功后的对象元数据，由 xmax_uploaded_file_release 释放。
+ * Owns uploaded-object metadata; released by xmax_uploaded_file_release.
  */
 struct xmax_uploaded_file_impl {
 
     /**
-     * 由上传结果句柄拥有的存储对象元数据。
+     * The object metadata owned by this upload-result handle.
      */
     StoredFile file;
 };
 
 /**
- * 持有独立的帧所有权，使像素在帧句柄释放前保持有效。
+ * Retains frame ownership so pixels remain valid until handle release.
  */
 struct xmax_frame_impl {
 
     /**
-     * 共享的视频帧引用，确保句柄释放前像素数据一直有效。
+     * The shared frame reference that keeps pixels alive until handle release.
      */
     std::shared_ptr<Frame> frame;
 };
 
 /**
- * 拥有以 NUL 结尾的 UTF-8 返回文本，由 xmax_string_release 释放。
+ * Owns NUL-terminated UTF-8 text; released by xmax_string_release.
  */
 struct xmax_string_impl {
 
     /**
-     * 由字符串句柄拥有的 UTF-8 文本。
+     * The UTF-8 text owned by this string handle.
      */
     std::string value;
 };
@@ -117,19 +125,19 @@ struct xmax_string_impl {
 namespace {
 
 /**
- * 当前线程最近一次 SDK 操作的诊断缓冲区，以 NUL 结尾。
+ * The calling thread's NUL-terminated diagnostic buffer for the latest SDK operation.
  */
 thread_local char last_error[1024]{};
 
 /**
- * 当前线程最近一次失败的结构化诊断。
+ * The calling thread's latest structured failure diagnostic.
  */
 thread_local xmax_error_info last_error_detail{};
 
 /**
- * 在当前线程保存经过脱敏且不会截断 UTF-8 字符的错误文本。
+ * Stores a redacted error message without truncating a UTF-8 character.
  *
- * @param[in] message 以 NUL 结尾的原始诊断文本，由本方法执行脱敏并截取到线程缓冲区。
+ * @param[in] message The NUL-terminated diagnostic text to redact and truncate into thread-local storage.
  */
 void set_error(
     const char* message
@@ -141,41 +149,67 @@ void set_error(
         while (length && length < safe.size() && (static_cast<unsigned char>(safe[length]) & 0xc0) == 0x80)
             --length;
 
-        std::memcpy(last_error, safe.data(), length);
+        std::memcpy(
+            last_error,
+            safe.data(),
+            length
+        );
         last_error[length] = 0;
     } catch (...) {
-        std::strcpy(last_error, "SDK operation failed; diagnostic formatting unavailable");
+        std::strcpy(
+            last_error,
+            "SDK operation failed; diagnostic formatting unavailable"
+        );
     }
 }
 
 /**
- * 记录失败的 C 接口操作，避免日志轮询自身产生递归诊断。
+ * Logs failed C interface operations without recursively diagnosing log polling.
  *
- * @param[in] operation 失败的 C 接口名称，用于错误日志与轮询递归保护。
- * @param[in] code 本次 C 接口返回的负数 SDK 错误码。
+ * @param[in] operation The failed C function's name, used for error logging and polling recursion
+ * protection.
+ * @param[in] code The negative SDK result returned by this C function.
  */
 void log_failure(
     const char* operation,
     xmax_result code
 ) noexcept {
-    if (std::strncmp(operation, "xmax_logger_", 12) == 0)
+    if (std::strncmp(
+        operation,
+        "xmax_logger_",
+        12
+    ) == 0)
         return;
+
     XmaxLogger::write(
-        LogCategory::API, code == XMAX_CANCELLED ? XMAX_LOG_WARNING : XMAX_LOG_ERROR, [&](auto language) {
+        LogCategory::API,
+        code == XMAX_CANCELLED ? XMAX_LOG_WARNING : XMAX_LOG_ERROR,
+        [&](auto language) {
             return std::string(operation) + "\n├─ " +
-                   XmaxLogger::localized(language, "错误码：", "Error Code: ") + std::to_string(code) +
-                   "\n└─ " + XmaxLogger::localized(language, "原因：", "Reason: ") + last_error;
+                   XmaxLogger::localized(
+                       language,
+                       "错误码：",
+                       "Error Code: "
+                   ) +
+                   std::to_string(code) +
+                   "\n└─ " + XmaxLogger::localized(
+                       language,
+                       "原因：",
+                       "Reason: "
+                   ) + last_error;
         }
     );
 }
 
 /**
- * 在 C ABI 边界捕获异常，转换为错误码与线程局部诊断。
+ * Catches exceptions at the C ABI boundary and produces result codes and thread-local diagnostics.
  *
- * @tparam F 待执行操作的可调用对象类型。
- * @param[in] operation 当前 C 接口名称，用于失败诊断与日志分类。
- * @param[in] f 需在 C ABI 异常边界内执行的操作。
- * @return 成功返回 XMAX_OK；失败返回负数错误码，详情可通过 xmax_last_error 获取。
+ * @tparam F The callable type for the operation.
+ *
+ * @param[in] operation The C function name used for diagnostics and logging classification.
+ * @param[in] f The operation to execute inside the C ABI exception boundary.
+ *
+ * @return XMAX_OK on success, or a negative error code on failure. Use xmax_last_error for details.
  */
 template <class F>
 xmax_result protect(
@@ -205,50 +239,78 @@ xmax_result protect(
     }
 
     last_error_detail.code = code;
-    std::memcpy(last_error_detail.message, last_error, sizeof(last_error));
-    log_failure(operation, code);
+    std::memcpy(
+        last_error_detail.message,
+        last_error,
+        sizeof(last_error)
+    );
+    log_failure(
+        operation,
+        code
+    );
 
     return code;
 }
 
 /**
- * 在访问 ABI 结构体前校验其指针和 struct_size。
+ * Validates an ABI structure's pointer and struct_size before access.
  *
- * @tparam T 参与该操作的输入类型。
- * @param[in] value 需校验的 ABI 结构体指针，struct_size 不得小于当前结构体大小。
+ * @tparam T The input type used by the operation.
+ *
+ * @param[in] value The ABI structure pointer; struct_size must be at least the current structure's size.
  */
 template <class T>
 void sized(
     const T* value
 ) {
     require(
-        value && value->struct_size >= sizeof(T), XMAX_INVALID_ARGUMENT,
+        value && value->struct_size >= sizeof(T),
+        XMAX_INVALID_ARGUMENT,
         "Missing or incompatible structure size"
     );
 }
 
 /**
- * 校验必需的句柄或输出指针，拒绝空指针。
+ * Rejects a null required handle or output pointer.
  *
- * @param[in] p 必需的句柄或输出指针，不得为空。
+ * @param[in] p The required non-null handle or output pointer.
  */
 void handle(
     const void* p
 ) {
-    require(p != nullptr, XMAX_INVALID_ARGUMENT, "Handle or output pointer is null");
+    require(
+        p != nullptr,
+        XMAX_INVALID_ARGUMENT,
+        "Handle or output pointer is null"
+    );
 }
 
 /**
- * 删除复制后 API 凭证首尾的空白字符。
+ * Trims surrounding whitespace from a copied API credential.
  *
- * @param[in] s 需要移除首尾空白的已复制 API 凭证文本。
+ * @param[in] s The copied API credential to trim.
  */
 std::string trim(
     std::string s
 ) {
     auto ws = [](unsigned char c) { return std::isspace(c); };
-    s.erase(s.begin(), std::find_if_not(s.begin(), s.end(), ws));
-    s.erase(std::find_if_not(s.rbegin(), s.rend(), ws).base(), s.end());
+    s.erase(
+        s.begin(),
+        std::find_if_not(
+            s.begin(),
+            s.end(),
+            ws
+        )
+    );
+    s.erase(
+        std::find_if_not(
+            s.rbegin(),
+            s.rend(),
+            ws
+        )
+            .base(),
+        s.end()
+    );
 
     return s;
 }
@@ -257,28 +319,33 @@ std::string trim(
 extern "C" {
 
 /**
- * 查询模型支持的规格、像素限制和默认配置。
+ * Returns the model's supported formats, pixel limits, and defaults.
  *
- * @param[in] model 模型标识；NULL 使用 x2.1。
- * @param[in,out] info 输出结构体，调用前设置 struct_size。
- * @return 成功返回 XMAX_OK；失败返回负数错误码。
+ * @param[in] model The model identifier; NULL selects x2.1.
+ * @param[in,out] info The destination structure, with struct_size initialized.
+ *
+ * @return XMAX_OK on success, or a negative error code on failure.
  */
 xmax_result XMAX_CALL xmax_model_get_info(
     const char* model,
     xmax_model_info* info
 ) {
-    return protect(__func__, [&] {
-        sized(info);
-        *info = RealtimeModelDefinition::info(RealtimeModelDefinition::parse(model ? model : "x2.1"));
-    });
+    return protect(
+        __func__,
+        [&] {
+            sized(info);
+            *info = RealtimeModelDefinition::info(RealtimeModelDefinition::parse(model ? model : "x2.1"));
+        }
+    );
 }
 
 /**
- * 复制全局配置并创建客户端，不启动采集或云端会话。
+ * Copies the global configuration and creates a client without starting capture or a cloud session.
  *
- * @param[in] options 全局配置，需指定 ABI 版本和服务环境。
- * @param[out] out_client 接收客户端；失败时置为 NULL，由 xmax_client_destroy 释放。
- * @return 成功返回 XMAX_OK；失败返回负数错误码。
+ * @param[in] options The global configuration, including the ABI version and service environment.
+ * @param[out] out_client Receives the client, or NULL on failure. Release it with xmax_client_destroy.
+ *
+ * @return XMAX_OK on success, or a negative error code on failure.
  */
 xmax_result XMAX_CALL xmax_client_create_with_options(
     const xmax_client_options* options,
@@ -286,31 +353,40 @@ xmax_result XMAX_CALL xmax_client_create_with_options(
 ) {
     if (out_client)
         *out_client = nullptr;
-    return protect(__func__, [&] {
-        sized(options);
-        handle(out_client);
-        require(options->abi_version == XMAX_ABI_VERSION, XMAX_INVALID_ARGUMENT, "Unsupported C ABI version");
-        Config config;
-        config.key = trim(options->api_key ? options->api_key : "");
-        config.model = "x2.1";
-        config.environment = options->environment;
-        config.timeout_ms = options->http_timeout_ms ? options->http_timeout_ms : 15000;
-        auto client = std::make_unique<xmax_client_impl>(std::move(config));
-        XmaxLogger::configure(
-            options->logger_options,
-            options->environment == XMAX_ENVIRONMENT_CHINA ? XMAX_LOG_CHINESE : XMAX_LOG_ENGLISH
-        );
-        *out_client = client.release();
-    });
+    return protect(
+        __func__,
+        [&] {
+            sized(options);
+            handle(out_client);
+            require(
+                options->abi_version == XMAX_ABI_VERSION,
+                XMAX_INVALID_ARGUMENT,
+                "Unsupported C ABI version"
+            );
+            Config config;
+            config.key = trim(options->api_key ? options->api_key : "");
+            config.model = "x2.1";
+            config.environment = options->environment;
+            config.timeout_ms = options->http_timeout_ms ? options->http_timeout_ms : 15000;
+            auto client = std::make_unique<xmax_client_impl>(std::move(config));
+            XmaxLogger::configure(
+                options->logger_options,
+                options->environment == XMAX_ENVIRONMENT_CHINA ? XMAX_LOG_CHINESE : XMAX_LOG_ENGLISH
+            );
+            *out_client = client.release();
+        }
+    );
 }
 
 /**
- * 使用独立模型配置创建实时控制器。
+ * Creates a realtime controller with its own model configuration.
  *
- * @param[in] client 客户端句柄，不得为 NULL。
- * @param[in] config 实时配置，创建时复制。
- * @param[out] out_realtime 接收实时句柄；失败时置为 NULL，由 xmax_realtime_destroy 释放。
- * @return 成功返回 XMAX_OK；失败返回负数错误码。
+ * @param[in] client A non-null client handle.
+ * @param[in] config The realtime configuration, copied during creation.
+ * @param[out] out_realtime Receives the realtime handle, or NULL on failure. Release it with
+ * xmax_realtime_destroy.
+ *
+ * @return XMAX_OK on success, or a negative error code on failure.
  */
 xmax_result XMAX_CALL xmax_realtime_create_with_config(
     xmax_client client,
@@ -319,21 +395,64 @@ xmax_result XMAX_CALL xmax_realtime_create_with_config(
 ) {
     if (out_realtime)
         *out_realtime = nullptr;
-    return protect(__func__, [&] {
-        handle(client);
-        sized(config);
-        handle(out_realtime);
-        const std::string model = config->model ? config->model : "x2.1";
-        RealtimeModelDefinition::parse(model);
-        *out_realtime = new xmax_realtime_impl(client->client.create_realtime(model));
-    });
+    return protect(
+        __func__,
+        [&] {
+            handle(client);
+            sized(config);
+            handle(out_realtime);
+            const std::string model = config->model ? config->model : "x2.1";
+            RealtimeModelDefinition::parse(model);
+            *out_realtime = new xmax_realtime_impl(client->client.create_realtime(model));
+        }
+    );
 }
 
 /**
- * 读取当前线程最近一次操作的结构化错误；本查询不会清除错误。
+ * Creates a realtime controller with an initial quality-adaptation policy.
  *
- * @param[in,out] info 输出结构体，调用前设置 struct_size。
- * @return 成功返回 XMAX_OK；失败返回负数错误码。
+ * @param[in] client A valid client handle.
+ * @param[in] options The creation options, copied during this call.
+ * @param[out] out_realtime Receives the controller; cleared to NULL on failure.
+ *
+ * @return XMAX_OK on success, or a negative error code on failure.
+ */
+xmax_result XMAX_CALL xmax_realtime_create_with_options(
+    xmax_client client,
+    const xmax_realtime_options* options,
+    xmax_realtime* out_realtime
+) {
+    if (out_realtime)
+        *out_realtime = nullptr;
+    return protect(
+        __func__,
+        [&] {
+            handle(client);
+            sized(options);
+            handle(out_realtime);
+            require(
+                options->adaptive_quality_enabled == 0 || options->adaptive_quality_enabled == 1,
+                XMAX_INVALID_ARGUMENT,
+                "Adaptive quality must be 0 or 1"
+            );
+            const std::string model = options->model ? options->model : "x2.1";
+            RealtimeModelDefinition::parse(model);
+            *out_realtime = new xmax_realtime_impl(
+                client->client.create_realtime(
+                    model,
+                    options->adaptive_quality_enabled != 0
+                )
+            );
+        }
+    );
+}
+
+/**
+ * Returns the calling thread's most recent structured error without clearing it.
+ *
+ * @param[in,out] info The destination structure, with struct_size initialized.
+ *
+ * @return XMAX_OK on success, or a negative error code on failure.
  */
 xmax_result XMAX_CALL xmax_last_error_info(
     xmax_error_info* info
@@ -346,184 +465,241 @@ xmax_result XMAX_CALL xmax_last_error_info(
 }
 
 /**
- * 读取当前状态、状态原因和关联错误。
+ * Returns the current state, state reason, and associated error.
  *
- * @param[in] realtime 实时句柄。
- * @param[in,out] info 输出结构体，调用前设置 struct_size。
- * @return 成功返回 XMAX_OK；失败返回负数错误码。
+ * @param[in] realtime The realtime handle.
+ * @param[in,out] info The destination structure, with struct_size initialized.
+ *
+ * @return XMAX_OK on success, or a negative error code on failure.
  */
 xmax_result XMAX_CALL xmax_realtime_get_state_info(
     xmax_realtime realtime,
     xmax_event_info* info
 ) {
-    return protect(__func__, [&] {
-        handle(realtime);
-        sized(info);
-        *info = realtime->session->state_info();
-    });
+    return protect(
+        __func__,
+        [&] {
+            handle(realtime);
+            sized(info);
+            *info = realtime->session->state_info();
+        }
+    );
 }
 
 /**
- * 非阻塞读取包含状态原因和错误详情的最早事件。
+ * Consumes the oldest event with its state reason and error details without blocking.
  *
- * @param[in] realtime 实时句柄。
- * @param[in,out] info 输出结构体，调用前设置 struct_size。
- * @return 成功返回 XMAX_OK；失败返回负数错误码。
- * @note 队列为空返回 XMAX_NO_EVENT；与 xmax_realtime_poll_event 共用队列，请选择一种消费方式。
+ * @param[in] realtime The realtime handle.
+ * @param[in,out] info The destination structure, with struct_size initialized.
+ *
+ * @return XMAX_OK on success, or a negative error code on failure.
+ *
+ * @note An empty queue returns XMAX_NO_EVENT. This shares the xmax_realtime_poll_event queue; use one
+ * consumer interface.
  */
 xmax_result XMAX_CALL xmax_realtime_poll_event_info(
     xmax_realtime realtime,
     xmax_event_info* info
 ) {
     bool found = false;
-    const auto result = protect(__func__, [&] {
-        handle(realtime);
-        sized(info);
-        found = realtime->session->poll(*info);
-    });
+    const auto result = protect(
+        __func__,
+        [&] {
+            handle(realtime);
+            sized(info);
+            found = realtime->session->poll(*info);
+        }
+    );
     return result == XMAX_OK && !found ? XMAX_NO_EVENT : result;
 }
 
 /**
- * 按业务原因断开连接，保留本地媒体预览。
+ * Disconnects for the specified reason while retaining local media preview.
  *
- * @param[in] realtime 实时句柄。
- * @param[in] reason 正常停止或方向变化；失败原因由 SDK 报告。
- * @return 成功返回 XMAX_OK；失败返回负数错误码。
+ * @param[in] realtime The realtime handle.
+ * @param[in] reason Normal termination or orientation change; the SDK reports failure reasons.
+ *
+ * @return XMAX_OK on success, or a negative error code on failure.
  */
 xmax_result XMAX_CALL xmax_realtime_disconnect_with_reason(
     xmax_realtime realtime,
     xmax_realtime_reason reason
 ) {
-    return protect(__func__, [&] {
-        handle(realtime);
-        realtime->session->disconnect_reason(reason);
-    });
+    return protect(
+        __func__,
+        [&] {
+            handle(realtime);
+            realtime->session->disconnect_reason(reason);
+        }
+    );
 }
 
 /**
- * 更新已就绪且未连接的摄像头编码规格，保留预览绑定和设备选择。
+ * Updates a ready, disconnected camera's encoding format while retaining preview and device selection.
  *
- * @param[in] realtime 实时句柄。
- * @param[in] format 模型支持的新规格，保留已设置的码率和编码偏好。
- * @return 成功返回 XMAX_OK；失败返回负数错误码。
- * @note 操作会阻塞，应在工作线程执行；准备失败时尝试恢复此前规格。
+ * @param[in] realtime The realtime handle.
+ * @param[in] format The new model-supported format; existing bitrate and encoding preferences are retained.
+ *
+ * @return XMAX_OK on success, or a negative error code on failure.
+ *
+ * @note This call blocks; use a worker thread. Preparation failure attempts to restore the previous format.
  */
 xmax_result XMAX_CALL xmax_realtime_update_camera_format(
     xmax_realtime realtime,
     const xmax_video_format* format
 ) {
-    return protect(__func__, [&] {
-        handle(realtime);
-        handle(format);
-        realtime->session->update_camera_format(*format);
-    });
+    return protect(
+        __func__,
+        [&] {
+            handle(realtime);
+            handle(format);
+            realtime->session->update_camera_format(*format);
+        }
+    );
 }
 
 /**
- * 切换已就绪摄像头的分辨率，保留帧率和编码配置。
+ * Changes a ready camera's resolution while retaining its frame rate and encoding configuration.
  *
- * @param[in] realtime 实时句柄。
- * @param[in] preset 目标分辨率预设，不能为 NONE。
- * @return 成功返回 XMAX_OK；失败返回负数错误码。
+ * @param[in] realtime The realtime handle.
+ * @param[in] preset The target resolution preset; NONE is not permitted.
+ *
+ * @return XMAX_OK on success, or a negative error code on failure.
  */
 xmax_result XMAX_CALL xmax_realtime_update_camera_preset(
     xmax_realtime realtime,
     xmax_camera_preset preset
 ) {
-    return protect(__func__, [&] {
-        handle(realtime);
-        const auto current = realtime->session->camera_format();
-        require(current.width != 0, XMAX_INVALID_STATE, "No camera stream is active");
-        realtime->session->update_camera_format(RealtimeModelDefinition::preset_format(preset, current.fps));
-    });
+    return protect(
+        __func__,
+        [&] {
+            handle(realtime);
+            const auto current = realtime->session->camera_format();
+            require(
+                current.width != 0,
+                XMAX_INVALID_STATE,
+                "No camera stream is active"
+            );
+            realtime->session->update_camera_format(RealtimeModelDefinition::preset_format(
+                preset,
+                current.fps
+            ));
+        }
+    );
 }
 
 /**
- * 查询摄像头当前编码规格与预设，不随网络调档改变。
+ * Returns the camera's encoding format and preset, independent of network quality changes.
  *
- * @param[in] realtime 实时句柄。
- * @param[out] format 接收规格；没有摄像头流时清零。
- * @param[out] preset 接收预设；没有摄像头流时为 NONE。
- * @return 成功返回 XMAX_OK；失败返回负数错误码。
+ * @param[in] realtime The realtime handle.
+ * @param[out] format Receives the format; cleared when no camera stream exists.
+ * @param[out] preset Receives the preset; NONE when no camera stream exists.
+ *
+ * @return XMAX_OK on success, or a negative error code on failure.
  */
 xmax_result XMAX_CALL xmax_realtime_get_camera_format(
     xmax_realtime realtime,
     xmax_video_format* format,
     xmax_camera_preset* preset
 ) {
-    return protect(__func__, [&] {
-        handle(realtime);
-        handle(format);
-        handle(preset);
-        *format = realtime->session->camera_format();
-        *preset = RealtimeModelDefinition::preset(*format);
-    });
+    return protect(
+        __func__,
+        [&] {
+            handle(realtime);
+            handle(format);
+            handle(preset);
+            *format = realtime->session->camera_format();
+            *preset = RealtimeModelDefinition::preset(*format);
+        }
+    );
 }
 
 /**
- * 在生成中设置上行档位，后续网络自适应仍可继续调档。
+ * Sets the uplink level during generation without disabling subsequent network adaptation.
  *
- * @param[in] realtime 实时句柄。
- * @param[in] level 目标档位，范围为 [1, 5]；1 画质最高。
- * @return 成功返回 XMAX_OK；失败返回负数错误码。
- * @note 操作会阻塞；失败时保留此前档位。
+ * @param[in] realtime The realtime handle.
+ * @param[in] level The target level, in [1, 5]; 1 provides the highest quality.
+ *
+ * @return XMAX_OK on success, or a negative error code on failure.
+ *
+ * @note This call blocks and preserves the previous level on failure.
  */
 xmax_result XMAX_CALL xmax_realtime_set_uplink_quality_level(
     xmax_realtime realtime,
     int32_t level
 ) {
-    return protect(__func__, [&] {
-        handle(realtime);
-        realtime->session->quality_level(0, level);
-    });
+    return protect(
+        __func__,
+        [&] {
+            handle(realtime);
+            realtime->session->quality_level(
+                0,
+                level
+            );
+        }
+    );
 }
 
 /**
- * 在生成中设置下行档位，后续网络自适应仍可继续调档。
+ * Sets the downlink level during generation without disabling subsequent network adaptation.
  *
- * @param[in] realtime 实时句柄。
- * @param[in] level 目标档位，范围为 [1, 5]；1 画质最高。
- * @return 成功返回 XMAX_OK；失败返回负数错误码。
- * @note 操作会阻塞；失败时保留此前档位。
+ * @param[in] realtime The realtime handle.
+ * @param[in] level The target level, in [1, 5]; 1 provides the highest quality.
+ *
+ * @return XMAX_OK on success, or a negative error code on failure.
+ *
+ * @note This call blocks and preserves the previous level on failure.
  */
 xmax_result XMAX_CALL xmax_realtime_set_downlink_quality_level(
     xmax_realtime realtime,
     int32_t level
 ) {
-    return protect(__func__, [&] {
-        handle(realtime);
-        realtime->session->quality_level(1, level);
-    });
+    return protect(
+        __func__,
+        [&] {
+            handle(realtime);
+            realtime->session->quality_level(
+                1,
+                level
+            );
+        }
+    );
 }
 
 /**
- * 提交轨迹采样，由 SDK 映射视频坐标并异步发送当前任务的 tracks 信令。
+ * Maps trajectory samples to video coordinates and asynchronously sends tracks for the current task.
  *
- * @param[in] realtime 正在生成的实时句柄。
- * @param[in] frame 当前视口的轨迹采样，调用时同步复制。
- * @return 成功返回 XMAX_OK；失败返回负数错误码。
- * @note 采样采用最新值合并，适应模式的黑边采样会被忽略；成功表示已接收，不表示服务端已处理。
+ * @param[in] realtime The realtime handle with an active generation task.
+ * @param[in] frame The viewport trajectory samples, copied during this call.
+ *
+ * @return XMAX_OK on success, or a negative error code on failure.
+ *
+ * @note Pending samples are coalesced to the latest values; aspect-fit margins are ignored. Success
+ * acknowledges submission, not server processing.
  */
 xmax_result XMAX_CALL xmax_realtime_submit_interaction(
     xmax_realtime realtime,
     const xmax_interaction_frame* frame
 ) {
-    return protect(__func__, [&] {
-        handle(realtime);
-        sized(frame);
-        realtime->session->submit_interaction(*frame);
-    });
+    return protect(
+        __func__,
+        [&] {
+            handle(realtime);
+            sized(frame);
+            realtime->session->submit_interaction(*frame);
+        }
+    );
 }
 
 /**
- * 复制当前任务尚未过期的归一化轨迹，供界面绘制自定义效果。
+ * Copies unexpired normalized trajectory points for custom effect rendering.
  *
- * @param[in] realtime 实时句柄。
- * @param[out] points 输出点数组；capacity 为 0 时允许为 NULL。
- * @param[in] capacity 数组容量，最多需要 256 个元素。
- * @param[out] count 接收所需点数；容量不足返回 XMAX_BUFFER_TOO_SMALL。
- * @return 成功返回 XMAX_OK；失败返回负数错误码。
+ * @param[in] realtime The realtime handle.
+ * @param[out] points The destination point array; may be NULL when capacity is 0.
+ * @param[in] capacity The array capacity; at most 256 elements are needed.
+ * @param[out] count Receives the required point count; insufficient capacity returns XMAX_BUFFER_TOO_SMALL.
+ *
+ * @return XMAX_OK on success, or a negative error code on failure.
  */
 xmax_result XMAX_CALL xmax_realtime_get_trajectory(
     xmax_realtime realtime,
@@ -531,28 +707,43 @@ xmax_result XMAX_CALL xmax_realtime_get_trajectory(
     size_t capacity,
     size_t* count
 ) {
-    return protect(__func__, [&] {
-        handle(realtime);
-        handle(count);
-        const auto values = realtime->session->trajectory();
-        *count = values.size();
-        require(capacity >= values.size(), XMAX_BUFFER_TOO_SMALL, "Trajectory buffer is too small");
-        if (!values.empty()) {
-            handle(points);
-            std::copy(values.begin(), values.end(), points);
+    return protect(
+        __func__,
+        [&] {
+            handle(realtime);
+            handle(count);
+            const auto values = realtime->session->trajectory();
+            *count = values.size();
+            require(
+                capacity >= values.size(),
+                XMAX_BUFFER_TOO_SMALL,
+                "Trajectory buffer is too small"
+            );
+            if (!values.empty()) {
+                handle(points);
+                std::copy(
+                    values.begin(),
+                    values.end(),
+                    points
+                );
+            }
         }
-    });
+    );
 }
 
 /**
- * 在 HWND 上显示指定结果帧，并叠加默认轨迹效果。
+ * Renders a result frame and the default trajectory effect in an HWND.
  *
- * @param[in] realtime 实时句柄；轨迹沿用提交采样的任务。
- * @param[in] frame 待显示帧，调用期间必须有效。
- * @param[in] window Windows HWND，由当前线程拥有。
- * @param[in] content_mode 适应或填满模式，应与轨迹采样配置一致。
- * @return 成功返回 XMAX_OK；失败返回负数错误码。
- * @note 从 HWND 所属线程调用；其他界面框架可通过轨迹查询接口自行绘制。
+ * @param[in] realtime The realtime handle; the trajectory belongs to the sampled task.
+ * @param[in] frame The frame to display, valid for this call.
+ * @param[in] window A Windows HWND owned by the calling thread.
+ * @param[in] content_mode The aspect-fit or aspect-fill mode, matching the trajectory sampling
+ * configuration.
+ *
+ * @return XMAX_OK on success, or a negative error code on failure.
+ *
+ * @note Call on the HWND owner thread. Other UI frameworks can query trajectory points and draw their own
+ * effects.
  */
 xmax_result XMAX_CALL xmax_realtime_render_window(
     xmax_realtime realtime,
@@ -560,17 +751,24 @@ xmax_result XMAX_CALL xmax_realtime_render_window(
     void* window,
     int32_t content_mode
 ) {
-    return protect(__func__, [&] {
-        handle(realtime);
-        handle(frame);
-        realtime->session->render_window(*frame->frame, window, content_mode);
-    });
+    return protect(
+        __func__,
+        [&] {
+            handle(realtime);
+            handle(frame);
+            realtime->session->render_window(
+                *frame->frame,
+                window,
+                content_mode
+            );
+        }
+    );
 }
 
 /**
- * 获取 SDK 的语义版本号。
+ * Returns the SDK's semantic version.
  *
- * @return 静态 UTF-8 版本文本，不得修改或释放。
+ * @return A static UTF-8 version string; do not modify or release it.
  */
 const char* XMAX_CALL xmax_version(
     void
@@ -579,10 +777,11 @@ const char* XMAX_CALL xmax_version(
 }
 
 /**
- * 获取当前线程最近一次 SDK 操作的诊断文本。
+ * Returns the calling thread's most recent SDK diagnostic message.
  *
- * @return 借用的 NUL 结尾 UTF-8 文本，不得释放；需保留时应立即复制。
- * @note 诊断在当前线程下一次 SDK 操作前有效；不同线程的错误文本相互独立。
+ * @return A borrowed NUL-terminated UTF-8 string; do not release it. Copy immediately to retain it.
+ *
+ * @note Valid until the next SDK operation on this thread. Diagnostics are isolated between threads.
  */
 const char* XMAX_CALL xmax_last_error(
     void
@@ -591,67 +790,90 @@ const char* XMAX_CALL xmax_last_error(
 }
 
 /**
- * 配置当前进程所有客户端共享的日志选项与语言。
+ * Configures process-wide logging options and language shared by all clients.
  *
- * @param[in] options 日志位掩码，可组合 XMAX_LOG_BUSINESS 和 XMAX_LOG_PERFORMANCE；XMAX_LOG_NONE 表示关闭。
- * @param[in] language 后续记录使用的中文或英文输出语言。
- * @return 成功返回 XMAX_OK；失败返回负数错误码，详情可通过 xmax_last_error 获取。
- * @note 线程安全。日志默认关闭，每次配置变更会清空待消费记录。
+ * @param[in] options A bitmask combining XMAX_LOG_BUSINESS and XMAX_LOG_PERFORMANCE; XMAX_LOG_NONE disables
+ * logging.
+ * @param[in] language The Chinese or English language for subsequent records.
+ *
+ * @return XMAX_OK on success, or a negative error code on failure. Use xmax_last_error for details.
+ *
+ * @note Thread-safe. Logging is disabled by default; changing the configuration clears pending records.
  */
 xmax_result XMAX_CALL xmax_logger_configure(
     uint32_t options,
     xmax_log_language language
 ) {
-    return protect(__func__, [&] { XmaxLogger::configure(options, language); });
+    return protect(
+        __func__,
+        [&] { XmaxLogger::configure(
+            options,
+            language
+        ); }
+    );
 }
 
 /**
- * 读取当前进程共享的日志配置。
+ * Returns the process-wide logging configuration.
  *
- * @param[out] options 接收已启用日志位掩码的输出指针，不得为 NULL。
- * @param[out] language 接收输出语言的指针，不得为 NULL。
- * @return 成功返回 XMAX_OK；失败返回负数错误码，详情可通过 xmax_last_error 获取。
- * @note 线程安全，创建客户端不会重置该配置。
+ * @param[out] options A non-null destination for the enabled logging bitmask.
+ * @param[out] language A non-null destination for the output language.
+ *
+ * @return XMAX_OK on success, or a negative error code on failure. Use xmax_last_error for details.
+ *
+ * @note Thread-safe. Creating a client does not reset this configuration.
  */
 xmax_result XMAX_CALL xmax_logger_get_config(
     uint32_t* options,
     xmax_log_language* language
 ) {
-    return protect(__func__, [&] {
-        handle(options);
-        handle(language);
+    return protect(
+        __func__,
+        [&] {
+            handle(options);
+            handle(language);
 
-        const auto config = XmaxLogger::configuration();
-        *options = config.options;
-        *language = config.language;
-    });
+            const auto config = XmaxLogger::configuration();
+            *options = config.options;
+            *language = config.language;
+        }
+    );
 }
 
 /**
- * 非阻塞取出进程级日志队列中最早的记录。
+ * Acquires the oldest process-wide log record without blocking.
  *
- * @param[in,out] record 输出结构体，调用前设置 struct_size，不得为 NULL。
- * @return 成功取得数据返回 XMAX_OK；当前无待处理数据返回 XMAX_NO_EVENT；失败返回负数错误码。
- * @note 进程级日志队列应由单一消费者读取；最多保留最新的 256 条记录。
+ * @param[in,out] record A non-null destination structure with struct_size initialized.
+ *
+ * @return XMAX_OK when data is available, XMAX_NO_EVENT when no data is pending, or a negative error code on
+ * failure.
+ *
+ * @note Use a single consumer for the process-wide queue, which retains at most the latest 256 records.
  */
 xmax_result XMAX_CALL xmax_logger_poll(
     xmax_log_record* record
 ) {
     bool found = false;
-    const auto result = protect(__func__, [&] {
-        sized(record);
-        found = XmaxLogger::poll(*record);
-    });
+    const auto result = protect(
+        __func__,
+        [&] {
+            sized(record);
+            found = XmaxLogger::poll(*record);
+        }
+    );
     return result == XMAX_OK && !found ? XMAX_NO_EVENT : result;
 }
 
 /**
- * 复制配置并创建客户端，不启动摄像头或云端会话。
+ * Copies the configuration and creates a client without starting a camera or cloud session.
  *
- * @param[in] c 客户端配置，需设置 struct_size 和 XMAX_ABI_VERSION；空 API 凭证允许进行本地准备。
- * @param[out] out 接收客户端句柄的输出指针，不得为 NULL；失败时置为 NULL。
- * @return 成功返回 XMAX_OK；失败返回负数错误码，详情可通过 xmax_last_error 获取。
- * @note 返回句柄由 xmax_client_destroy 释放；输入字符串在创建时复制。
+ * @param[in] c The client configuration, with struct_size and XMAX_ABI_VERSION initialized; empty
+ * credentials permit local preparation.
+ * @param[out] out A non-null destination for the client handle; cleared to NULL on failure.
+ *
+ * @return XMAX_OK on success, or a negative error code on failure. Use xmax_last_error for details.
+ *
+ * @note Release the handle with xmax_client_destroy. Input strings are copied during creation.
  */
 xmax_result XMAX_CALL xmax_client_create(
     const xmax_client_config* c,
@@ -659,26 +881,35 @@ xmax_result XMAX_CALL xmax_client_create(
 ) {
     if (out)
         *out = nullptr;
-    return protect(__func__, [&] {
-        sized(c);
-        handle(out);
-        require(c->abi_version == XMAX_ABI_VERSION, XMAX_INVALID_ARGUMENT, "Unsupported C ABI version");
+    return protect(
+        __func__,
+        [&] {
+            sized(c);
+            handle(out);
+            require(
+                c->abi_version == XMAX_ABI_VERSION,
+                XMAX_INVALID_ARGUMENT,
+                "Unsupported C ABI version"
+            );
 
-        Config config;
-        config.key = trim(c->api_key ? c->api_key : "");
-        config.model = c->model ? c->model : "x2.1";
-        config.timeout_ms = c->http_timeout_ms ? c->http_timeout_ms : 15000;
+            Config config;
+            config.key = trim(c->api_key ? c->api_key : "");
+            config.model = c->model ? c->model : "x2.1";
+            config.timeout_ms = c->http_timeout_ms ? c->http_timeout_ms : 15000;
 
-        auto client = std::make_unique<xmax_client_impl>(std::move(config));
-        *out = client.release();
-    });
+            auto client = std::make_unique<xmax_client_impl>(std::move(config));
+            *out = client.release();
+        }
+    );
 }
 
 /**
- * 释放客户端句柄及其独占资源。
+ * Releases the client handle and its owned resources.
  *
- * @param[in] client 待释放句柄，可为 NULL。
- * @note 释放前应结束使用该句柄的并发调用；已创建的子控制器独立保留共享配置。
+ * @param[in] client The handle to release; may be NULL.
+ *
+ * @note Finish concurrent handle use before release. Existing child controllers independently retain their
+ * shared configuration.
  */
 void XMAX_CALL xmax_client_destroy(
     xmax_client client
@@ -687,48 +918,62 @@ void XMAX_CALL xmax_client_destroy(
 }
 
 /**
- * 查询当前 SDK 构建是否包含 RTC 后端。
+ * Reports whether this SDK build includes an RTC backend.
  *
- * @param[in] client 客户端句柄，不得为 NULL。
- * @param[out] out 接收可用标记的输出指针，不得为 NULL；1 表示可用，0 表示不可用。
- * @return 成功返回 XMAX_OK；失败返回负数错误码，详情可通过 xmax_last_error 获取。
+ * @param[in] client A non-null client handle.
+ * @param[out] out A non-null destination receiving 1 when available, or 0 otherwise.
+ *
+ * @return XMAX_OK on success, or a negative error code on failure. Use xmax_last_error for details.
  */
 xmax_result XMAX_CALL xmax_client_has_rtc(
     xmax_client client,
     int32_t* out
 ) {
-    return protect(__func__, [&] {
-        handle(client);
-        handle(out);
-        *out = client->client.has_rtc() ? 1 : 0;
-    });
+    return protect(
+        __func__,
+        [&] {
+            handle(client);
+            handle(out);
+            *out = client->client.has_rtc() ? 1 : 0;
+        }
+    );
 }
 
 /**
- * 查询当前 SDK 构建的能力位与 ABI 版本。
+ * Returns this build's capability flags and ABI version.
  *
- * @param[in] client 客户端句柄，不得为 NULL。
- * @param[in,out] out 输出结构体，调用前设置 struct_size，不得为 NULL。
- * @return 成功返回 XMAX_OK；失败返回负数错误码，详情可通过 xmax_last_error 获取。
+ * @param[in] client A non-null client handle.
+ * @param[in,out] out A non-null destination structure with struct_size initialized.
+ *
+ * @return XMAX_OK on success, or a negative error code on failure. Use xmax_last_error for details.
  */
 xmax_result XMAX_CALL xmax_client_get_capabilities(
     xmax_client client,
     xmax_capabilities* out
 ) {
-    return protect(__func__, [&] {
-        handle(client);
-        sized(out);
-        *out = {sizeof(*out), XMAX_ABI_VERSION, client->client.capabilities()};
-    });
+    return protect(
+        __func__,
+        [&] {
+            handle(client);
+            sized(out);
+            *out = {
+                sizeof(*out),
+                XMAX_ABI_VERSION,
+                client->client.capabilities()
+            };
+        }
+    );
 }
 
 /**
- * 枚举摄像头设备，不启动采集或云端会话。
+ * Enumerates camera devices without starting capture or a cloud session.
  *
- * @param[in] client 客户端句柄，不得为 NULL。
- * @param[out] out 接收枚举快照句柄的输出指针，不得为 NULL；失败时置为 NULL。
- * @return 成功返回 XMAX_OK；失败返回负数错误码，详情可通过 xmax_last_error 获取。
- * @note 快照由 xmax_camera_list_release 释放。
+ * @param[in] client A non-null client handle.
+ * @param[out] out A non-null destination for the enumeration snapshot; cleared to NULL on failure.
+ *
+ * @return XMAX_OK on success, or a negative error code on failure. Use xmax_last_error for details.
+ *
+ * @note Release the snapshot with xmax_camera_list_release.
  */
 xmax_result XMAX_CALL xmax_client_list_cameras(
     xmax_client client,
@@ -736,18 +981,22 @@ xmax_result XMAX_CALL xmax_client_list_cameras(
 ) {
     if (out)
         *out = nullptr;
-    return protect(__func__, [&] {
-        handle(client);
-        handle(out);
-        *out = new xmax_camera_list_impl{client->client.cameras()};
-    });
+    return protect(
+        __func__,
+        [&] {
+            handle(client);
+            handle(out);
+            *out = new xmax_camera_list_impl{client->client.cameras()};
+        }
+    );
 }
 
 /**
- * 获取摄像头枚举快照中的设备数量。
+ * Returns the number of devices in a camera enumeration snapshot.
  *
- * @param[in] list 枚举快照句柄，可为 NULL。
- * @return 设备数量；句柄为 NULL 时返回 0。
+ * @param[in] list The enumeration snapshot; may be NULL.
+ *
+ * @return The device count, or 0 for a NULL handle.
  */
 size_t XMAX_CALL xmax_camera_list_count(
     xmax_camera_list list
@@ -756,33 +1005,47 @@ size_t XMAX_CALL xmax_camera_list_count(
 }
 
 /**
- * 读取枚举快照中指定摄像头的信息。
+ * Returns information about a camera in the enumeration snapshot.
  *
- * @param[in] list 有效枚举快照句柄，不得为 NULL。
- * @param[in] index 从 0 开始的设备索引，必须小于设备数量。
- * @param[in,out] out 输出结构体，调用前设置 struct_size，不得为 NULL。
- * @return 成功返回 XMAX_OK；失败返回负数错误码，详情可通过 xmax_last_error 获取。
- * @note 返回的设备字符串由枚举快照拥有，在快照释放前有效。
+ * @param[in] list A valid, non-null enumeration snapshot.
+ * @param[in] index The zero-based device index, less than the device count.
+ * @param[in,out] out A non-null destination structure with struct_size initialized.
+ *
+ * @return XMAX_OK on success, or a negative error code on failure. Use xmax_last_error for details.
+ *
+ * @note Device strings belong to the snapshot and remain valid until it is released.
  */
 xmax_result XMAX_CALL xmax_camera_list_get(
     xmax_camera_list list,
     size_t index,
     xmax_camera_info* out
 ) {
-    return protect(__func__, [&] {
-        handle(list);
-        sized(out);
-        require(index < list->devices.size(), XMAX_INVALID_ARGUMENT, "Camera index is out of range");
+    return protect(
+        __func__,
+        [&] {
+            handle(list);
+            sized(out);
+            require(
+                index < list->devices.size(),
+                XMAX_INVALID_ARGUMENT,
+                "Camera index is out of range"
+            );
 
-        const auto& device = list->devices[index];
-        *out = {sizeof(*out), device.id.c_str(), device.name.c_str(), device.is_default ? 1 : 0};
-    });
+            const auto& device = list->devices[index];
+            *out = {
+                sizeof(*out),
+                device.id.c_str(),
+                device.name.c_str(),
+                device.is_default ? 1 : 0
+            };
+        }
+    );
 }
 
 /**
- * 释放摄像头枚举快照及其设备字符串。
+ * Releases a camera enumeration snapshot and its device strings.
  *
- * @param[in] list 待释放的快照句柄，可为 NULL。
+ * @param[in] list The snapshot to release; may be NULL.
  */
 void XMAX_CALL xmax_camera_list_release(
     xmax_camera_list list
@@ -791,12 +1054,15 @@ void XMAX_CALL xmax_camera_list_release(
 }
 
 /**
- * 创建独立的实时控制器，不建立云端连接。
+ * Creates an independent realtime controller without connecting to the cloud.
  *
- * @param[in] client 客户端句柄，不得为 NULL。
- * @param[out] out 接收实时控制器句柄的输出指针，不得为 NULL；失败时置为 NULL。
- * @return 成功返回 XMAX_OK；失败返回负数错误码，详情可通过 xmax_last_error 获取。
- * @note 返回句柄由 xmax_realtime_destroy 释放，并独立保留客户端服务配置。
+ * @param[in] client A non-null client handle.
+ * @param[out] out A non-null destination for the realtime handle; cleared to NULL on failure.
+ *
+ * @return XMAX_OK on success, or a negative error code on failure. Use xmax_last_error for details.
+ *
+ * @note Release with xmax_realtime_destroy. The handle independently retains the client's service
+ * configuration.
  */
 xmax_result XMAX_CALL xmax_realtime_create(
     xmax_client client,
@@ -804,436 +1070,653 @@ xmax_result XMAX_CALL xmax_realtime_create(
 ) {
     if (out)
         *out = nullptr;
-    return protect(__func__, [&] {
-        handle(client);
-        handle(out);
-        *out = new xmax_realtime_impl(client->client.create_realtime());
-    });
+    return protect(
+        __func__,
+        [&] {
+            handle(client);
+            handle(out);
+            *out = new xmax_realtime_impl(client->client.create_realtime());
+        }
+    );
 }
 
 /**
- * 关闭并释放实时控制器的会话、RTC 和媒体资源。
+ * Closes and releases the realtime controller's session, RTC, and media resources.
  *
- * @param[in] realtime 待释放的实时控制器句柄，可为 NULL。
- * @note 释放前应结束使用该句柄的并发调用；该操作可能等待资源清理。
+ * @param[in] realtime The realtime handle to release; may be NULL.
+ *
+ * @note Finish concurrent handle use before release. This call closes native resources and waits for an
+ * in-flight application media callback; destruction from that callback lets it finish normally.
  */
 void XMAX_CALL xmax_realtime_destroy(
     xmax_realtime realtime
 ) {
+    if (realtime)
+        realtime->session->shutdown();
     delete realtime;
 }
 
 /**
- * 绑定接入方持续提供视频帧的外部输入。
+ * Binds an external input supplied continuously by your app.
  *
- * @param[in] r 实时控制器句柄，不得为 NULL。
- * @param[in] f 输入尺寸和帧率，支持范围见 xmax_video_format。
- * @return 成功返回 XMAX_OK；失败返回负数错误码，详情可通过 xmax_last_error 获取。
- * @note 此操作会阻塞，应在工作线程执行。绑定外部输入会停止此前的本地媒体；需在连接前调用。
+ * @param[in] r A non-null realtime controller handle.
+ * @param[in] f The input dimensions and frame rate; see xmax_video_format for limits.
+ *
+ * @return XMAX_OK on success, or a negative error code on failure. Use xmax_last_error for details.
+ *
+ * @note This call blocks; use a worker thread. Bind before connecting; binding stops the previous local
+ * media input.
  */
 xmax_result XMAX_CALL xmax_realtime_prepare_external(
     xmax_realtime r,
     const xmax_video_format* f
 ) {
-    return protect(__func__, [&] {
-        handle(r);
-        handle(f);
-        r->session->prepare(*f);
-    });
+    return protect(
+        __func__,
+        [&] {
+            handle(r);
+            handle(f);
+            r->session->prepare(*f);
+        }
+    );
 }
 
 /**
- * 启动 SDK 摄像头采集，并等待第一张真实视频帧。
+ * Starts SDK camera capture and waits for the first real video frame.
  *
- * @param[in] r 实时控制器句柄，不得为 NULL。
- * @param[in] config 带 struct_size 的摄像头配置；空设备标识使用默认摄像头，视频规格全部为 0 时使用
- * 当前模型的摄像头默认规格。
- * @return 成功返回 XMAX_OK；失败返回负数错误码，详情可通过 xmax_last_error 获取。
- * @note 此操作会阻塞，应在工作线程执行。仅准备本地视频，不创建服务端会话；麦克风在后续连接时按配置启动。
+ * @param[in] r A non-null realtime controller handle.
+ * @param[in] config The camera configuration with struct_size initialized; an empty identifier selects the
+ * default camera, and an all-zero video format selects the model's camera default.
+ *
+ * @return XMAX_OK on success, or a negative error code on failure. Use xmax_last_error for details.
+ *
+ * @note This call blocks; use a worker thread. Only local video is prepared; no server session is created.
+ * Microphone capture follows the configuration when connecting.
  */
 xmax_result XMAX_CALL xmax_realtime_prepare_camera(
     xmax_realtime r,
     const xmax_camera_config* config
 ) {
-    return protect(__func__, [&] {
-        handle(r);
-        sized(config);
+    return protect(
+        __func__,
+        [&] {
+            handle(r);
+            sized(config);
 
-        auto format = config->format;
+            auto format = config->format;
 
-        if (!format.width && !format.height && !format.fps)
-            format = r->session->model_info().default_camera_format;
+            if (!format.width && !format.height && !format.fps)
+                format = r->session->model_info().default_camera_format;
 
-        r->session->prepare_camera(
-            config->device_id ? config->device_id : "", format, config->use_microphone != 0
-        );
-    });
+            r->session
+                ->prepare_camera(
+                config->device_id ? config->device_id : "",
+                format,
+                config->use_microphone != 0
+            );
+        }
+    );
 }
 
 /**
- * 切换活动摄像头，保留连接并恢复已有生成条件。
+ * Switches the active camera while retaining the connection and restoring generation conditions.
  *
- * @param[in] r 实时控制器句柄，不得为 NULL。
- * @param[in] device UTF-8 设备标识；空文本使用默认摄像头，不得为 NULL。
- * @return 成功返回 XMAX_OK；失败返回负数错误码，详情可通过 xmax_last_error 获取。
- * @note 此操作会阻塞，应在工作线程执行。等待新摄像头就绪；失败时清理连接与本地媒体并返回错误。
+ * @param[in] r A non-null realtime controller handle.
+ * @param[in] device A non-null UTF-8 device identifier; empty selects the default camera.
+ *
+ * @return XMAX_OK on success, or a negative error code on failure. Use xmax_last_error for details.
+ *
+ * @note This call blocks; use a worker thread. It waits for the new camera; failure cleans up the connection
+ * and local media.
  */
 xmax_result XMAX_CALL xmax_realtime_switch_camera(
     xmax_realtime r,
     const char* device
 ) {
-    return protect(__func__, [&] {
-        handle(r);
-        handle(device);
-        r->session->switch_camera(device);
-    });
+    return protect(
+        __func__,
+        [&] {
+            handle(r);
+            handle(device);
+            r->session->switch_camera(device);
+        }
+    );
 }
 
 /**
- * 释放断开连接后的本地采集和输入绑定。
+ * Releases local capture and input bindings after disconnection.
  *
- * @param[in] r 实时控制器句柄，不得为 NULL。
- * @return 成功返回 XMAX_OK；失败返回负数错误码，详情可通过 xmax_last_error 获取。
- * @note 此操作会阻塞，应在工作线程执行。存在活动连接时应先断开连接。
+ * @param[in] r A non-null realtime controller handle.
+ *
+ * @return XMAX_OK on success, or a negative error code on failure. Use xmax_last_error for details.
+ *
+ * @note This call blocks; use a worker thread. Disconnect any active connection first.
  */
 xmax_result XMAX_CALL xmax_realtime_stop_media(
     xmax_realtime r
 ) {
-    return protect(__func__, [&] {
-        handle(r);
-        r->session->stop_media();
-    });
+    return protect(
+        __func__,
+        [&] {
+            handle(r);
+            r->session->stop_media();
+        }
+    );
 }
 
 /**
- * 创建服务端会话并加入 RTC，暂不启动生成。
+ * Creates a server session and joins RTC without starting generation.
  *
- * @param[in] r 实时控制器句柄，不得为 NULL。
- * @param[in] microphone 麦克风开关，非零表示加入房间时启用。
- * @return 成功返回 XMAX_OK；失败返回负数错误码，详情可通过 xmax_last_error 获取。
- * @note 此操作会阻塞，应在工作线程执行。调用前必须准备本地媒体；摄像头配置中的麦克风选项同样生效。
+ * @param[in] r A non-null realtime controller handle.
+ * @param[in] microphone A nonzero value enables the microphone when joining the room.
+ *
+ * @return XMAX_OK on success, or a negative error code on failure. Use xmax_last_error for details.
+ *
+ * @note This call blocks; use a worker thread. Prepare local media first. The camera configuration's
+ * microphone option also applies.
  */
 xmax_result XMAX_CALL xmax_realtime_connect(
     xmax_realtime r,
     int32_t microphone
 ) {
-    return protect(__func__, [&] {
-        handle(r);
-        r->session->connect(microphone != 0);
-    });
+    return protect(
+        __func__,
+        [&] {
+            handle(r);
+            r->session->connect(microphone != 0);
+        }
+    );
 }
 
 /**
- * 使用指定或缓存条件启动生成，并等待结果首帧。
+ * Starts generation with supplied or cached conditions and waits for the first result frame.
  *
- * @param[in] r 实时控制器句柄，不得为 NULL。
- * @param[in] context 生成条件，字符串在本次同步调用返回前必须有效。可为 NULL 以复用条件，但首次生成必须提供。
- * @return 成功返回 XMAX_OK；失败返回负数错误码，详情可通过 xmax_last_error 获取。
- * @note 此操作会阻塞，应在工作线程执行。存在就绪媒体但尚未连接时会先连接；外部输入由其他线程持续供帧。
+ * A newer generation request cancels an unfinished one with XMAX_CANCELLED. The newer request executes
+ * after the previous request's cleanup; only successful requests replace cached generation conditions.
+ *
+ * @param[in] r A non-null realtime controller handle.
+ * @param[in] context Generation conditions whose strings remain valid until this call returns. NULL reuses
+ * cached conditions; the first generation requires conditions.
+ *
+ * @return XMAX_OK on success, or a negative error code on failure. Use xmax_last_error for details.
+ *
+ * @note This call blocks; use a worker thread. Ready media connects first if needed; supply external frames
+ * continuously from another thread.
  */
 xmax_result XMAX_CALL xmax_realtime_generate(
     xmax_realtime r,
     const xmax_generation_context* context
 ) {
-    return protect(__func__, [&] {
-        handle(r);
-        if (context) {
-            sized(context);
-            handle(context->prompt);
+    return protect(
+        __func__,
+        [&] {
+            handle(r);
+            if (context) {
+                sized(context);
+                handle(context->prompt);
+            }
+            r->session->generate(context);
         }
-        r->session->generate(context);
-    });
+    );
 }
 
 /**
- * 读取当前状态和会话标识快照，不消费待处理事件。
+ * Returns a state and session-identifier snapshot without consuming queued events.
  *
- * @param[in] r 实时控制器句柄，不得为 NULL。
- * @param[in,out] out 输出结构体，调用前设置 struct_size，不得为 NULL。
- * @return 成功返回 XMAX_OK；失败返回负数错误码，详情可通过 xmax_last_error 获取。
- * @note 此查询可能等待串行生命周期队列。
+ * @param[in] r A non-null realtime controller handle.
+ * @param[in,out] out A non-null destination structure with struct_size initialized.
+ *
+ * @return XMAX_OK on success, or a negative error code on failure. Use xmax_last_error for details.
+ *
+ * @note This query may wait for the serialized lifecycle queue.
  */
 xmax_result XMAX_CALL xmax_realtime_get_state(
     xmax_realtime r,
     xmax_event* out
 ) {
-    return protect(__func__, [&] {
-        handle(r);
-        sized(out);
-        *out = r->session->state_snapshot();
-    });
+    return protect(
+        __func__,
+        [&] {
+            handle(r);
+            sized(out);
+            *out = r->session->state_snapshot();
+        }
+    );
 }
 
 /**
- * 读取外部输入规格或摄像头的 RTC 编码目标，实际采集尺寸以本地帧视图为准。
+ * Returns the external input format or camera RTC encoding target; local frame views report actual capture
+ * dimensions.
  *
- * @param[in] r 实时控制器句柄，不得为 NULL。
- * @param[out] out 接收输入规格的输出指针，不得为 NULL。
- * @return 成功返回 XMAX_OK；失败返回负数错误码，详情可通过 xmax_last_error 获取。
- * @note 此查询可能等待串行生命周期队列。
+ * @param[in] r A non-null realtime controller handle.
+ * @param[out] out A non-null destination for the input format.
+ *
+ * @return XMAX_OK on success, or a negative error code on failure. Use xmax_last_error for details.
+ *
+ * @note This query may wait for the serialized lifecycle queue.
  */
 xmax_result XMAX_CALL xmax_realtime_get_format(
     xmax_realtime r,
     xmax_video_format* out
 ) {
-    return protect(__func__, [&] {
-        handle(r);
-        handle(out);
-        *out = r->session->format();
-    });
+    return protect(
+        __func__,
+        [&] {
+            handle(r);
+            handle(out);
+            *out = r->session->format();
+        }
+    );
 }
 
 /**
- * 读取当前或下次连接使用的远端播放音量。
+ * Returns the remote playback volume for the current or next connection.
  *
- * @param[in] r 实时控制器句柄，不得为 NULL。
- * @param[out] out 接收 [0, 1] 范围音量的输出指针，不得为 NULL。
- * @return 成功返回 XMAX_OK；失败返回负数错误码，详情可通过 xmax_last_error 获取。
- * @note 初始音量为 0；此查询可能等待串行生命周期队列。
+ * @param[in] r A non-null realtime controller handle.
+ * @param[out] out A non-null destination for the volume in [0, 1].
+ *
+ * @return XMAX_OK on success, or a negative error code on failure. Use xmax_last_error for details.
+ *
+ * @note The initial volume is 0. This query may wait for the serialized lifecycle queue.
  */
 xmax_result XMAX_CALL xmax_realtime_get_remote_volume(
     xmax_realtime r,
     float* out
 ) {
-    return protect(__func__, [&] {
-        handle(r);
-        handle(out);
-        *out = r->session->volume();
-    });
+    return protect(
+        __func__,
+        [&] {
+            handle(r);
+            handle(out);
+            *out = r->session->volume();
+        }
+    );
 }
 
 /**
- * 配置上行码率限制与编码降级偏好。
+ * Configures uplink bitrate limits and encoding degradation preference.
  *
- * @param[in] r 实时控制器句柄，不得为 NULL。
- * @param[in] config 带 struct_size 的编码配置；最小码率 -1 使用策略默认值，最大码率 0 使用策略估计值。
- * @return 成功返回 XMAX_OK；失败返回负数错误码，详情可通过 xmax_last_error 获取。
- * @note 此操作会阻塞，应在工作线程执行。已连接时更新当前原生编码器。
+ * @param[in] r A non-null realtime controller handle.
+ * @param[in] config The encoding configuration with struct_size initialized; -1 selects the minimum-bitrate
+ * policy default, and 0 selects the estimated maximum.
+ *
+ * @return XMAX_OK on success, or a negative error code on failure. Use xmax_last_error for details.
+ *
+ * @note This call blocks; use a worker thread. An active connection updates its native encoder.
  */
 xmax_result XMAX_CALL xmax_realtime_set_encoding(
     xmax_realtime r,
     const xmax_encoding_config* config
 ) {
-    return protect(__func__, [&] {
-        handle(r);
-        sized(config);
-        r->session->encoding(*config);
-    });
+    return protect(
+        __func__,
+        [&] {
+            handle(r);
+            sized(config);
+            r->session->encoding(*config);
+        }
+    );
 }
 
 /**
- * 开启或关闭独立的双向画质自适应。
+ * Configures local preview, remote display, and published-video mirror settings.
  *
- * @param[in] r 实时控制器句柄，不得为 NULL。
- * @param[in] enabled 非零启用，0 关闭；变更时重置网络质量观察窗口。
- * @return 成功返回 XMAX_OK；失败返回负数错误码，详情可通过 xmax_last_error 获取。
+ * @param[in] realtime A non-null realtime controller handle.
+ * @param[in] config A non-null mirror configuration with struct_size initialized.
+ *
+ * @return XMAX_OK on success; a negative error code on failure, preserving the previous configuration.
+ */
+xmax_result XMAX_CALL xmax_realtime_set_video_mirror(
+    xmax_realtime realtime,
+    const xmax_video_mirror_config* config
+) {
+    return protect(
+        __func__,
+        [&] {
+            handle(realtime);
+            sized(config);
+            realtime->session->video_mirror(*config);
+        }
+    );
+}
+
+/**
+ * Returns the session's retained mirror configuration.
+ *
+ * @param[in] realtime A non-null realtime controller handle.
+ * @param[in,out] config A non-null destination configuration with struct_size initialized.
+ *
+ * @return XMAX_OK on success, or a negative error code on failure.
+ */
+xmax_result XMAX_CALL xmax_realtime_get_video_mirror(
+    xmax_realtime realtime,
+    xmax_video_mirror_config* config
+) {
+    return protect(
+        __func__,
+        [&] {
+            handle(realtime);
+            sized(config);
+            *config = realtime->session->video_mirror();
+        }
+    );
+}
+
+/**
+ * Returns the horizontal display-mirror flag captured at acquisition without changing pixels.
+ *
+ * @param[in] frame A valid, non-null frame handle.
+ * @param[out] mirrored A non-null destination for the 0 or 1 mirror flag.
+ *
+ * @return XMAX_OK on success; a negative error code on failure, with the output set to 0.
+ */
+xmax_result XMAX_CALL xmax_frame_get_mirrored(
+    xmax_frame frame,
+    int32_t* mirrored
+) {
+    if (mirrored)
+        *mirrored = 0;
+    return protect(
+        __func__,
+        [&] {
+            handle(frame);
+            handle(mirrored);
+            *mirrored = frame->frame->presentation_mirrored ? 1 : 0;
+        }
+    );
+}
+
+/**
+ * Enables or disables independent uplink and downlink quality adaptation.
+ *
+ * @param[in] r A non-null realtime controller handle.
+ * @param[in] enabled Nonzero enables adaptation; 0 disables it. Changes reset the network observation
+ * window.
+ *
+ * @return XMAX_OK on success, or a negative error code on failure. Use xmax_last_error for details.
  */
 xmax_result XMAX_CALL xmax_realtime_set_adaptive_quality(
     xmax_realtime r,
     int32_t enabled
 ) {
-    return protect(__func__, [&] {
-        handle(r);
-        r->session->adaptive(enabled != 0);
-    });
+    return protect(
+        __func__,
+        [&] {
+            handle(r);
+            r->session->adaptive(enabled != 0);
+        }
+    );
 }
 
 /**
- * 读取当前双向画质档位和生效规格。
+ * Returns directional quality levels and effective video formats.
  *
- * @param[in] r 实时控制器句柄，不得为 NULL。
- * @param[in,out] out 输出结构体，调用前设置 struct_size，不得为 NULL。
- * @return 成功返回 XMAX_OK；失败返回负数错误码，详情可通过 xmax_last_error 获取。
- * @note 此查询可能等待串行生命周期队列。
+ * @param[in] r A non-null realtime controller handle.
+ * @param[in,out] out A non-null destination structure with struct_size initialized.
+ *
+ * @return XMAX_OK on success, or a negative error code on failure. Use xmax_last_error for details.
+ *
+ * @note This query may wait for the serialized lifecycle queue.
  */
 xmax_result XMAX_CALL xmax_realtime_get_quality(
     xmax_realtime r,
     xmax_quality_status* out
 ) {
-    return protect(__func__, [&] {
-        handle(r);
-        sized(out);
-        *out = r->session->quality();
-    });
+    return protect(
+        __func__,
+        [&] {
+            handle(r);
+            sized(out);
+            *out = r->session->quality();
+        }
+    );
 }
 
 /**
- * 请求开启或关闭帧插值。
+ * Requests enabling or disabling frame interpolation.
  *
- * @param[in] r 实时控制器句柄，不得为 NULL。
- * @param[in] enabled 非零表示请求启用帧插值。
- * @return 成功返回 XMAX_OK；失败返回负数错误码，详情可通过 xmax_last_error 获取。
- * @note 缺少原生插值后端时，启用请求返回 XMAX_UNSUPPORTED；关闭请求仍可成功。
+ * @param[in] r A non-null realtime controller handle.
+ * @param[in] enabled Nonzero requests frame interpolation.
+ *
+ * @return XMAX_OK on success, or a negative error code on failure. Use xmax_last_error for details.
+ *
+ * @note Enabling without a native interpolation backend returns XMAX_UNSUPPORTED; disabling can still
+ * succeed.
  */
 xmax_result XMAX_CALL xmax_realtime_set_interpolation(
     xmax_realtime r,
     int32_t enabled
 ) {
-    return protect(__func__, [&] {
-        handle(r);
-        r->session->interpolation(enabled != 0);
-    });
+    return protect(
+        __func__,
+        [&] {
+            handle(r);
+            r->session->interpolation(enabled != 0);
+        }
+    );
 }
 
 /**
- * 使用初始条件连接并启动生成，等待结果首帧。
+ * Connects and starts generation with initial conditions, waiting for the first result frame.
  *
- * @param[in] r 实时控制器句柄，不得为 NULL。
- * @param[in] c 生成条件，字符串在本次同步调用返回前必须有效。不得为 NULL。
- * @param[in] microphone 麦克风开关，非零表示连接时启用。
- * @return 成功返回 XMAX_OK；失败返回负数错误码，详情可通过 xmax_last_error 获取。
- * @note 此操作会阻塞，应在工作线程执行。调用前必须准备媒体；外部视频输入必须由其他线程持续提交。
+ * A newer generation request cancels an unfinished one with XMAX_CANCELLED. The newer request executes
+ * after the previous request's cleanup; only successful requests replace cached generation conditions.
+ *
+ * @param[in] r A non-null realtime controller handle.
+ * @param[in] c Non-null generation conditions whose strings remain valid until this synchronous call
+ * returns.
+ * @param[in] microphone A nonzero value enables the microphone when connecting.
+ *
+ * @return XMAX_OK on success, or a negative error code on failure. Use xmax_last_error for details.
+ *
+ * @note This call blocks; use a worker thread. Prepare media first and submit external frames continuously
+ * from another thread.
  */
 xmax_result XMAX_CALL xmax_realtime_start(
     xmax_realtime r,
     const xmax_generation_context* c,
     int32_t microphone
 ) {
-    return protect(__func__, [&] {
-        handle(r);
-        sized(c);
-        handle(c->prompt);
-        r->session->start(
-            c->prompt, c->reference_path ? c->reference_path : "", c->face_restoration != 0, microphone != 0
-        );
-    });
+    return protect(
+        __func__,
+        [&] {
+            handle(r);
+            sized(c);
+            handle(c->prompt);
+            r->session->start(
+                c->prompt,
+                c->reference_path ? c->reference_path : "",
+                c->face_restoration != 0,
+                microphone != 0
+            );
+        }
+    );
 }
 
 /**
- * 替换正在运行的生成任务条件。
+ * Replaces the running generation task's conditions.
  *
- * @param[in] r 实时控制器句柄，不得为 NULL。
- * @param[in] c 生成条件，字符串在本次同步调用返回前必须有效。不得为 NULL。
- * @return 成功返回 XMAX_OK；失败返回负数错误码，详情可通过 xmax_last_error 获取。
- * @note 此操作会阻塞，应在工作线程执行。要求当前已处于生成状态。
+ * A newer generation request cancels an unfinished one with XMAX_CANCELLED. The newer request executes
+ * after the previous request's cleanup; only successful requests replace cached generation conditions.
+ *
+ * @param[in] r A non-null realtime controller handle.
+ * @param[in] c Non-null generation conditions whose strings remain valid until this synchronous call
+ * returns.
+ *
+ * @return XMAX_OK on success, or a negative error code on failure. Use xmax_last_error for details.
+ *
+ * @note This call blocks; use a worker thread. Generation must already be active.
  */
 xmax_result XMAX_CALL xmax_realtime_update(
     xmax_realtime r,
     const xmax_generation_context* c
 ) {
-    return protect(__func__, [&] {
-        handle(r);
-        sized(c);
-        handle(c->prompt);
-        r->session->update(c->prompt, c->reference_path ? c->reference_path : "", c->face_restoration != 0);
-    });
+    return protect(
+        __func__,
+        [&] {
+            handle(r);
+            sized(c);
+            handle(c->prompt);
+            r->session->update(
+                c->prompt,
+                c->reference_path ? c->reference_path : "",
+                c->face_restoration != 0
+            );
+        }
+    );
 }
 
 /**
- * 断开服务端与 RTC 连接，保留本地预览和缓存条件。
+ * Disconnects the server session and RTC while retaining local preview and cached conditions.
  *
- * @param[in] r 实时控制器句柄，不得为 NULL。
- * @return 成功返回 XMAX_OK；失败返回负数错误码，详情可通过 xmax_last_error 获取。
- * @note 此操作会阻塞，应在工作线程执行。同时请求取消在途生命周期操作。
+ * @param[in] r A non-null realtime controller handle.
+ *
+ * @return XMAX_OK on success, or a negative error code on failure. Use xmax_last_error for details.
+ *
+ * @note This call blocks; use a worker thread. It also requests cancellation of in-flight lifecycle
+ * operations.
  */
 xmax_result XMAX_CALL xmax_realtime_disconnect(
     xmax_realtime r
 ) {
-    return protect(__func__, [&] {
-        handle(r);
-        r->session->disconnect(false);
-    });
+    return protect(
+        __func__,
+        [&] {
+            handle(r);
+            r->session->disconnect(false);
+        }
+    );
 }
 
 /**
- * 断开连接并释放本地媒体和缓存生成条件。
+ * Disconnects and releases local media and cached generation conditions.
  *
- * @param[in] r 实时控制器句柄，不得为 NULL。
- * @return 成功返回 XMAX_OK；失败返回负数错误码，详情可通过 xmax_last_error 获取。
- * @note 此操作会阻塞，应在工作线程执行。控制器句柄仍有效，可再次准备媒体并启动新会话。
+ * @param[in] r A non-null realtime controller handle.
+ *
+ * @return XMAX_OK on success, or a negative error code on failure. Use xmax_last_error for details.
+ *
+ * @note This call blocks; use a worker thread. The handle remains valid for preparing media and starting
+ * another session.
  */
 xmax_result XMAX_CALL xmax_realtime_close(
     xmax_realtime r
 ) {
-    return protect(__func__, [&] {
-        handle(r);
-        r->session->disconnect(true);
-    });
+    return protect(
+        __func__,
+        [&] {
+            handle(r);
+            r->session->disconnect(true);
+        }
+    );
 }
 
 /**
- * 查询当前是否需要接入方提供外部视频帧。
+ * Reports whether your app should currently supply external video frames.
  *
- * @param[in] r 实时控制器句柄，不得为 NULL。
- * @param[out] out 接收请求标记的输出指针，不得为 NULL；摄像头输入模式始终为 0。
- * @return 成功返回 XMAX_OK；失败返回负数错误码，详情可通过 xmax_last_error 获取。
- * @note 该标记不承担外部源帧率控制；查询不等待生命周期操作。
+ * @param[in] r A non-null realtime controller handle.
+ * @param[out] out A non-null destination for the request flag; camera input always returns 0.
+ *
+ * @return XMAX_OK on success, or a negative error code on failure. Use xmax_last_error for details.
+ *
+ * @note This flag does not pace external frames. The query does not wait for lifecycle operations.
  */
 xmax_result XMAX_CALL xmax_realtime_is_requesting_frames(
     xmax_realtime r,
     int32_t* out
 ) {
-    return protect(__func__, [&] {
-        handle(r);
-        handle(out);
-        *out = r->session->requesting() ? 1 : 0;
-    });
+    return protect(
+        __func__,
+        [&] {
+            handle(r);
+            handle(out);
+            *out = r->session->requesting() ? 1 : 0;
+        }
+    );
 }
 
 /**
- * 同步复制并提交一帧外部输入视频。
+ * Copies and submits an external video frame synchronously.
  *
- * @param[in] r 实时控制器句柄，不得为 NULL。
- * @param[in] f 带 struct_size 的有效视频视图，尺寸须匹配绑定规格，时间戳须严格递增。
- * @return 成功返回 XMAX_OK；失败返回负数错误码，详情可通过 xmax_last_error 获取。
- * @note 返回后可复用原像素内存。绑定 SDK 摄像头时不能提交外部帧；未连接时也可用于本地预览。
+ * @param[in] r A non-null realtime controller handle.
+ * @param[in] f A valid video view with struct_size initialized, matching bound dimensions and a strictly
+ * increasing timestamp.
+ *
+ * @return XMAX_OK on success, or a negative error code on failure. Use xmax_last_error for details.
+ *
+ * @note The source pixels can be reused after return. External frames are rejected with SDK camera input;
+ * disconnected external input still supports local preview.
  */
 xmax_result XMAX_CALL xmax_realtime_push_video_frame(
     xmax_realtime r,
     const xmax_video_frame* f
 ) {
-    return protect(__func__, [&] {
-        handle(r);
-        sized(f);
-        r->session->push(*f);
-    });
+    return protect(
+        __func__,
+        [&] {
+            handle(r);
+            sized(f);
+            r->session->push(*f);
+        }
+    );
 }
 
 /**
- * 设置当前或下次连接使用的远端播放音量。
+ * Sets the remote playback volume for the current or next connection.
  *
- * @param[in] r 实时控制器句柄，不得为 NULL。
- * @param[in] v 范围为 [0, 1] 的有限数值，0 表示静音。
- * @return 成功返回 XMAX_OK；失败返回负数错误码，详情可通过 xmax_last_error 获取。
+ * @param[in] r A non-null realtime controller handle.
+ * @param[in] v A finite value in [0, 1]; 0 mutes playback.
+ *
+ * @return XMAX_OK on success, or a negative error code on failure. Use xmax_last_error for details.
  */
 xmax_result XMAX_CALL xmax_realtime_set_remote_volume(
     xmax_realtime r,
     float v
 ) {
-    return protect(__func__, [&] {
-        handle(r);
-        r->session->volume(v);
-    });
+    return protect(
+        __func__,
+        [&] {
+            handle(r);
+            r->session->volume(v);
+        }
+    );
 }
 
 /**
- * 非阻塞消费最早的待处理应用事件。
+ * Consumes the oldest pending application event without blocking.
  *
- * @param[in] r 实时控制器句柄，不得为 NULL。
- * @param[in,out] out 输出结构体，调用前设置 struct_size，不得为 NULL。
- * @return 成功取得数据返回 XMAX_OK；当前无待处理数据返回 XMAX_NO_EVENT；失败返回负数错误码。
+ * @param[in] r A non-null realtime controller handle.
+ * @param[in,out] out A non-null destination structure with struct_size initialized.
+ *
+ * @return XMAX_OK when data is available, XMAX_NO_EVENT when no data is pending, or a negative error code on
+ * failure.
  */
 xmax_result XMAX_CALL xmax_realtime_poll_event(
     xmax_realtime r,
     xmax_event* out
 ) {
     bool found = false;
-    auto result = protect(__func__, [&] {
-        handle(r);
-        sized(out);
-        found = r->session->poll(*out);
-    });
+    auto result = protect(
+        __func__,
+        [&] {
+            handle(r);
+            sized(out);
+            found = r->session->poll(*out);
+        }
+    );
     return result == XMAX_OK && !found ? XMAX_NO_EVENT : result;
 }
 
 /**
- * 非阻塞取出最新远端结果帧。
+ * Acquires the latest remote result frame without blocking.
  *
- * @param[in] r 实时控制器句柄，不得为 NULL。
- * @param[out] out 接收视频帧句柄的输出指针，不得为 NULL；像素在句柄释放前有效，无帧或失败时输出句柄置为
- * NULL。
- * @return 成功取得数据返回 XMAX_OK；当前无待处理数据返回 XMAX_NO_EVENT；失败返回负数错误码。
- * @note 返回帧由 xmax_frame_release 释放；新帧替换尚未消费的旧帧。
+ * @param[in] r A non-null realtime controller handle.
+ * @param[out] out A non-null destination for the frame handle. Pixels remain valid until release; no frame
+ * or failure clears the handle to NULL.
+ *
+ * @return XMAX_OK when data is available, XMAX_NO_EVENT when no data is pending, or a negative error code on
+ * failure.
+ *
+ * @note Release with xmax_frame_release. New frames replace unconsumed frames.
  */
 xmax_result XMAX_CALL xmax_realtime_acquire_frame(
     xmax_realtime r,
@@ -1243,29 +1726,35 @@ xmax_result XMAX_CALL xmax_realtime_acquire_frame(
         *out = nullptr;
 
     bool found = false;
-    auto result = protect(__func__, [&] {
-        handle(r);
-        handle(out);
+    auto result = protect(
+        __func__,
+        [&] {
+            handle(r);
+            handle(out);
 
-        auto frame = r->session->acquire_frame();
+            auto frame = r->session->acquire_frame();
 
-        if (frame) {
-            *out = new xmax_frame_impl{std::move(frame)};
-            found = true;
+            if (frame) {
+                *out = new xmax_frame_impl{std::move(frame)};
+                found = true;
+            }
         }
-    });
+    );
 
     return result == XMAX_OK && !found ? XMAX_NO_EVENT : result;
 }
 
 /**
- * 非阻塞取出最新本地预览帧。
+ * Acquires the latest local preview frame without blocking.
  *
- * @param[in] r 实时控制器句柄，不得为 NULL。
- * @param[out] out 接收视频帧句柄的输出指针，不得为 NULL；像素在句柄释放前有效，无帧或失败时输出句柄置为
- * NULL。
- * @return 成功取得数据返回 XMAX_OK；当前无待处理数据返回 XMAX_NO_EVENT；失败返回负数错误码。
- * @note 返回帧由 xmax_frame_release 释放；取帧不会等待媒体采集。
+ * @param[in] r A non-null realtime controller handle.
+ * @param[out] out A non-null destination for the frame handle. Pixels remain valid until release; no frame
+ * or failure clears the handle to NULL.
+ *
+ * @return XMAX_OK when data is available, XMAX_NO_EVENT when no data is pending, or a negative error code on
+ * failure.
+ *
+ * @note Release with xmax_frame_release. Acquisition does not wait for capture.
  */
 xmax_result XMAX_CALL xmax_realtime_acquire_local_frame(
     xmax_realtime r,
@@ -1275,48 +1764,62 @@ xmax_result XMAX_CALL xmax_realtime_acquire_local_frame(
         *out = nullptr;
 
     bool found = false;
-    const auto result = protect(__func__, [&] {
-        handle(r);
-        handle(out);
+    const auto result = protect(
+        __func__,
+        [&] {
+            handle(r);
+            handle(out);
 
-        auto frame = r->session->acquire_local_frame();
+            auto frame = r->session->acquire_local_frame();
 
-        if (frame) {
-            *out = new xmax_frame_impl{std::move(frame)};
-            found = true;
+            if (frame) {
+                *out = new xmax_frame_impl{std::move(frame)};
+                found = true;
+            }
         }
-    });
+    );
 
     return result == XMAX_OK && !found ? XMAX_NO_EVENT : result;
 }
 
 /**
- * 在目标 HWND 所属线程呈现一帧视频。
+ * Renders a video frame on the target HWND's owner thread.
  *
- * @param[in] frame 有效帧句柄，不得为 NULL。
- * @param[in] hwnd 目标 Windows HWND 转换为 void* 后的值。
- * @param[in] mode XMAX_CONTENT_FIT 等比例适应，或 XMAX_CONTENT_FILL 居中填满。
- * @return 成功返回 XMAX_OK；失败返回负数错误码，详情可通过 xmax_last_error 获取。
- * @note 必须从 HWND 所属线程调用；不支持原生窗口的平台返回 XMAX_UNSUPPORTED。
+ * @param[in] frame A valid, non-null frame handle.
+ * @param[in] hwnd The target Windows HWND cast to void*.
+ * @param[in] mode XMAX_CONTENT_FIT for aspect fit, or XMAX_CONTENT_FILL for centered aspect fill.
+ *
+ * @return XMAX_OK on success, or a negative error code on failure. Use xmax_last_error for details.
+ *
+ * @note Call on the HWND owner thread. Platforms without native window rendering return XMAX_UNSUPPORTED.
  */
 xmax_result XMAX_CALL xmax_frame_render_window(
     xmax_frame frame,
     void* hwnd,
     int32_t mode
 ) {
-    return protect(__func__, [&] {
-        handle(frame);
-        render_window(*frame->frame, hwnd, mode);
-    });
+    return protect(
+        __func__,
+        [&] {
+            handle(frame);
+            render_window(
+                *frame->frame,
+                hwnd,
+                mode
+            );
+        }
+    );
 }
 
 /**
- * 创建独立的存储传输控制器。
+ * Creates an independent storage transfer controller.
  *
- * @param[in] client 客户端句柄，不得为 NULL。
- * @param[out] out 接收存储控制器句柄，不得为 NULL；失败时置为 NULL。
- * @return 成功返回 XMAX_OK；失败返回负数错误码，详情可通过 xmax_last_error 获取。
- * @note 返回句柄由 xmax_storage_destroy 释放，并独立保留客户端配置。
+ * @param[in] client A non-null client handle.
+ * @param[out] out A non-null destination for the storage handle; cleared to NULL on failure.
+ *
+ * @return XMAX_OK on success, or a negative error code on failure. Use xmax_last_error for details.
+ *
+ * @note Release with xmax_storage_destroy. The handle independently retains the client configuration.
  */
 xmax_result XMAX_CALL xmax_storage_create(
     xmax_client client,
@@ -1324,18 +1827,22 @@ xmax_result XMAX_CALL xmax_storage_create(
 ) {
     if (out)
         *out = nullptr;
-    return protect(__func__, [&] {
-        handle(client);
-        handle(out);
-        *out = new xmax_storage_impl{client->client.create_storage()};
-    });
+    return protect(
+        __func__,
+        [&] {
+            handle(client);
+            handle(out);
+            *out = new xmax_storage_impl{client->client.create_storage()};
+        }
+    );
 }
 
 /**
- * 释放存储传输控制器。
+ * Releases a storage transfer controller.
  *
- * @param[in] value 待释放的存储句柄，可为 NULL。
- * @note 释放前应取消并等待在途传输退出，结束使用句柄的并发调用。
+ * @param[in] value The storage handle to release; may be NULL.
+ *
+ * @note Cancel and wait for in-flight transfers and finish concurrent handle use before release.
  */
 void XMAX_CALL xmax_storage_destroy(
     xmax_storage value
@@ -1344,10 +1851,11 @@ void XMAX_CALL xmax_storage_destroy(
 }
 
 /**
- * 请求取消当前存储传输。
+ * Requests cancellation of the current storage transfer.
  *
- * @param[in] value 存储控制器句柄，可为 NULL。
- * @note 允许从其他线程调用，不等待传输退出。
+ * @param[in] value The storage handle; may be NULL.
+ *
+ * @note May be called from another thread; does not wait for transfer completion.
  */
 void XMAX_CALL xmax_storage_cancel(
     xmax_storage value
@@ -1357,34 +1865,42 @@ void XMAX_CALL xmax_storage_cancel(
 }
 
 /**
- * 线程安全地读取当前传输状态和字节进度。
+ * Returns a thread-safe transfer state and byte-progress snapshot.
  *
- * @param[in] value 存储控制器句柄，不得为 NULL；同一实例只允许一次活动传输。
- * @param[in,out] out 输出结构体，调用前设置 struct_size，不得为 NULL。
- * @return 成功返回 XMAX_OK；失败返回负数错误码，详情可通过 xmax_last_error 获取。
- * @note 线程安全，总字节数未知时为 0。
+ * @param[in] value A non-null storage handle. Each instance permits one active transfer.
+ * @param[in,out] out A non-null destination structure with struct_size initialized.
+ *
+ * @return XMAX_OK on success, or a negative error code on failure. Use xmax_last_error for details.
+ *
+ * @note Thread-safe. Total bytes are 0 when unknown.
  */
 xmax_result XMAX_CALL xmax_storage_get_progress(
     xmax_storage value,
     xmax_transfer_progress* out
 ) {
-    return protect(__func__, [&] {
-        handle(value);
-        sized(out);
-        *out = value->storage->progress();
-    });
+    return protect(
+        __func__,
+        [&] {
+            handle(value);
+            sized(out);
+            *out = value->storage->progress();
+        }
+    );
 }
 
 /**
- * 上传编码后的本地图片或视频文件。
+ * Uploads an encoded local image or video file.
  *
- * @param[in] value 存储控制器句柄，不得为 NULL；同一实例只允许一次活动传输。
- * @param[in] path UTF-8 本地文件路径，不得为 NULL。
- * @param[in] options 可选上传配置；NULL 使用文件名和 MIME 推断，不启用图片安全检查。
- * @param[out] out 接收上传结果句柄，不得为 NULL；失败时置为 NULL。
- * @return 成功返回 XMAX_OK；失败返回负数错误码，详情可通过 xmax_last_error 获取。
- * @note 此操作会阻塞，应在工作线程执行。图片最大 20 MiB，其他媒体最大 256 MiB；结果由
- * xmax_uploaded_file_release 释放。
+ * @param[in] value A non-null storage handle. Each instance permits one active transfer.
+ * @param[in] path A non-null UTF-8 local file path.
+ * @param[in] options Optional upload settings; NULL infers filename and MIME type and disables image safety
+ * checks.
+ * @param[out] out A non-null destination for the upload result handle; cleared to NULL on failure.
+ *
+ * @return XMAX_OK on success, or a negative error code on failure. Use xmax_last_error for details.
+ *
+ * @note This call blocks; use a worker thread. Images are limited to 20 MiB and other media to 256 MiB.
+ * Release results with xmax_uploaded_file_release.
  */
 xmax_result XMAX_CALL xmax_storage_upload_file(
     xmax_storage value,
@@ -1394,33 +1910,43 @@ xmax_result XMAX_CALL xmax_storage_upload_file(
 ) {
     if (out)
         *out = nullptr;
-    return protect(__func__, [&] {
-        handle(value);
-        handle(path);
-        handle(out);
+    return protect(
+        __func__,
+        [&] {
+            handle(value);
+            handle(path);
+            handle(out);
 
-        if (options)
-            sized(options);
+            if (options)
+                sized(options);
 
-        const auto name = options && options->file_name ? options->file_name : "";
-        const auto type = options && options->content_type ? options->content_type : "";
-        auto file =
-            value->storage->upload_file(path, name, type, options && options->check_image_safety != 0);
-        *out = new xmax_uploaded_file_impl{std::move(file)};
-    });
+            const auto name = options && options->file_name ? options->file_name : "";
+            const auto type = options && options->content_type ? options->content_type : "";
+            auto file =
+                value->storage->upload_file(
+                    path,
+                    name,
+                    type,
+                    options && options->check_image_safety != 0
+                );
+            *out = new xmax_uploaded_file_impl{std::move(file)};
+        }
+    );
 }
 
 /**
- * 上传编码文件字节，不接收原始视频像素。
+ * Uploads encoded file bytes, not raw video pixels.
  *
- * @param[in] value 存储控制器句柄，不得为 NULL；同一实例只允许一次活动传输。
- * @param[in] data 本次调用期间有效的编码文件字节，不得为 NULL。
- * @param[in] length 可访问字节数，须大于 0，并符合对应媒体大小限制。
- * @param[in] options 带 struct_size 的上传配置，必须提供文件名。
- * @param[out] out 接收上传结果句柄，不得为 NULL；失败时置为 NULL。
- * @return 成功返回 XMAX_OK；失败返回负数错误码，详情可通过 xmax_last_error 获取。
- * @note 此操作会阻塞，应在工作线程执行。输入数据在同步调用返回前必须有效；结果由 xmax_uploaded_file_release
- * 释放。
+ * @param[in] value A non-null storage handle. Each instance permits one active transfer.
+ * @param[in] data Non-null encoded file bytes, valid throughout this call.
+ * @param[in] length The accessible byte count, greater than 0 and within the media-type limit.
+ * @param[in] options The upload configuration with struct_size initialized and a filename provided.
+ * @param[out] out A non-null destination for the upload result handle; cleared to NULL on failure.
+ *
+ * @return XMAX_OK on success, or a negative error code on failure. Use xmax_last_error for details.
+ *
+ * @note This call blocks; use a worker thread. Keep input data valid until return; release results with
+ * xmax_uploaded_file_release.
  */
 xmax_result XMAX_CALL xmax_storage_upload_data(
     xmax_storage value,
@@ -1431,30 +1957,39 @@ xmax_result XMAX_CALL xmax_storage_upload_data(
 ) {
     if (out)
         *out = nullptr;
-    return protect(__func__, [&] {
-        handle(value);
-        handle(data);
-        sized(options);
-        handle(options->file_name);
-        handle(out);
+    return protect(
+        __func__,
+        [&] {
+            handle(value);
+            handle(data);
+            sized(options);
+            handle(options->file_name);
+            handle(out);
 
-        auto file = value->storage->upload_data(
-            data, length, options->file_name, options->content_type ? options->content_type : "",
-            options->check_image_safety != 0
-        );
-        *out = new xmax_uploaded_file_impl{std::move(file)};
-    });
+            auto file = value->storage->upload_data(
+                data,
+                length,
+                options->file_name,
+                options->content_type ? options->content_type : "",
+                options->check_image_safety != 0
+            );
+            *out = new xmax_uploaded_file_impl{std::move(file)};
+        }
+    );
 }
 
 /**
- * 将 HTTPS 内容下载到尚不存在的本地文件。
+ * Downloads HTTPS content to a local file that does not yet exist.
  *
- * @param[in] value 存储控制器句柄，不得为 NULL；同一实例只允许一次活动传输。
- * @param[in] url 完整 HTTPS 地址，不得为 NULL；不接受重定向。
- * @param[in] destination UTF-8 目标文件路径，不得为 NULL，已存在时返回错误。
- * @param[out] bytes 接收完成文件字节数的输出指针，不得为 NULL。
- * @return 成功返回 XMAX_OK；失败返回负数错误码，详情可通过 xmax_last_error 获取。
- * @note 此操作会阻塞，应在工作线程执行。下载最大 256 MiB，成功后才发布目标文件。
+ * @param[in] value A non-null storage handle. Each instance permits one active transfer.
+ * @param[in] url A non-null absolute HTTPS URL; redirects are not accepted.
+ * @param[in] destination A non-null UTF-8 destination path; an existing file causes failure.
+ * @param[out] bytes A non-null destination for the completed file's byte count.
+ *
+ * @return XMAX_OK on success, or a negative error code on failure. Use xmax_last_error for details.
+ *
+ * @note This call blocks; use a worker thread. Downloads are limited to 256 MiB; the destination becomes
+ * visible only on success.
  */
 xmax_result XMAX_CALL xmax_storage_download(
     xmax_storage value,
@@ -1464,41 +1999,54 @@ xmax_result XMAX_CALL xmax_storage_download(
 ) {
     if (bytes)
         *bytes = 0;
-    return protect(__func__, [&] {
-        handle(value);
-        handle(url);
-        handle(destination);
-        handle(bytes);
-        *bytes = value->storage->download(url, destination);
-    });
+    return protect(
+        __func__,
+        [&] {
+            handle(value);
+            handle(url);
+            handle(destination);
+            handle(bytes);
+            *bytes = value->storage->download(
+                url,
+                destination
+            );
+        }
+    );
 }
 
 /**
- * 借用上传结果中的文件元数据。
+ * Returns borrowed metadata from an upload result.
  *
- * @param[in] file 上传结果句柄，不得为 NULL。
- * @param[in,out] out 输出结构体，调用前设置 struct_size，不得为 NULL。
- * @return 成功返回 XMAX_OK；失败返回负数错误码，详情可通过 xmax_last_error 获取。
- * @note 字符串在上传结果释放前有效；未返回 ETag 时对应指针为 NULL。
+ * @param[in] file A non-null upload result handle.
+ * @param[in,out] out A non-null destination structure with struct_size initialized.
+ *
+ * @return XMAX_OK on success, or a negative error code on failure. Use xmax_last_error for details.
+ *
+ * @note Strings remain valid until the upload result is released; a missing ETag has a NULL pointer.
  */
 xmax_result XMAX_CALL xmax_uploaded_file_get_info(
     xmax_uploaded_file file,
     xmax_uploaded_file_info* out
 ) {
-    return protect(__func__, [&] {
-        handle(file);
-        sized(out);
-        *out = {
-            sizeof(*out), file->file.url.c_str(), file->file.object_key.c_str(),
-            file->file.etag.empty() ? nullptr : file->file.etag.c_str()
-        };
-    });
+    return protect(
+        __func__,
+        [&] {
+            handle(file);
+            sized(out);
+            *out = {
+                sizeof(*out),
+                file->file.url.c_str(),
+                file->file.object_key.c_str(),
+                file->file.etag.empty() ? nullptr : file->file.etag.c_str()
+            };
+        }
+    );
 }
 
 /**
- * 释放上传结果及其元数据字符串。
+ * Releases an upload result and its metadata strings.
  *
- * @param[in] file 待释放结果句柄，可为 NULL。
+ * @param[in] file The result handle to release; may be NULL.
  */
 void XMAX_CALL xmax_uploaded_file_release(
     xmax_uploaded_file file
@@ -1507,28 +2055,33 @@ void XMAX_CALL xmax_uploaded_file_release(
 }
 
 /**
- * 借用帧的只读像素布局。
+ * Returns a borrowed view of the frame's pixel layout.
  *
- * @param[in] frame 有效帧句柄，不得为 NULL。
- * @param[in,out] view 输出结构体，调用前设置 struct_size，不得为 NULL。
- * @return 成功返回 XMAX_OK；失败返回负数错误码，详情可通过 xmax_last_error 获取。
- * @note 视图不持有额外像素所有权；释放帧句柄后不得继续访问视图。
+ * @param[in] frame A valid, non-null frame handle.
+ * @param[in,out] view A non-null destination structure with struct_size initialized.
+ *
+ * @return XMAX_OK on success, or a negative error code on failure. Use xmax_last_error for details.
+ *
+ * @note The view does not retain pixels. Do not access it after releasing the frame handle.
  */
 xmax_result XMAX_CALL xmax_frame_get_view(
     xmax_frame frame,
     xmax_video_frame* view
 ) {
-    return protect(__func__, [&] {
-        handle(frame);
-        sized(view);
-        *view = frame->frame->view();
-    });
+    return protect(
+        __func__,
+        [&] {
+            handle(frame);
+            sized(view);
+            *view = frame->frame->view();
+        }
+    );
 }
 
 /**
- * 释放帧句柄及其持有的像素生命周期。
+ * Releases the frame handle and its retained pixel storage.
  *
- * @param[in] frame 待释放帧句柄，可为 NULL。
+ * @param[in] frame The frame handle to release; may be NULL.
  */
 void XMAX_CALL xmax_frame_release(
     xmax_frame frame
@@ -1537,15 +2090,18 @@ void XMAX_CALL xmax_frame_release(
 }
 
 /**
- * 在模型对应 API 根地址下执行鉴权 JSON 请求。
+ * Performs an authenticated JSON request under the model's API root.
  *
- * @param[in] c 客户端句柄，不得为 NULL。
- * @param[in] method HTTP 方法，支持 GET、POST、PUT 或 DELETE。
- * @param[in] path 相对 API 路径，不得使用其他主机的完整地址。
- * @param[in] body 可选 UTF-8 JSON 请求体，NULL 表示不发送请求体。
- * @param[out] out 接收响应 data 负载的 JSON 文本句柄，不得为 NULL。
- * @return 成功返回 XMAX_OK；失败返回负数错误码，详情可通过 xmax_last_error 获取。
- * @note 此操作会阻塞，应在工作线程执行。响应文本由 xmax_string_release 释放；不返回完整的响应封装。
+ * @param[in] c A non-null client handle.
+ * @param[in] method The HTTP method: GET, POST, PUT, or DELETE.
+ * @param[in] path A relative API path; absolute URLs to other hosts are not permitted.
+ * @param[in] body An optional UTF-8 JSON body; NULL omits the body.
+ * @param[out] out A non-null destination for the response data payload as a JSON string handle.
+ *
+ * @return XMAX_OK on success, or a negative error code on failure. Use xmax_last_error for details.
+ *
+ * @note This call blocks; use a worker thread. Release the text with xmax_string_release; the full response
+ * envelope is not returned.
  */
 xmax_result XMAX_CALL xmax_client_request_json(
     xmax_client c,
@@ -1556,28 +2112,38 @@ xmax_result XMAX_CALL xmax_client_request_json(
 ) {
     if (out)
         *out = nullptr;
-    return protect(__func__, [&] {
-        handle(c);
-        handle(method);
-        handle(path);
-        handle(out);
+    return protect(
+        __func__,
+        [&] {
+            handle(c);
+            handle(method);
+            handle(path);
+            handle(out);
 
-        json parsed;
+            json parsed;
 
-        if (body)
-            parsed = json::parse(body);
+            if (body)
+                parsed = json::parse(body);
 
-        auto data = c->client.request(method, path, body ? &parsed : nullptr, [] { return false; });
-        *out = new xmax_string_impl{data.dump()};
-    });
+            auto data = c->client.request(
+                method,
+                path,
+                body ? &parsed : nullptr,
+                [] { return false; }
+            );
+            *out = new xmax_string_impl{data.dump()};
+        }
+    );
 }
 
 /**
- * 借用 SDK 字符串的 UTF-8 内容。
+ * Returns borrowed UTF-8 content from an SDK string.
  *
- * @param[in] value SDK 字符串句柄，可为 NULL。
- * @return 以 NUL 结尾的借用文本；空句柄返回 NULL，不得修改或释放。
- * @note 文本在对应字符串句柄释放前有效。
+ * @param[in] value The SDK string handle; may be NULL.
+ *
+ * @return Borrowed NUL-terminated text, or NULL for an empty handle; do not modify or release it.
+ *
+ * @note The text remains valid until its string handle is released.
  */
 const char* XMAX_CALL xmax_string_data(
     xmax_string value
@@ -1586,13 +2152,284 @@ const char* XMAX_CALL xmax_string_data(
 }
 
 /**
- * 释放 SDK 字符串及其文本存储。
+ * Releases an SDK string and its text storage.
  *
- * @param[in] value 待释放字符串句柄，可为 NULL。
+ * @param[in] value The string handle to release; may be NULL.
  */
 void XMAX_CALL xmax_string_release(
     xmax_string value
 ) {
     delete value;
 }
+}
+
+/**
+ * Sets serialized remote PCM and video delivery without changing playback volume or subscriptions.
+ *
+ * @param[in] realtime A valid realtime controller.
+ * @param[in] listener The listener configuration, copied on success; NULL clears it and queued output.
+ *
+ * @return XMAX_OK on success, or a negative error code if observation cannot be configured.
+ *
+ * @note This call may wait for active lifecycle work; use a worker thread. Register before generation or
+ * replace while connected. Callbacks use a dedicated background worker
+ * and may call SDK methods. An in-flight callback may finish after replacement or removal. Context ownership
+ * transfers only on successful registration; release_user_data runs after its final in-flight callback.
+ * Retaining packets in your app does not count toward the SDK's 256-packet / 32-MiB queue limit.
+ */
+xmax_result XMAX_CALL xmax_realtime_set_remote_media_frame_listener(
+    xmax_realtime realtime,
+    const xmax_remote_media_listener* listener
+) {
+    return protect(
+        __func__,
+        [&] {
+            handle(realtime);
+            if (!listener) {
+                realtime->session->media_listener({});
+                return;
+            }
+            sized(listener);
+            require(
+                listener->on_frame != nullptr,
+                XMAX_INVALID_ARGUMENT,
+                "A remote media callback is required"
+            );
+
+            auto context = std::make_shared<RemoteListenerContext>();
+            context->listener = *listener;
+            realtime->session->media_listener([context](std::shared_ptr<const RemoteMediaFrame> packet) {
+                xmax_media_frame_impl borrowed{std::move(packet)};
+                context->listener.on_frame(
+                    context->listener.user_data,
+                    &borrowed
+                );
+            });
+            context->adopted = true;
+        }
+    );
+}
+
+/**
+ * Retains a callback-borrowed or owned packet without copying its media bytes.
+ *
+ * @param[in] frame The valid packet to retain.
+ * @param[out] out_frame Receives a new owned handle; cleared to NULL on failure.
+ *
+ * @return XMAX_OK on success, or a negative error code on failure.
+ *
+ * @note Release the returned handle with xmax_media_frame_release.
+ */
+xmax_result XMAX_CALL xmax_media_frame_retain(
+    xmax_media_frame frame,
+    xmax_media_frame* out_frame
+) {
+    if (out_frame)
+        *out_frame = nullptr;
+    return protect(
+        __func__,
+        [&] {
+            handle(frame);
+            handle(out_frame);
+            *out_frame = new xmax_media_frame_impl{frame->frame};
+        }
+    );
+}
+
+/**
+ * Returns a borrowed view of one owned or callback-borrowed audio/video packet.
+ *
+ * @param[in] frame The packet whose media remains retained throughout view use.
+ * @param[in,out] view The destination structure, with struct_size initialized.
+ *
+ * @return XMAX_OK on success, or a negative error code on failure.
+ *
+ * @note Pixel and PCM pointers remain valid only while their owning packet remains retained. Do not modify
+ * them, release them separately, or infer that one packet contains a synchronized audio/video pair.
+ */
+xmax_result XMAX_CALL xmax_media_frame_get_view(
+    xmax_media_frame frame,
+    xmax_media_frame_view* view
+) {
+    return protect(
+        __func__,
+        [&] {
+            handle(frame);
+            sized(view);
+            *view = frame->frame->view();
+        }
+    );
+}
+
+/**
+ * Releases a retained packet and its media when its last owner is released.
+ *
+ * @param[in] frame An owned packet handle or NULL; never pass the callback-borrowed handle itself.
+ */
+void XMAX_CALL xmax_media_frame_release(
+    xmax_media_frame frame
+) {
+    delete frame;
+}
+
+/**
+ * Binds external input and returns a receiver scoped to this source's lifetime.
+ *
+ * @param[in] realtime The controller, disconnected and either idle or media-ready.
+ * @param[in] format The external input's exact dimensions and frame rate, copied during this call.
+ * @param[out] out_sink Receives an owned source receiver; cleared to NULL on failure.
+ *
+ * @return XMAX_OK on success, or a negative error code on failure.
+ *
+ * @note This call blocks; use a worker thread. Binding does not wait for a frame or preview. Source capture,
+ * permissions, and pacing remain your
+ * app's responsibility. Supply frames while startup is waiting for its first result. Replaced bindings
+ * silently discard subsequent frames and errors. Release the receiver with xmax_external_frame_sink_release.
+ */
+xmax_result XMAX_CALL xmax_realtime_bind_external_video(
+    xmax_realtime realtime,
+    const xmax_video_format* format,
+    xmax_external_frame_sink* out_sink
+) {
+    if (out_sink)
+        *out_sink = nullptr;
+    return protect(
+        __func__,
+        [&] {
+            handle(realtime);
+            handle(format);
+            handle(out_sink);
+            auto sink = std::make_unique<xmax_external_frame_sink_impl>();
+            sink->session = realtime->session;
+            sink->format = *format;
+            sink->binding = realtime->session->prepare(*format);
+            *out_sink = sink.release();
+        }
+    );
+}
+
+/**
+ * Returns the input format retained when this source receiver was created.
+ *
+ * @param[in] sink A valid source receiver.
+ * @param[out] format Receives the required input dimensions and frame rate, even after unbinding.
+ *
+ * @return XMAX_OK on success, or a negative error code on failure.
+ */
+xmax_result XMAX_CALL xmax_external_frame_sink_get_format(
+    xmax_external_frame_sink sink,
+    xmax_video_format* format
+) {
+    return protect(
+        __func__,
+        [&] {
+            handle(sink);
+            handle(format);
+            *format = sink->format;
+        }
+    );
+}
+
+/**
+ * Reports whether the current source binding requests publication frames.
+ *
+ * @param[in] sink A valid source receiver.
+ * @param[out] requesting Receives 1 while publication needs this source, or 0 after unbinding or closure.
+ *
+ * @return XMAX_OK on success, or a negative error code on failure.
+ *
+ * @note This is a demand signal, not a frame-rate limiter. A stale receiver never retains the controller.
+ */
+xmax_result XMAX_CALL xmax_external_frame_sink_is_requesting_frames(
+    xmax_external_frame_sink sink,
+    int32_t* requesting
+) {
+    if (requesting)
+        *requesting = 0;
+    return protect(
+        __func__,
+        [&] {
+            handle(sink);
+            handle(requesting);
+            if (auto session = sink->session.lock())
+                *requesting = session->requesting(sink->binding);
+        }
+    );
+}
+
+/**
+ * Copies and submits a source-bound video frame without scaling, rotation, or pixel mirroring.
+ *
+ * @param[in] sink The receiver returned when this source was bound.
+ * @param[in] frame The borrowed BGRA, NV12, or I420 pixels matching the bound format; monotonic microsecond
+ * timestamps must strictly increase. Pixels can be reused after return but must not be changed concurrently.
+ *
+ * @return XMAX_OK for submission or a stale binding, or a negative error code for invalid current input.
+ */
+xmax_result XMAX_CALL xmax_external_frame_sink_push_video_frame(
+    xmax_external_frame_sink sink,
+    const xmax_video_frame* frame
+) {
+    return protect(
+        __func__,
+        [&] {
+            handle(sink);
+            handle(frame);
+            if (auto session = sink->session.lock())
+                session->push(
+                    *frame,
+                    sink->binding
+                );
+        }
+    );
+}
+
+/**
+ * Reports an unrecoverable source failure and schedules cleanup of its media and realtime connection.
+ *
+ * @param[in] sink The receiver whose capture or processing chain failed; stale errors are ignored.
+ * @param[in] error The copied failure details with struct_size initialized and a negative code. message
+ * must contain NUL-terminated UTF-8; service and HTTP codes are retained when present.
+ *
+ * @return XMAX_OK when the report is accepted or stale, or a negative error code for invalid arguments.
+ *
+ * @note This call does not wait for cleanup. Observe the failure and idle state through event polling.
+ * Duplicate reports for the same binding are ignored. Your app retains ownership of its capture resources.
+ */
+xmax_result XMAX_CALL xmax_external_frame_sink_report_error(
+    xmax_external_frame_sink sink,
+    const xmax_error_info* error
+) {
+    return protect(
+        __func__,
+        [&] {
+            handle(sink);
+            sized(error);
+            require(
+                error->code < 0 && std::memchr(
+                    error->message,
+                    0,
+                    sizeof(error->message)
+                ),
+                XMAX_INVALID_ARGUMENT,
+                "A negative error code and NUL-terminated source error are required"
+            );
+            if (auto session = sink->session.lock())
+                session->external_failure(
+                    sink->binding,
+                    Error{error->code, error->message, error->api_code, error->http_status}
+                );
+        }
+    );
+}
+
+/**
+ * Releases a source receiver without stopping caller-owned capture or unbinding the controller's source.
+ *
+ * @param[in] sink The receiver handle to release, or NULL.
+ */
+void XMAX_CALL xmax_external_frame_sink_release(
+    xmax_external_frame_sink sink
+) {
+    delete sink;
 }

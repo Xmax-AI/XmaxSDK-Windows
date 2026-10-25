@@ -144,11 +144,17 @@ static void media_stop_drains_delivery() {
 }
 static void render_rejects_stale_streams() {
     RenderController render;
+    render.mirror(true, false);
+    render.bind_local(1);
+    render.receive_local(small_frame(0), 1);
+    auto local = render.acquire_local_frame();
+    CHECK(local && local->presentation_mirrored && local->planes[0][0] == 42);
     render.bind(10);
     render.receive(small_frame(1), 10);
     render.receive(small_frame(2), 10);
     auto held = render.acquire_frame();
-    CHECK(held && held->timestamp_us == 2);
+    CHECK(held && held->timestamp_us == 2 && !held->presentation_mirrored);
+    render.mirror(false, true);
     CHECK(!render.acquire_frame());
     render.unbind(11);
     render.bind(10); // A late join from a cancelled generation cannot reactivate rendering.
@@ -157,7 +163,9 @@ static void render_rejects_stale_streams() {
     render.bind(11);
     render.receive(small_frame(4), 11);
     render.receive(small_frame(999), 10); // Old callbacks cannot overwrite the new generation.
-    CHECK(render.acquire_frame()->timestamp_us == 4);
+    auto mirrored = render.acquire_frame();
+    CHECK(mirrored->timestamp_us == 4 && mirrored->presentation_mirrored);
+    CHECK(!held->presentation_mirrored && local->presentation_mirrored);
     render.unbind(12);
     CHECK(held->timestamp_us == 2 && held->planes[0][0] == 42);
 }

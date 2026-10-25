@@ -13,32 +13,32 @@
 namespace xmax {
 
 /**
- * 传输画质档位，与网络质量评级分别定义。
+ * Transport quality levels, distinct from network-quality ratings.
  */
 enum class RealtimeQualityLevel {
 
     /**
-     * 保留媒体基准尺寸。
+     * Retains baseline media dimensions.
      */
     l1 = 1,
 
     /**
-     * 目标宽高约为媒体基准的 80%。
+     * Targets approximately 80% of baseline width and height.
      */
     l2 = 2,
 
     /**
-     * 目标宽高约为媒体基准的 65%。
+     * Targets approximately 65% of baseline width and height.
      */
     l3 = 3,
 
     /**
-     * 目标宽高约为媒体基准的 50%。
+     * Targets approximately 50% of baseline width and height.
      */
     l4 = 4,
 
     /**
-     * 使用四级尺寸，并进一步降低上行帧率。
+     * Uses level-4 dimensions and further reduces the uplink frame rate.
      */
     l5 = 5
 };

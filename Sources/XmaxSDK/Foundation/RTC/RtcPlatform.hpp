@@ -17,27 +17,29 @@
 namespace xmax::detail {
 
 /**
- * 定义房间连接、外部视频发布、结果接收与编码配置的传输契约。
+ * The transport contract for room connection, external publication, result reception, and encoding
+ * configuration.
  */
 class Rtc {
 
   public:
 
     /**
-     * 在离开房间并排空回调后释放 RTC 适配器。
+     * Releases the RTC adapter after leaving the room and draining callbacks.
      *
-     * @note 销毁前应结束使用本对象的并发调用。
+     * @note Finish concurrent calls using this object before destroying it.
      */
     virtual ~Rtc() = default;
 
     /**
-     * 使用编码参数、音频策略和回调初始化原生 RTC，并等待加入房间。
+     * Initializes native RTC with encoding, audio policy, and callbacks, then waits for room join.
      *
-     * @param[in] connection 当前 RTC 房间连接信息。
-     * @param[in] encoding 已解析的编码尺寸、帧率、码率和降级策略。
-     * @param[in] microphone 是否在加入 RTC 房间时启动麦克风采集。
-     * @param[in] callbacks 接收结果帧、RTC 事件、错误和首次发布通知的回调；停止后不再触发。
-     * @param[in] cancel 协作式取消判断函数；返回 true 时应终止当前操作。
+     * @param[in] connection The current RTC room connection information.
+     * @param[in] encoding The resolved encoding dimensions, frame rate, bitrate, and degradation policy.
+     * @param[in] microphone Whether to start microphone capture when joining the RTC room.
+     * @param[in] callbacks Callbacks for result frames, RTC events, failures, and first publication; drained
+     * before leave returns.
+     * @param[in] cancel A cooperative cancellation predicate; true requests termination of the operation.
      */
     virtual void join(
         const Connection& connection,
@@ -48,33 +50,35 @@ class Rtc {
     ) = 0;
 
     /**
-     * 发送一个编码后的房间信令分片，失败时报告传输错误。
+     * Sends an encoded room-signaling fragment and reports transport failures.
      *
-     * @param[in] bytes 待处理的编码字节，本次同步调用返回前必须有效。
+     * @param[in] bytes The encoded bytes to process; they must remain valid until this synchronous call
+     * returns.
      */
     virtual void send(
         const std::string& bytes
     ) = 0;
 
     /**
-     * 发布一帧 SDK 拥有的输入像素，允许从媒体线程调用。
+     * Publishes owned input pixels; may be called on a media thread.
      *
-     * @param[in] frame 待交付的视频帧或借用视图；同步调用返回前像素必须有效。
+     * @param[in] frame The frame or borrowed view to deliver; its pixels must remain valid until this
+     * synchronous call returns.
      */
     virtual void push(
         const Frame& frame
     ) = 0;
 
     /**
-     * 在开始新生成任务前重置结果首帧跟踪状态。
+     * Resets first-result tracking before a new generation task.
      */
     virtual void begin_generation() = 0;
 
     /**
-     * 等待真实结果首帧，同时响应取消并执行周期保活。
+     * Waits for a real first result, checking cancellation and running periodic keepalives.
      *
-     * @param[in] cancel 协作式取消判断函数；返回 true 时应终止当前操作。
-     * @param[in] keepalive 等待期间周期执行的保活函数，不得持有跨线程生命周期锁。
+     * @param[in] cancel A cooperative cancellation predicate; true requests termination of the operation.
+     * @param[in] keepalive The periodic keepalive callback; it must not hold a cross-thread lifecycle lock.
      */
     virtual void wait_remote(
         const Cancel& cancel,
@@ -82,43 +86,53 @@ class Rtc {
     ) = 0;
 
     /**
-     * 应用范围为 [0, 1] 的远端播放音量。
+     * Applies a remote playback volume in [0, 1].
      *
-     * @param[in] value 范围为 [0, 1] 的有限音量值，0 表示静音。
+     * @param[in] value A finite volume in [0, 1]; 0 mutes playback.
      */
     virtual void volume(
         float value
     ) = 0;
 
     /**
-     * 应用生效的视频尺寸、帧率和码率策略。
+     * Enables result-user PCM observation without changing playback volume or audio subscription policy.
      *
-     * @param[in] value 已解析的编码尺寸、帧率、码率限制与降级偏好。
+     * @param[in] enabled Whether to copy remote PCM for application delivery.
+     */
+    virtual void observe_remote_media(
+        bool enabled
+    ) = 0;
+
+    /**
+     * Applies effective dimensions, frame rate, and bitrate policy.
+     *
+     * @param[in] value The resolved encoding dimensions, frame rate, bitrate limits, and degradation
+     * preference.
      */
     virtual void configure_encoding(
         VideoEncodingConfiguration value
     ) = 0;
 
     /**
-     * 离开 RTC 并在返回前排空内部帧、事件和错误回调。
+     * Leaves RTC and drains frame, event, and failure callbacks before returning.
      */
     virtual void leave() noexcept = 0;
 };
 
 /**
- * 创建共享原生 RTC 适配器的工厂回调，不得返回空对象。
+ * The shared native RTC adapter factory; must not return an empty object.
  */
 using RtcFactory = std::function<std::shared_ptr<Rtc>()>;
 
 /**
- * 检查当前构建是否包含原生 RTC 后端。
+ * Reports whether the current build includes a native RTC backend.
  */
 bool rtc_available() noexcept;
 
 /**
- * 创建原生 RTC 适配器，不支持的平台返回明确的能力错误。
+ * Creates a native RTC adapter or reports unsupported capability on other platforms.
  *
- * @return 可共享的原生 RTC 适配器；平台不支持时抛出能力错误。
+ * @return A shared native RTC adapter; unsupported platforms throw a capability error.
  */
 std::shared_ptr<Rtc> make_rtc();
 } // namespace xmax::detail

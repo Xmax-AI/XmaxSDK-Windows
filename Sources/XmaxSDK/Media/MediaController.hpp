@@ -15,14 +15,14 @@
 namespace xmax::detail {
 
 /**
- * 管理 SDK 摄像头与外部输入的互斥绑定，并保留统一的帧交付通道。
+ * Manages mutually exclusive SDK camera and external inputs through a shared frame-delivery channel.
  */
 class MediaController {
 
   public:
 
     /**
-     * 使用指定摄像头工厂组合媒体采集与外部帧交付通道。
+     * Combines camera capture and external frame delivery using the supplied camera factory.
      */
     explicit MediaController(
         CameraFactory factory = make_camera_capture
@@ -31,39 +31,39 @@ class MediaController {
     }
 
     /**
-     * 停止摄像头回调并清除外部输入绑定，释放本地媒体资源。
+     * Stops camera callbacks, clears external input binding, and releases local media resources.
      */
     ~MediaController() {
         close();
     }
 
     /**
-     * 借用统一的外部帧交付控制器，不转移所有权。
+     * Returns a borrowed reference to the shared frame-delivery controller.
      *
-     * @return 当前对象内部的帧交付控制器；当前对象销毁后不可再访问。
+     * @return The internal frame-delivery controller; invalid after its containing object is destroyed.
      */
     ExternalVideoController& external() {
         return external_;
     }
 
     /**
-     * 借用统一的外部帧交付控制器，不转移所有权。
+     * Returns a borrowed reference to the shared frame-delivery controller.
      *
-     * @return 当前对象内部的帧交付控制器；当前对象销毁后不可再访问。
+     * @return The internal frame-delivery controller; invalid after its containing object is destroyed.
      */
     const ExternalVideoController& external() const {
         return external_;
     }
 
     /**
-     * 停止发布交付，保留已绑定媒体和本地预览。
+     * Stops publication delivery while retaining bound media and local preview.
      */
     void stop() {
         external_.stop();
     }
 
     /**
-     * 停止采集并清除输入绑定和设备状态。
+     * Stops capture and clears input binding and device state.
      */
     void close() {
         camera_.stop();
@@ -73,24 +73,29 @@ class MediaController {
     }
 
     /**
-     * 替换当前媒体源并绑定支持的外部输入规格。
+     * Replaces the media source and binds a supported external format.
      *
-     * @param[in] format 输入尺寸和帧率，支持范围见 xmax_video_format。
+     * @param[in] format The input dimensions and frame rate; see xmax_video_format for limits.
+     * @param[in] binding The revision rejecting frames from replaced external sources.
      */
     void prepare_external(
-        xmax_video_format format
+        xmax_video_format format,
+        uint64_t binding = 0
     ) {
         close();
-        external_.prepare(format);
+        external_.prepare(
+            format,
+            binding
+        );
     }
 
     /**
-     * 替换当前媒体源并启动 SDK 摄像头采集，等待首帧就绪。
+     * Replaces the media source, starts SDK camera capture, and waits for the first frame.
      *
-     * @param[in] device UTF-8 摄像头设备标识，空文本选择默认摄像头。
-     * @param[in] format 输入尺寸和帧率，支持范围见 xmax_video_format。
-     * @param[in] failure 接收异步失败原因的回调；停止操作返回前应结束其交付。
-     * @param[in] cancel 协作式取消判断函数；返回 true 时应终止当前操作。
+     * @param[in] device The UTF-8 camera identifier; an empty string selects the default camera.
+     * @param[in] format The input dimensions and frame rate; see xmax_video_format for limits.
+     * @param[in] failure The asynchronous failure callback; delivery must finish before stop returns.
+     * @param[in] cancel A cooperative cancellation predicate; true requests termination of the operation.
      */
     void prepare_camera(
         const std::string& device,
@@ -105,8 +110,10 @@ class MediaController {
 
         try {
             camera_.start(
-                device, format,
-                {[this](Frame frame) { external_.push_owned(std::move(frame)); }, std::move(failure)}, cancel
+                device,
+                format,
+                {[this](Frame frame) { external_.push_owned(std::move(frame)); }, std::move(failure)},
+                cancel
             );
         } catch (...) {
             close();
@@ -115,46 +122,60 @@ class MediaController {
     }
 
     /**
-     * 使用当前输入规格切换摄像头采集。
+     * Switches camera capture using the current input format.
      *
-     * @param[in] device UTF-8 摄像头设备标识，空文本选择默认摄像头。
-     * @param[in] failure 接收异步失败原因的回调；停止操作返回前应结束其交付。
-     * @param[in] cancel 协作式取消判断函数；返回 true 时应终止当前操作。
+     * @param[in] device The UTF-8 camera identifier; an empty string selects the default camera.
+     * @param[in] failure The asynchronous failure callback; delivery must finish before stop returns.
+     * @param[in] cancel A cooperative cancellation predicate; true requests termination of the operation.
      */
     void switch_camera(
         const std::string& device,
         std::function<void(Error)> failure,
         const Cancel& cancel
     ) {
-        require(camera_active_, XMAX_INVALID_STATE, "No camera stream is active");
+        require(
+            camera_active_,
+            XMAX_INVALID_STATE,
+            "No camera stream is active"
+        );
         camera_.stop();
         external_.prepare(external_.format());
         camera_.start(
-            device, external_.format(),
-            {[this](Frame frame) { external_.push_owned(std::move(frame)); }, std::move(failure)}, cancel
+            device,
+            external_.format(),
+            {[this](Frame frame) { external_.push_owned(std::move(frame)); }, std::move(failure)},
+            cancel
         );
         device_ = device;
     }
 
     /**
-     * 更新当前摄像头目标规格，保留设备选择和预览回调。
+     * Updates the camera target format while retaining device selection and preview callbacks.
      *
-     * @param[in] format 新的编码目标尺寸和帧率。
-     * @param[in] failure 当前媒体绑定的失败回调。
-     * @param[in] cancel 协作式取消判断。
+     * @param[in] format The new encoding target dimensions and frame rate.
+     * @param[in] failure The current media binding's failure callback.
+     * @param[in] cancel The cooperative cancellation predicate.
      */
     void update_camera_format(
         xmax_video_format format,
         std::function<void(Error)> failure,
         const Cancel& cancel
     ) {
-        require(camera_active_, XMAX_INVALID_STATE, "No camera stream is active");
+        require(
+            camera_active_,
+            XMAX_INVALID_STATE,
+            "No camera stream is active"
+        );
+
         const auto previous = external_.format();
         camera_.stop();
         external_.prepare(format);
+
         try {
             camera_.start(
-                device_, format, {[this](Frame frame) { external_.push_owned(std::move(frame)); }, failure},
+                device_,
+                format,
+                {[this](Frame frame) { external_.push_owned(std::move(frame)); }, failure},
                 cancel
             );
         } catch (...) {
@@ -162,31 +183,35 @@ class MediaController {
             if (cancel()) {
                 close();
             } else {
+
                 try {
                     external_.prepare(previous);
                     camera_.start(
-                        device_, previous,
-                        {[this](Frame frame) { external_.push_owned(std::move(frame)); }, failure}, cancel
+                        device_,
+                        previous,
+                        {[this](Frame frame) { external_.push_owned(std::move(frame)); }, failure},
+                        cancel
                     );
                 } catch (...) {
                     close();
                 }
             }
+
             std::rethrow_exception(original);
         }
     }
 
     /**
-     * 检查当前是否使用 SDK 摄像头绑定。
+     * Reports whether SDK camera input is bound.
      */
     bool camera_active() const {
         return camera_active_.load();
     }
 
     /**
-     * 枚举摄像头设备，不启动采集。
+     * Enumerates camera devices without starting capture.
      *
-     * @return 摄像头设备信息快照，不存在可用设备时为空集合。
+     * @return A camera information snapshot, or an empty collection if no cameras are available.
      */
     std::vector<CameraDevice> devices() {
         return camera_.devices();
@@ -195,22 +220,22 @@ class MediaController {
   private:
 
     /**
-     * 统一管理输入帧发布和本地预览交付的控制器。
+     * The shared controller for input publication and local preview delivery.
      */
     ExternalVideoController external_;
 
     /**
-     * 管理 SDK 原生摄像头采集和帧交付的控制器。
+     * The controller for native SDK camera capture and frame delivery.
      */
     CameraController camera_;
 
     /**
-     * 当前输入是否绑定到 SDK 摄像头的原子标记。
+     * The atomic flag indicating an SDK camera binding.
      */
     std::atomic<bool> camera_active_{false};
 
     /**
-     * 当前摄像头的设备标识。
+     * The current camera's device identifier.
      */
     std::string device_;
 };

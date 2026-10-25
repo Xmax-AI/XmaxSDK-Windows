@@ -14,10 +14,11 @@
 namespace xmax::detail {
 
 /**
- * 根据已验证的视频规格计算策略最小码率与估计最大码率。
+ * Calculates the policy minimum bitrate and estimated maximum from a validated format.
  *
- * @param[in] f 视频尺寸和帧率，宽高须为偶数、总像素不超过 2100000、帧率范围为 [1, 60]。
- * @return 以 kbps 为单位的策略最小码率和估计最大码率。
+ * @param[in] f Even video dimensions totaling at most 2100000 pixels, with a frame rate in [1, 60].
+ *
+ * @return The policy minimum and estimated maximum bitrates, in kbps.
  */
 std::pair<int, int> bitrate(
     xmax_video_format f
@@ -25,11 +26,33 @@ std::pair<int, int> bitrate(
     validate_format(f);
 
     using P = std::pair<double, double>;
-    const std::vector<P> p15{{14400, 50},   {19200, 65},   {32400, 100},  {43200, 120},   {57600, 140},
-                             {76800, 200},  {101760, 220}, {129600, 260}, {172800, 320},  {230400, 400},
-                             {307200, 500}, {407040, 610}, {691200, 910}, {921600, 1130}, {2073600, 2080}};
-    const std::vector<P> p30{{129600, 400}, {172800, 490},  {230400, 600},  {307200, 750},
-                             {407040, 930}, {691200, 1380}, {921600, 1710}, {2073600, 3150}};
+    const std::vector<P> p15{
+        {14400, 50},
+        {19200, 65},
+        {32400, 100},
+        {43200, 120},
+        {57600, 140},
+        {76800, 200},
+        {101760, 220},
+        {129600, 260},
+        {172800, 320},
+        {230400, 400},
+        {307200, 500},
+        {407040, 610},
+        {691200, 910},
+        {921600, 1130},
+        {2073600, 2080}
+    };
+    const std::vector<P> p30{
+        {129600, 400},
+        {172800, 490},
+        {230400, 600},
+        {307200, 750},
+        {407040, 930},
+        {691200, 1380},
+        {921600, 1710},
+        {2073600, 3150}
+    };
     auto interpolate = [](double v, const std::vector<P>& p) {
         if (v <= p.front().first)
             return p.front().second * v / p.front().first;

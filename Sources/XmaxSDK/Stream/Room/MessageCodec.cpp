@@ -13,21 +13,24 @@
 namespace xmax::detail {
 
 /**
- * 将房间 JSON 编码为共享事件标识的完整 UTF-8 分片。
+ * Encodes room JSON as complete UTF-8 fragments sharing an event identifier.
  *
- * @param[in] message 完整的 UTF-8 JSON 信令文本，长度须在 [1, 262144] 字节内。
- * @param[in] id 所有分片共享的事件标识，用于接收方按事件重组；未分片时不使用。
- * @return 按顺序发送的 UTF-8 信令分片集合。
+ * @param[in] message The complete UTF-8 JSON signaling text, between 1 and 262144 bytes.
+ * @param[in] id The identifier shared by fragments for receiver reassembly; unused for unfragmented
+ * messages.
+ *
+ * @return The ordered UTF-8 signaling fragments.
  */
 std::vector<std::string> encode_message(
     const std::string& message,
     const std::string& id
 ) {
     require(
-        !message.empty() && message.size() <= 262144, XMAX_INVALID_ARGUMENT,
+        !message.empty() && message.size() <= 262144,
+        XMAX_INVALID_ARGUMENT,
         "RTC message exceeds 262144 bytes"
     );
-    // 分片前先解析 JSON，同时校验 UTF-8 文本完整性。
+    // Parse JSON before fragmentation to validate complete UTF-8 input.
     (void)json::parse(message);
 
     if (message.size() <= 800)
@@ -40,7 +43,10 @@ std::vector<std::string> encode_message(
     for (size_t i = 0; i < message.size();) {
         const unsigned char c = static_cast<unsigned char>(message[i]);
         size_t n = c < 0x80 ? 1 : (c < 0xE0 ? 2 : (c < 0xF0 ? 3 : 4));
-        const std::string scalar = message.substr(i, n);
+        const std::string scalar = message.substr(
+            i,
+            n
+        );
         size_t bytes = json(scalar).dump().size() - 2;
 
         if (escaped + bytes > 600) {
@@ -57,7 +63,11 @@ std::vector<std::string> encode_message(
     if (!chunk.empty())
         chunks.push_back(chunk);
 
-    require(chunks.size() <= 512, XMAX_INVALID_ARGUMENT, "Too many RTC message fragments");
+    require(
+        chunks.size() <= 512,
+        XMAX_INVALID_ARGUMENT,
+        "Too many RTC message fragments"
+    );
 
     std::vector<std::string> packets;
 

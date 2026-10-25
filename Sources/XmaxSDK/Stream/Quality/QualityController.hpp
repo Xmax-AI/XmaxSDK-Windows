@@ -15,11 +15,11 @@
 namespace xmax::detail {
 
 /**
- * 将画质档位解析为指定方向的视频尺寸和帧率。
+ * Resolves video dimensions and frame rate for a directional quality level.
  *
- * @param[in] baseline 绑定输入的基准视频规格。
- * @param[in] level 画质档位，范围为 [1, 5]。
- * @param[in] downlink true 表示下行，false 表示上行。
+ * @param[in] baseline The bound input's baseline video format.
+ * @param[in] level The quality level, in [1, 5].
+ * @param[in] downlink True for downlink; false for uplink.
  */
 xmax_video_format quality_format(
     xmax_video_format baseline,
@@ -28,24 +28,28 @@ xmax_video_format quality_format(
 );
 
 /**
- * 管理一个传输方向的画质档位、稳定窗口、冷却及升级回退策略。
+ * Manages directional quality levels, stability windows, cooldowns, and upgrade rollback.
  */
 class QualityDirection {
 
   public:
 
     /**
-     * 当前方向的画质档位，范围为 [1, 5]。
+     * The directional quality level, in [1, 5].
      */
     int level = 2;
 
     /**
-     * 观察带时间戳的网络质量样本，在满足稳定与冷却条件时建议新档位。
+     * Observes timestamped network samples and recommends levels after stability and cooldown checks.
      *
-     * @param[in] quality 原生网络质量枚举值，用于当前方向的档位观察。
-     * @param[in] sampled_at 网络样本产生时的单调秒时间，过期或重复样本不参与决策。
-     * @param[in] now 当前单调秒时间，用于冷却、稳定窗口及样本时效判断。
-     * @return 符合稳定、样本时效及冷却条件的新档位，否则返回 std::nullopt。
+     * @param[in] quality The native network-quality value for this direction.
+     * @param[in] sampled_at The sample's monotonic time in seconds; expired or duplicate samples are
+     * ignored.
+     * @param[in] now The current monotonic time in seconds, used for cooldowns, stable windows, and sample
+     * expiry.
+     *
+     * @return A proposed level satisfying stability, freshness, and cooldown requirements; otherwise
+     * std::nullopt.
      */
     std::optional<int> observe(
         int quality,
@@ -54,11 +58,12 @@ class QualityDirection {
     );
 
     /**
-     * 记录档位变更结果，更新冷却期限及失败升级的回退窗口。
+     * Records a level-change result and updates cooldown and failed-upgrade rollback windows.
      *
-     * @param[in] next 本次尝试应用的画质档位，范围为 [1, 5]。
-     * @param[in] success 原生编码或下行画质变更是否已成功应用。
-     * @param[in] now 当前单调秒时间，用于冷却、稳定窗口及样本时效判断。
+     * @param[in] next The attempted quality level, in [1, 5].
+     * @param[in] success Whether native encoding or downlink quality changes succeeded.
+     * @param[in] now The current monotonic time in seconds, used for cooldowns, stable windows, and sample
+     * expiry.
      */
     void complete(
         int next,
@@ -67,67 +72,67 @@ class QualityDirection {
     );
 
     /**
-     * 清空网络观察窗口，保留当前画质档位。
+     * Clears the network observation window while retaining the current quality level.
      */
     void reset_samples();
 
   private:
 
     /**
-     * 连续良好网络质量样本数量。
+     * The consecutive good network-quality sample count.
      */
     int good_ = 0;
 
     /**
-     * 连续较差网络质量样本数量。
+     * The consecutive poor network-quality sample count.
      */
     int poor_ = 0;
 
     /**
-     * 最近一次接受的网络样本单调秒时间，负值表示尚无样本。
+     * The last accepted sample time in monotonic seconds; negative before the first sample.
      */
     double last_ = -1;
 
     /**
-     * 当前画质档位稳定观察期限，使用单调秒时间。
+     * The current level's stability deadline, in monotonic seconds.
      */
     double stable_until_ = 0;
 
     /**
-     * 下一次允许升级画质的单调秒时间。
+     * The next permitted quality-upgrade time, in monotonic seconds.
      */
     double upgrade_after_ = 0;
 
     /**
-     * 升级探测窗口结束的单调秒时间。
+     * The upgrade probe deadline, in monotonic seconds.
      */
     double probe_until_ = 0;
 };
 
 /**
- * 分别管理上行与下行画质，并统一控制自适应开关。
+ * Manages independent uplink and downlink quality under a shared adaptation setting.
  */
 class QualityController {
 
   public:
 
     /**
-     * 上行网络质量观察与档位策略。
+     * The uplink network observations and level policy.
      */
     QualityDirection up;
 
     /**
-     * 下行网络质量观察与档位策略。
+     * The downlink network observations and level policy.
      */
     QualityDirection down;
 
     /**
-     * 是否启用独立的双向画质自适应。
+     * Whether independent directional quality adaptation is enabled.
      */
     bool enabled = true;
 
     /**
-     * 重置上行与下行的网络观察窗口。
+     * Resets uplink and downlink network observation windows.
      */
     void reset_samples() {
         up.reset_samples();

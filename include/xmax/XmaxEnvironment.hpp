@@ -14,17 +14,17 @@
 namespace xmax {
 
 /**
- * 客户端的服务环境，独立于实时模型。
+ * The client's service environment, independent of its realtime model.
  */
 enum class XmaxEnvironment {
 
     /**
-     * 国内环境。
+     * The China service environment.
      */
     china = XMAX_ENVIRONMENT_CHINA,
 
     /**
-     * 海外环境。
+     * The global service environment.
      */
     global = XMAX_ENVIRONMENT_GLOBAL
 };

@@ -16,41 +16,50 @@
 namespace xmax::detail {
 
 /**
- * 解析编码码率与降级偏好，并在原生配置成功后提交覆盖值。
+ * Resolves bitrate and degradation settings, committing overrides only after native configuration succeeds.
  */
 class EncodingController {
 
   public:
 
     /**
-     * 解析指定档位的上行编码配置。
+     * Resolves uplink encoding for a quality level.
      *
-     * @param[in] baseline 媒体编码基准规格。
-     * @param[in] level 目标档位，范围为 [1, 5]。
-     * @return 该档位的视频尺寸、帧率、码率限制和降级偏好。
+     * @param[in] baseline The baseline media encoding format.
+     * @param[in] level The target quality level, in [1, 5].
+     *
+     * @return The level's dimensions, frame rate, bitrate limits, and degradation preference.
      */
     VideoEncodingConfiguration resolve(
         xmax_video_format baseline,
         int level
     ) const {
-        const auto format = quality_format(baseline, level, false);
+        const auto format = quality_format(
+            baseline,
+            level,
+            false
+        );
         const auto budget = bitrate(format);
         const int maximum = value_.maximum_bitrate_kbps == 0
                                 ? std::max(budget.second, std::max(0, value_.minimum_bitrate_kbps))
                                 : value_.maximum_bitrate_kbps;
         const int minimum =
             value_.minimum_bitrate_kbps < 0 ? std::min(500, maximum) : value_.minimum_bitrate_kbps;
-        require(minimum <= maximum, XMAX_INVALID_ARGUMENT, "Minimum bitrate exceeds maximum bitrate");
-        return {format, minimum, maximum, value_.preference};
+        require(
+            minimum <= maximum,
+            XMAX_INVALID_ARGUMENT,
+            "Minimum bitrate exceeds maximum bitrate"
+        );
+        return {format, minimum, maximum, value_.preference, mirrored_};
     }
 
     /**
-     * 校验并应用覆盖配置，原生配置失败时恢复旧值。
+     * Validates and applies overrides, restoring previous values if native configuration fails.
      *
-     * @param[in] value 码率限制与降级偏好。
-     * @param[in] baseline 媒体编码基准规格，未准备时宽高为 0。
-     * @param[in] level 当前上行档位。
-     * @param[in] rtc 已加入房间的 RTC 后端，未连接时为空。
+     * @param[in] value The bitrate limits and degradation preference.
+     * @param[in] baseline The baseline encoding format; dimensions are 0 before media preparation.
+     * @param[in] level The current uplink level.
+     * @param[in] rtc The joined RTC backend, or null when disconnected.
      */
     void configure(
         xmax_encoding_config value,
@@ -64,15 +73,50 @@ class EncodingController {
                 (value.maximum_bitrate_kbps == 0 || value.minimum_bitrate_kbps < 0 ||
                  value.minimum_bitrate_kbps <= value.maximum_bitrate_kbps) &&
                 value.preference >= XMAX_ENCODER_AUTO && value.preference <= XMAX_ENCODER_MAINTAIN_QUALITY,
-            XMAX_INVALID_ARGUMENT, "Invalid video encoding configuration"
+            XMAX_INVALID_ARGUMENT,
+            "Invalid video encoding configuration"
         );
+
         const auto previous = value_;
         value_ = value;
         try {
             if (rtc)
-                rtc->configure_encoding(resolve(baseline, level));
+                rtc->configure_encoding(resolve(
+                    baseline,
+                    level
+                ));
         } catch (...) {
             value_ = previous;
+            throw;
+        }
+    }
+
+    /**
+     * Applies uplink encoding mirroring, restoring the previous value if native updates fail.
+     *
+     * @param[in] enabled Whether to horizontally mirror the published video.
+     * @param[in] baseline The current media's baseline encoding format.
+     * @param[in] level The current uplink quality level.
+     * @param[in] rtc The active RTC backend, or null when disconnected.
+     */
+    void mirror(
+        bool enabled,
+        xmax_video_format baseline,
+        int level,
+        Rtc* rtc
+    ) {
+        if (mirrored_ == enabled)
+            return;
+        const auto previous = mirrored_;
+        mirrored_ = enabled;
+        try {
+            if (rtc)
+                rtc->configure_encoding(resolve(
+                    baseline,
+                    level
+                ));
+        } catch (...) {
+            mirrored_ = previous;
             throw;
         }
     }
@@ -80,8 +124,18 @@ class EncodingController {
   private:
 
     /**
-     * 未指定最小码率时使用 min(500, 最大码率)，单位为 kbps。
+     * The uplink mirror setting for the current and next connection.
      */
-    xmax_encoding_config value_{sizeof(xmax_encoding_config), -1, 0, XMAX_ENCODER_MAINTAIN_FRAMERATE};
+    bool mirrored_ = false;
+
+    /**
+     * The unspecified minimum bitrate defaults to min(500, maximum bitrate), in kbps.
+     */
+    xmax_encoding_config value_{
+        sizeof(xmax_encoding_config),
+        -1,
+        0,
+        XMAX_ENCODER_MAINTAIN_FRAMERATE
+    };
 };
 } // namespace xmax::detail

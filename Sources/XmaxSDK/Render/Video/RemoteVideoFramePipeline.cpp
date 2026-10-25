@@ -14,9 +14,9 @@
 namespace xmax::detail {
 
 /**
- * 启用指定批次的帧交付，并丢弃先前待处理帧。
+ * Enables frame delivery for a revision and discards previously pending frames.
  *
- * @param[in] token 当前连接或媒体绑定的批次，用于拒收旧回调。
+ * @param[in] token The connection or media-binding revision used to reject stale callbacks.
  */
 void RemoteVideoFramePipeline::activate(
     uint64_t token
@@ -29,17 +29,23 @@ void RemoteVideoFramePipeline::activate(
     token_ = token;
     latest_.reset();
     active_ = true;
-    XmaxLogger::write(LogCategory::Render, XMAX_LOG_DEBUG, [](auto language) {
-        return XmaxLogger::localized(
-            language, "预览绑定已激活 (Preview Binding Activated)", "Preview Binding Activated"
-        );
-    });
+    XmaxLogger::write(
+        LogCategory::Render,
+        XMAX_LOG_DEBUG,
+        [](auto language) {
+            return XmaxLogger::localized(
+                language,
+                "预览绑定已激活 (Preview Binding Activated)",
+                "Preview Binding Activated"
+            );
+        }
+    );
 }
 
 /**
- * 停用帧交付，并丢弃待处理帧。
+ * Disables frame delivery and clears pending frames.
  *
- * @param[in] token 当前连接或媒体绑定的批次，用于拒收旧回调。
+ * @param[in] token The connection or media-binding revision used to reject stale callbacks.
  */
 void RemoteVideoFramePipeline::deactivate(
     uint64_t token
@@ -53,27 +59,51 @@ void RemoteVideoFramePipeline::deactivate(
 }
 
 /**
- * 仅接收属于当前批次的视频帧，并替换缓冲区中的旧帧。
+ * Accepts frames only for the current revision, replacing the pending frame.
  *
- * @param[in] frame 待交付的视频帧或借用视图；同步调用返回前像素必须有效。
- * @param[in] token 当前连接或媒体绑定的批次，用于拒收旧回调。
+ * @param[in] frame The frame or borrowed view to deliver; its pixels must remain valid until this
+ * synchronous call returns.
+ * @param[in] token The connection or media-binding revision used to reject stale callbacks.
  */
 void RemoteVideoFramePipeline::submit(
     Frame frame,
     uint64_t token
 ) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (active_ && token == token_)
-        latest_ = std::make_shared<Frame>(std::move(frame));
+    submit_owned(
+        std::make_shared<Frame>(std::move(frame)),
+        token
+    );
 }
 
 /**
- * 非阻塞取出最新帧，并清空帧缓冲区。
+ * Shares already-owned pixels with the active mailbox without copying their buffers.
  *
- * @return 独立拥有的最新帧；当前无待处理帧时为 nullptr。
+ * @param[in] frame The owned read-only frame to share.
+ * @param[in] token The producer's binding revision.
+ *
+ * @return Whether the active binding accepted this frame.
+ */
+bool RemoteVideoFramePipeline::submit_owned(
+    std::shared_ptr<Frame> frame,
+    uint64_t token
+) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!active_ || token != token_)
+        return false;
+    latest_ = std::move(frame);
+    return true;
+}
+
+/**
+ * Acquires the latest frame without blocking and clears the mailbox.
+ *
+ * @return An independently owned latest frame, or nullptr if none is pending.
  */
 std::shared_ptr<Frame> RemoteVideoFramePipeline::acquire() {
     std::lock_guard<std::mutex> lock(mutex_);
-    return std::exchange(latest_, {});
+    return std::exchange(
+        latest_,
+        {}
+    );
 }
 } // namespace xmax::detail

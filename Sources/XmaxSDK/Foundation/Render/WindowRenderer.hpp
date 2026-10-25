@@ -14,16 +14,16 @@
 namespace xmax::detail {
 
 /**
- * 检查当前构建是否支持 HWND 原生窗口呈现。
+ * Reports whether this build supports native HWND rendering.
  */
 bool native_window_available() noexcept;
 
 /**
- * 在 HWND 所属线程按适应或填满模式呈现拥有像素的视频帧。
+ * Renders an owned video frame with aspect fit or fill on the HWND owner thread.
  *
- * @param[in] source 待读取的视频帧或借用视图，需包含有效的像素布局。
- * @param[in] window 目标 Windows HWND 转换为 void* 的值，必须由当前线程拥有。
- * @param[in] content_mode XMAX_CONTENT_FIT 等比例适应，或 XMAX_CONTENT_FILL 居中填满。
+ * @param[in] source The frame or borrowed view to read, with a valid pixel layout.
+ * @param[in] window The target Windows HWND as void*, owned by the calling thread.
+ * @param[in] content_mode XMAX_CONTENT_FIT for aspect fit, or XMAX_CONTENT_FILL for centered aspect fill.
  */
 void render_window(
     const Frame& source,
@@ -32,12 +32,12 @@ void render_window(
 );
 
 /**
- * 在已经绘制视频的 HWND 上叠加默认轨迹线和采样点。
+ * Draws default trajectory lines and points over an HWND's video content.
  *
- * @param[in] window 当前线程拥有的 Windows HWND。
- * @param[in] format 当前显示视频的实际尺寸。
- * @param[in] content_mode 画面适应或填满方式。
- * @param[in] points [0, 1] 范围的归一化轨迹。
+ * @param[in] window A Windows HWND owned by the calling thread.
+ * @param[in] format The actual dimensions of the displayed video.
+ * @param[in] content_mode The aspect-fit or aspect-fill layout mode.
+ * @param[in] points The normalized trajectory in [0, 1].
  */
 void render_trajectory(
     void* window,

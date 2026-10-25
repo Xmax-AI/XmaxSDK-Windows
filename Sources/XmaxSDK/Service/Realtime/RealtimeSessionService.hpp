@@ -16,24 +16,25 @@
 namespace xmax::detail {
 
 /**
- * 校验服务端会话响应，提取会话标识与 RTC 连接信息。
+ * Validates the server-session response and extracts session and RTC connection information.
  *
- * @param[in] payload 服务端会话响应的 data 对象，必须包含会话及 RTC 必需字段。
- * @return 包含服务端会话标识和有效 RTC 信息的会话记录。
+ * @param[in] payload The session response's data object, containing required session and RTC fields.
+ *
+ * @return A session record with its server identifier and validated RTC information.
  */
 RealtimeSession parse_connection(
     const json& payload
 );
 
 /**
- * 管理服务端会话的创建、保活和关闭，并在部分创建失败时保留清理所需标识。
+ * Manages session creation, keepalive, and closing, retaining cleanup identifiers after partial failure.
  */
 class RealtimeSessionService {
 
   public:
 
     /**
-     * 保留用于服务端会话创建、保活和关闭的共享 API 服务。
+     * Retains the shared API service for session creation, keepalive, and closing.
      */
     explicit RealtimeSessionService(
         std::shared_ptr<ApiService> api
@@ -42,33 +43,36 @@ class RealtimeSessionService {
     }
 
     /**
-     * 分配服务端会话并验证 RTC 信息，保留失败回滚所需的会话标识。
+     * Allocates a server session and validates RTC information, retaining the identifier needed for
+     * rollback.
      *
-     * @param[in] cancel 协作式取消判断函数；返回 true 时应终止当前操作。
-     * @return 已创建并验证连接信息的会话借用引用。
+     * @param[in] cancel A cooperative cancellation predicate; true requests termination of the operation.
+     *
+     * @return A borrowed reference to the session with validated connection information.
      */
     const RealtimeSession& create(
         const Cancel& cancel
     );
 
     /**
-     * 刷新活动服务端会话，支持协作式取消。
+     * Refreshes the active server session with cooperative cancellation.
      *
-     * @param[in] cancel 协作式取消判断函数；返回 true 时应终止当前操作。
+     * @param[in] cancel A cooperative cancellation predicate; true requests termination of the operation.
      */
     void heartbeat(
         const Cancel& cancel
     );
 
     /**
-     * 关闭活动服务端会话并清除本地会话记录。
+     * Closes the active server session and clears its local record.
      */
     void close();
 
     /**
-     * 在生命周期执行器上借用当前会话记录。
+     * Borrows the current session record on the lifecycle executor.
      *
-     * @return 活动会话的借用引用，修改或关闭会话后不得继续依赖原内容。
+     * @return A borrowed active-session reference; do not rely on its previous content after mutation or
+     * closing.
      */
     const RealtimeSession& active() const {
         return session_;
@@ -77,12 +81,12 @@ class RealtimeSessionService {
   private:
 
     /**
-     * 保留共享 API 服务，使子控制器在客户端句柄释放后仍可使用。
+     * Retains the shared API service so child controllers survive destruction of the client handle.
      */
     std::shared_ptr<ApiService> api_;
 
     /**
-     * 当前活动服务端会话及其 RTC 连接信息；关闭后清空。
+     * The active session and RTC information, cleared on closing.
      */
     RealtimeSession session_;
 };

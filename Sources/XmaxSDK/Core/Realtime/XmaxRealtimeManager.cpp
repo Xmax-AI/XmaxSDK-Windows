@@ -17,11 +17,11 @@
 namespace xmax::detail {
 
 /**
- * 将事件文本复制到固定容量的缓冲区，始终保留结尾 NUL。
+ * Copies event text into a fixed-capacity buffer, preserving a trailing NUL.
  *
- * @param[out] out 接收事件文本的可写缓冲区。
- * @param[in] size 目标缓冲区总字节容量，需包含结尾 NUL。
- * @param[in] text 需要复制到固定容量事件字段的 UTF-8 文本。
+ * @param[out] out The writable event-text buffer.
+ * @param[in] size The total buffer capacity in bytes, including the trailing NUL.
+ * @param[in] text The UTF-8 text to copy into a fixed-capacity event field.
  */
 static void text_copy(
     char* out,
@@ -33,18 +33,23 @@ static void text_copy(
     while (count && count < text.size() && (static_cast<unsigned char>(text[count]) & 0xc0) == 0x80)
         --count;
 
-    std::memcpy(out, text.data(), count);
+    std::memcpy(
+        out,
+        text.data(),
+        count
+    );
     out[count] = 0;
 }
 
 /**
- * 使用共享 API 服务及原生工厂构建独立的实时生命周期控制器。
+ * Creates an independent realtime lifecycle controller with shared API services and native factories.
  *
- * @param[in] api 共享 API 服务，控制器在其生命周期内保留该引用。
- * @param[in] factory 创建底层原生适配器的工厂，不得返回空对象。
- * @param[in] heartbeat 活动会话心跳间隔，单位为毫秒。
- * @param[in] camera 创建原生摄像头适配器的工厂。
- * @param[in] history 可选的按模型和方向保存的画质历史，空引用表示不持久化。
+ * @param[in] api The shared API service, retained for the controller's lifetime.
+ * @param[in] factory The native adapter factory, which must not return an empty object.
+ * @param[in] heartbeat The active-session heartbeat interval, in milliseconds.
+ * @param[in] camera The native camera adapter factory.
+ * @param[in] history Optional quality history scoped by model and direction; an empty reference disables
+ * persistence.
  */
 XmaxRealtimeManager::XmaxRealtimeManager(
     std::shared_ptr<ApiService> api,
@@ -53,28 +58,56 @@ XmaxRealtimeManager::XmaxRealtimeManager(
     CameraFactory camera,
     std::shared_ptr<QualityHistory> history
 )
-    : api_(std::move(api)), connection_(api_), stream_(std::move(factory), std::move(history)),
+    : api_(std::move(api)), connection_(api_), stream_(
+        std::move(factory),
+        std::move(history)
+    ),
       media_(std::move(camera)), heartbeat_interval_(heartbeat),
-      coordinator_([this] { this->heartbeat(); }, [this](Error error) { fail(std::move(error)); }) {
-    require(bool(api_), XMAX_INVALID_ARGUMENT, "API service is required");
-    require(heartbeat.count() > 0, XMAX_INVALID_ARGUMENT, "Invalid heartbeat interval");
+      coordinator_(
+          [this] { this->heartbeat(); },
+          [this](Error error) { fail(std::move(error)); }
+      ) {
+    require(
+        bool(api_),
+        XMAX_INVALID_ARGUMENT,
+        "API service is required"
+    );
+    require(
+        heartbeat.count() > 0,
+        XMAX_INVALID_ARGUMENT,
+        "Invalid heartbeat interval"
+    );
 }
 
 /**
- * 取消在途操作，关闭媒体与 RTC 资源并停止生命周期执行器。
+ * Cancels in-flight work, closes media and RTC resources, and stops lifecycle execution.
  */
 XmaxRealtimeManager::~XmaxRealtimeManager() {
-    try {
-        disconnect(true);
-    } catch (...) {
-    }
-    coordinator_.shutdown();
+    shutdown();
 }
 
 /**
- * 更新会话状态，并向接入方投递对应状态事件。
+ * Permanently closes native resources and drains application delivery before stopping lifecycle work.
+ * Safe to repeat; source receivers remain inert even while an in-flight call retains this object.
+ */
+void XmaxRealtimeManager::shutdown() noexcept {
+    std::call_once(
+        shutdown_once_,
+        [this] {
+            try {
+                disconnect(true);
+            } catch (...) {
+            }
+            render_.shutdown_output();
+            coordinator_.shutdown();
+        }
+    );
+}
+
+/**
+ * Updates session state and delivers its state event to your app.
  *
- * @param[in] state 新的实时生命周期状态。
+ * @param[in] state The new realtime lifecycle state.
  */
 void XmaxRealtimeManager::change_state(
     xmax_state state
@@ -95,49 +128,80 @@ void XmaxRealtimeManager::change_state(
     event.type = XMAX_EVENT_STATE;
     event.state = state;
     event.code = errors_.error() ? errors_.error()->code : XMAX_OK;
-    text_copy(event.session_id, sizeof(event.session_id), last_session_id_);
-    text_copy(event.task_id, sizeof(event.task_id), last_task_id_);
-    coordinator_.emit(event, errors_.reason(), errors_.error());
-    XmaxLogger::write(LogCategory::Realtime, XMAX_LOG_INFO, [&](auto language) {
-        static const char* names[]{"idle",       "ready",         "connecting", "connected",
-                                   "generating", "disconnecting", "preparing"};
-        return XmaxLogger::localized(language, "状态更新 (State Changed)", "State Changed") + "\n├─ " +
-               names[state] + "\n├─ session=" + connection_.active().id + "\n└─ task=" + stream_.task();
-    });
+    text_copy(
+        event.session_id,
+        sizeof(event.session_id),
+        last_session_id_
+    );
+    text_copy(
+        event.task_id,
+        sizeof(event.task_id),
+        last_task_id_
+    );
+    coordinator_.emit(
+        event,
+        errors_.reason(),
+        errors_.error()
+    );
+    XmaxLogger::write(
+        LogCategory::Realtime,
+        XMAX_LOG_INFO,
+        [&](auto language) {
+            static const char*
+                names[]{"idle", "ready", "connecting", "connected", "generating", "disconnecting", "preparing"};
+            return XmaxLogger::localized(
+                language,
+                "状态更新 (State Changed)",
+                "State Changed"
+            ) +
+                   "\n├─ " +
+                   names[state] + "\n├─ session=" + connection_.active().id + "\n└─ task=" + stream_.task();
+        }
+    );
 }
 
 /**
- * 绑定外部视频输入，并进入媒体就绪状态。
+ * Binds external video input and enters the media-ready state.
  *
- * @param[in] format 输入尺寸和帧率，支持范围见 xmax_video_format。
+ * @param[in] format The input dimensions and frame rate; see xmax_video_format for limits.
+ *
+ * @return The revision identifying this external source binding.
  */
-void XmaxRealtimeManager::prepare(
+uint64_t XmaxRealtimeManager::prepare(
     xmax_video_format format
 ) {
-    coordinator_.sync([this, format] {
+    uint64_t binding = 0;
+    coordinator_.sync([this, format, &binding] {
         require(
-            coordinator_.state() == XMAX_IDLE || coordinator_.state() == XMAX_READY, XMAX_INVALID_STATE,
+            coordinator_.state() == XMAX_IDLE || coordinator_.state() == XMAX_READY,
+            XMAX_INVALID_STATE,
             "Disconnect before replacing an external source"
         );
 
         const auto resolved = MediaService::input(format);
         require(
-            resolved.width >= 4 && resolved.height >= 4, XMAX_INVALID_ARGUMENT,
+            resolved.width >= 4 && resolved.height >= 4,
+            XMAX_INVALID_ARGUMENT,
             "External video dimensions must be at least 4 pixels"
         );
         errors_.reset();
         change_state(XMAX_PREPARING);
         bind_local();
-        media_.prepare_external(resolved);
+        media_.prepare_external(
+            resolved,
+            media_epoch_.load()
+        );
+        binding = media_epoch_;
         camera_microphone_ = false;
         change_state(XMAX_READY);
     });
+    return binding;
 }
 
 /**
- * 非阻塞检查当前外部输入是否请求供帧。
+ * Reports whether external input requests frames without waiting for lifecycle work.
  *
- * @return 外部输入正在请求供帧时为 true；摄像头模式或未请求供帧时为 false。
+ * @return True when external input requests frames; false for camera mode or no request.
  */
 bool XmaxRealtimeManager::requesting() const {
     return !media_.camera_active() && input_epoch_.load() == coordinator_.epoch() &&
@@ -145,19 +209,28 @@ bool XmaxRealtimeManager::requesting() const {
 }
 
 /**
- * 将本地预览绑定到新的媒体批次，拒收旧绑定的帧。
+ * Binds local preview to a new media revision, rejecting earlier frames.
  */
 void XmaxRealtimeManager::bind_local() {
+    std::lock_guard<std::mutex> lock(media_binding_mutex_);
     const auto token = ++media_epoch_;
+    failed_media_epoch_ = 0;
     render_.bind_local(token);
-    media_.external().preview([this, token](Frame frame) { render_.receive_local(std::move(frame), token); });
+    media_.external().preview(
+        [this, token](Frame frame) { render_.receive_local(
+            std::move(frame),
+            token
+        ); },
+        token
+    );
 }
 
 /**
- * 创建仅处理当前媒体绑定错误的回调，忽略旧绑定的回调。
+ * Creates a failure callback that accepts only the current media binding's errors.
  *
- * @param[in] token 当前连接或媒体绑定的批次，用于拒收旧回调。
- * @return 当前媒体绑定的错误回调；旧绑定触发的错误会被忽略。
+ * @param[in] token The connection or media-binding revision used to reject stale callbacks.
+ *
+ * @return The current binding's failure callback; errors from previous bindings are ignored.
  */
 std::function<void(Error)> XmaxRealtimeManager::media_failure(
     uint64_t token
@@ -175,18 +248,110 @@ std::function<void(Error)> XmaxRealtimeManager::media_failure(
             event.type = XMAX_EVENT_ERROR;
             event.code = error.code;
             event.state = coordinator_.state();
-            text_copy(event.message, sizeof(event.message), XmaxLogger::redact(error.what()));
-            coordinator_.emit(event, XMAX_REASON_FAILURE, &error);
+            text_copy(
+                event.message,
+                sizeof(event.message),
+                XmaxLogger::redact(error.what())
+            );
+            coordinator_.emit(
+                event,
+                XMAX_REASON_FAILURE,
+                &error
+            );
         });
     };
 }
 
 /**
- * 启动指定摄像头并等待真实首帧，保留实际采集尺寸并进入就绪状态。
+ * Invalidates local source callbacks and clears preview after media has stopped.
+ */
+void XmaxRealtimeManager::unbind_local() {
+    std::lock_guard<std::mutex> lock(media_binding_mutex_);
+    render_.unbind_local(++media_epoch_);
+}
+
+/**
+ * Cancels work using a failed external source and schedules media, connection, and session cleanup.
  *
- * @param[in] device UTF-8 摄像头设备标识，空文本选择默认摄像头。
- * @param[in] format 输入尺寸和帧率，支持范围见 xmax_video_format。
- * @param[in] microphone 是否在加入 RTC 房间时启动麦克风采集。
+ * @param[in] binding The source revision; stale or already-failed bindings are ignored.
+ * @param[in] error The source failure, copied and redacted before application delivery.
+ */
+void XmaxRealtimeManager::external_failure(
+    uint64_t binding,
+    Error error
+) {
+    {
+        std::lock_guard<std::mutex> lock(media_binding_mutex_);
+        if (binding == 0 || binding != media_epoch_ || failed_media_epoch_ == binding ||
+            media_.camera_active() || !media_.external().bound())
+            return;
+
+        failed_media_epoch_ = binding;
+        ++generation_request_;
+        coordinator_.invalidate();
+    }
+    coordinator_.enqueue([this, binding, error = std::move(error)] {
+        if (media_epoch_ != binding)
+            return;
+
+        errors_.record(error);
+        cleanup(true);
+
+        xmax_event event{};
+        event.type = XMAX_EVENT_ERROR;
+        event.code = error.code;
+        event.state = coordinator_.state();
+        text_copy(
+            event.message,
+            sizeof(event.message),
+            XmaxLogger::redact(error.what())
+        );
+        coordinator_.emit(
+            event,
+            XMAX_REASON_FAILURE,
+            &error
+        );
+    });
+}
+
+/**
+ * Reports whether a particular external source currently supplies the active connection.
+ *
+ * @param[in] binding The revision returned when this source was bound.
+ *
+ * @return False for stale bindings, camera mode, or inactive publication.
+ */
+bool XmaxRealtimeManager::requesting(
+    uint64_t binding
+) const {
+    return binding != 0 && media_epoch_ == binding && requesting();
+}
+
+/**
+ * Submits a source-bound external frame; replaced or closed bindings silently discard input.
+ *
+ * @param[in] frame The borrowed pixels, copied before this call returns.
+ * @param[in] binding The revision returned when this source was bound.
+ */
+void XmaxRealtimeManager::push(
+    const xmax_video_frame& frame,
+    uint64_t binding
+) {
+    if (binding == 0 || media_epoch_ != binding || media_.camera_active())
+        return;
+    media_.external().push(
+        frame,
+        binding
+    );
+}
+
+/**
+ * Starts a camera, waits for its first frame, and enters ready state with native capture dimensions
+ * preserved.
+ *
+ * @param[in] device The UTF-8 camera identifier; an empty string selects the default camera.
+ * @param[in] format The input dimensions and frame rate; see xmax_video_format for limits.
+ * @param[in] microphone Whether to start microphone capture when joining the RTC room.
  */
 void XmaxRealtimeManager::prepare_camera(
     std::string device,
@@ -195,9 +360,14 @@ void XmaxRealtimeManager::prepare_camera(
 ) {
     const auto epoch = coordinator_.epoch();
     coordinator_.sync([this, device = std::move(device), format, microphone, epoch] {
-        require(!coordinator_.cancellation(epoch)(), XMAX_CANCELLED, "Camera startup cancelled");
         require(
-            coordinator_.state() == XMAX_IDLE || coordinator_.state() == XMAX_READY, XMAX_INVALID_STATE,
+            !coordinator_.cancellation(epoch)(),
+            XMAX_CANCELLED,
+            "Camera startup cancelled"
+        );
+        require(
+            coordinator_.state() == XMAX_IDLE || coordinator_.state() == XMAX_READY,
+            XMAX_INVALID_STATE,
             "Disconnect before replacing local media"
         );
 
@@ -208,7 +378,10 @@ void XmaxRealtimeManager::prepare_camera(
 
         try {
             media_.prepare_camera(
-                device, resolved, media_failure(media_epoch_), coordinator_.cancellation(epoch)
+                device,
+                resolved,
+                media_failure(media_epoch_),
+                coordinator_.cancellation(epoch)
             );
             camera_microphone_ = microphone;
             stream_.volume(0);
@@ -219,10 +392,13 @@ void XmaxRealtimeManager::prepare_camera(
             } catch (const Error& error) {
                 errors_.record(error);
             } catch (...) {
-                errors_.record(Error(XMAX_INTERNAL_ERROR, "Camera preparation failed"));
+                errors_.record(Error(
+                    XMAX_INTERNAL_ERROR,
+                    "Camera preparation failed"
+                ));
             }
             media_.close();
-            render_.unbind_local(++media_epoch_);
+            unbind_local();
             change_state(XMAX_IDLE);
             throw;
         }
@@ -230,53 +406,74 @@ void XmaxRealtimeManager::prepare_camera(
 }
 
 /**
- * 在断开连接后释放本地采集和输入绑定。
+ * Releases local capture and input bindings after disconnection.
  */
 void XmaxRealtimeManager::stop_media() {
     coordinator_.sync([this] {
         require(
-            coordinator_.state() == XMAX_IDLE || coordinator_.state() == XMAX_READY, XMAX_INVALID_STATE,
+            coordinator_.state() == XMAX_IDLE || coordinator_.state() == XMAX_READY,
+            XMAX_INVALID_STATE,
             "Disconnect before stopping local media"
         );
         media_.close();
-        render_.unbind_local(++media_epoch_);
+        unbind_local();
         camera_microphone_ = false;
         change_state(XMAX_IDLE);
     });
 }
 
 /**
- * 同步复制并提交外部输入帧，允许从媒体线程调用。
+ * Copies and submits an external frame synchronously; may be called on a media thread.
  *
- * @param[in] frame 待交付的视频帧或借用视图；同步调用返回前像素必须有效。
+ * @param[in] frame The frame or borrowed view to deliver; its pixels must remain valid until this
+ * synchronous call returns.
  */
 void XmaxRealtimeManager::push(
     const xmax_video_frame& frame
 ) {
-    require(!media_.camera_active(), XMAX_INVALID_STATE, "External frames cannot replace SDK camera capture");
+    require(
+        !media_.camera_active(),
+        XMAX_INVALID_STATE,
+        "External frames cannot replace SDK camera capture"
+    );
     media_.external().push(frame);
 }
 
 /**
- * 创建服务端会话并加入 RTC；取消或失败时回滚已分配资源。
+ * Creates a server session and joins RTC, rolling back allocated resources on cancellation or failure.
  *
- * @param[in] cancel 协作式取消判断函数；返回 true 时应终止当前操作。
- * @param[in] epoch 调用开始时捕获的取消批次，用于识别失效操作。
- * @param[in] microphone 是否在加入 RTC 房间时启动麦克风采集。
+ * @param[in] cancel A cooperative cancellation predicate; true requests termination of the operation.
+ * @param[in] epoch The cancellation revision captured when the operation starts, used to reject stale work.
+ * @param[in] microphone Whether to start microphone capture when joining the RTC room.
  */
 void XmaxRealtimeManager::connect_impl(
     const Cancel& cancel,
     uint64_t epoch,
     bool microphone
 ) {
-    require(!cancel(), XMAX_CANCELLED, "Operation cancelled");
-    require(coordinator_.state() == XMAX_READY, XMAX_INVALID_STATE, "Prepare local media before connecting");
-    require(!api_->config().key.empty(), XMAX_INVALID_API_KEY, "An Xmax API Key is required");
+    require(
+        !cancel(),
+        XMAX_CANCELLED,
+        "Operation cancelled"
+    );
+    require(
+        coordinator_.state() == XMAX_READY,
+        XMAX_INVALID_STATE,
+        "Prepare local media before connecting"
+    );
+    require(
+        !api_->config().key.empty(),
+        XMAX_INVALID_API_KEY,
+        "An Xmax API Key is required"
+    );
     errors_.reset();
     timing_.begin();
     change_state(XMAX_CONNECTING);
 
-    connection_.create(stream_, cancel);
+    connection_.create(
+        stream_,
+        cancel
+    );
     timing_.finish_session();
     timing_.begin_join();
 
@@ -285,7 +482,10 @@ void XmaxRealtimeManager::connect_impl(
         if (coordinator_.epoch() != epoch)
             return;
 
-        if (!RealtimeTiming::published(publication, Clock::now()))
+        if (!RealtimeTiming::published(
+            publication,
+            Clock::now()
+        ))
             return;
 
         coordinator_.enqueue([this, epoch, publication] {
@@ -296,7 +496,17 @@ void XmaxRealtimeManager::connect_impl(
     };
     callbacks.frame = [this, epoch](Frame frame) {
         if (coordinator_.epoch() == epoch)
-            render_.receive(std::move(frame), epoch);
+            render_.receive(
+                std::move(frame),
+                epoch
+            );
+    };
+    callbacks.audio = [this, epoch](AudioFrame frame) {
+        if (coordinator_.epoch() == epoch)
+            render_.receive_audio(
+                std::move(frame),
+                epoch
+            );
     };
     callbacks.event = [this, epoch](xmax_event event) {
         if (coordinator_.epoch() != epoch)
@@ -308,8 +518,11 @@ void XmaxRealtimeManager::connect_impl(
                 if (coordinator_.epoch() != epoch || coordinator_.state() != XMAX_GENERATING)
                     return;
                 for (auto result : stream_.observe_quality(
-                         event.direction, event.quality, sampled, coordinator_.cancellation(epoch)
-                     ))
+                    event.direction,
+                    event.quality,
+                    sampled,
+                    coordinator_.cancellation(epoch)
+                ))
                     coordinator_.emit(result);
             });
         }
@@ -321,27 +534,39 @@ void XmaxRealtimeManager::connect_impl(
         });
     };
     connection_.join(
-        stream_, media_.external().format(), microphone || camera_microphone_, std::move(callbacks), cancel,
+        stream_,
+        media_.external().format(),
+        microphone || camera_microphone_,
+        std::move(callbacks),
+        cancel,
         MediaService::generation(media_.external().format())
     );
-    require(!cancel(), XMAX_CANCELLED, "Operation cancelled");
+    require(
+        !cancel(),
+        XMAX_CANCELLED,
+        "Operation cancelled"
+    );
     render_.bind(epoch);
     input_epoch_ = epoch;
     timing_.begin_publication();
-    media_.external().start([this, cancel](const Frame& frame) {
-        if (!cancel())
+    media_.external().start([this, connection_cancel = coordinator_.cancellation(epoch)](const Frame& frame) {
+        if (!connection_cancel())
             stream_.push(frame);
     });
-    require(!cancel(), XMAX_CANCELLED, "Operation cancelled");
+    require(
+        !cancel(),
+        XMAX_CANCELLED,
+        "Operation cancelled"
+    );
     timing_.finish_join();
     change_state(XMAX_CONNECTED);
     coordinator_.deadline(Clock::now() + heartbeat_interval_);
 }
 
 /**
- * 创建服务端会话并加入 RTC，暂不启动生成任务。
+ * Creates a server session and joins RTC without starting generation.
  *
- * @param[in] microphone 是否在加入 RTC 房间时启动麦克风采集。
+ * @param[in] microphone Whether to start microphone capture when joining the RTC room.
  */
 void XmaxRealtimeManager::connect(
     bool microphone
@@ -349,11 +574,17 @@ void XmaxRealtimeManager::connect(
     const auto epoch = coordinator_.epoch();
     coordinator_.sync([this, microphone, epoch] {
         require(
-            coordinator_.state() == XMAX_READY, XMAX_INVALID_STATE,
+            coordinator_.state() == XMAX_READY,
+            XMAX_INVALID_STATE,
             "Media is not ready or a connection already exists"
         );
+
         try {
-            connect_impl(coordinator_.cancellation(epoch), epoch, microphone);
+            connect_impl(
+                coordinator_.cancellation(epoch),
+                epoch,
+                microphone
+            );
         } catch (...) {
             auto original = std::current_exception();
             try {
@@ -361,8 +592,12 @@ void XmaxRealtimeManager::connect(
             } catch (const Error& error) {
                 errors_.record(error);
             } catch (...) {
-                errors_.record(Error(XMAX_INTERNAL_ERROR, "Realtime operation failed"));
+                errors_.record(Error(
+                    XMAX_INTERNAL_ERROR,
+                    "Realtime operation failed"
+                ));
             }
+
             coordinator_.invalidate();
             cleanup(false);
             std::rethrow_exception(original);
@@ -371,10 +606,10 @@ void XmaxRealtimeManager::connect(
 }
 
 /**
- * 发送生成条件并接通输入帧交付，等待结果流首帧。
+ * Sends generation conditions, enables input delivery, and waits for the first result frame.
  *
- * @param[in] context 本次生成使用的提示词、参考图片和人脸修复条件。
- * @param[in] cancel 协作式取消判断函数；返回 true 时应终止当前操作。
+ * @param[in] context The prompt, reference image, and face-restoration conditions for this generation.
+ * @param[in] cancel A cooperative cancellation predicate; true requests termination of the operation.
  */
 void XmaxRealtimeManager::generate_impl(
     const Context& context,
@@ -386,17 +621,37 @@ void XmaxRealtimeManager::generate_impl(
     };
 
     if (coordinator_.state() == XMAX_GENERATING) {
-        generation_.run(stream_, context, true, cancel, maintain);
+        generation_.run(
+            stream_,
+            context,
+            true,
+            cancel,
+            maintain
+        );
         return;
     }
 
-    require(coordinator_.state() == XMAX_CONNECTED, XMAX_INVALID_STATE, "No realtime connection is active");
+    require(
+        coordinator_.state() == XMAX_CONNECTED,
+        XMAX_INVALID_STATE,
+        "No realtime connection is active"
+    );
 
     timing_.begin_signal();
     render_.trajectory.clear();
-    generation_.run(stream_, context, false, cancel, maintain);
+    generation_.run(
+        stream_,
+        context,
+        false,
+        cancel,
+        maintain
+    );
     coordinator_.deadline(Clock::now() + heartbeat_interval_);
-    require(!cancel(), XMAX_CANCELLED, "Operation cancelled");
+    require(
+        !cancel(),
+        XMAX_CANCELLED,
+        "Operation cancelled"
+    );
     timing_.finish_signal();
     coordinator_.emit(timing_.snapshot());
     change_state(XMAX_GENERATING);
@@ -404,12 +659,12 @@ void XmaxRealtimeManager::generate_impl(
 }
 
 /**
- * 在需要时建立连接并启动生成，阻塞等待结果首帧。
+ * Connects if needed and starts generation, blocking until the first result frame.
  *
- * @param[in] prompt UTF-8 生成提示词。
- * @param[in] reference 参考图片路径或服务可接受的地址，空文本表示不提供参考图片。
- * @param[in] face 是否启用生成条件中的人脸修复。
- * @param[in] microphone 是否在加入 RTC 房间时启动麦克风采集。
+ * @param[in] prompt The generation prompt, encoded as UTF-8.
+ * @param[in] reference A reference image path or service-supported URL; empty omits the reference.
+ * @param[in] face Whether to enable face restoration for generation.
+ * @param[in] microphone Whether to start microphone capture when joining the RTC room.
  */
 void XmaxRealtimeManager::start(
     std::string prompt,
@@ -417,51 +672,17 @@ void XmaxRealtimeManager::start(
     bool face,
     bool microphone
 ) {
-    const auto epoch = coordinator_.epoch();
-    coordinator_.sync([this, context = Context{std::move(prompt), std::move(reference), face}, microphone,
-                       epoch] {
-        const auto cancel = coordinator_.cancellation(epoch);
-        require(!cancel(), XMAX_CANCELLED, "Operation cancelled");
-        require(
-            coordinator_.state() == XMAX_READY || coordinator_.state() == XMAX_CONNECTED ||
-                coordinator_.state() == XMAX_GENERATING,
-            XMAX_INVALID_STATE, "Prepare local media before generation"
-        );
-
-        // 先校验 RTC 能力和 API 凭证，校验失败时保留已就绪的本地媒体。
-        if (coordinator_.state() == XMAX_READY) {
-            require(!api_->config().key.empty(), XMAX_INVALID_API_KEY, "An Xmax API Key is required");
-        }
-
-        if (coordinator_.state() == XMAX_GENERATING) {
-            generate_impl(context, cancel);
-            return;
-        }
-
-        try {
-            if (coordinator_.state() == XMAX_READY)
-                connect_impl(cancel, epoch, microphone);
-            generate_impl(context, cancel);
-        } catch (...) {
-            auto original = std::current_exception();
-            try {
-                std::rethrow_exception(original);
-            } catch (const Error& error) {
-                errors_.record(error);
-            } catch (...) {
-                errors_.record(Error(XMAX_INTERNAL_ERROR, "Realtime operation failed"));
-            }
-            coordinator_.invalidate();
-            cleanup(false);
-            std::rethrow_exception(original);
-        }
-    });
+    request_generation(
+        Context{std::move(prompt), std::move(reference), face},
+        microphone
+    );
 }
 
 /**
- * 使用指定或缓存的生成条件启动任务，阻塞等待结果首帧。
+ * Starts a task with supplied or cached conditions, blocking until the first result frame.
  *
- * @param[in] value 可选生成条件；空指针复用此前条件，首次调用必须提供条件。
+ * @param[in] value Optional generation conditions; null reuses previous conditions, but the first call
+ * requires them.
  */
 void XmaxRealtimeManager::generate(
     const xmax_generation_context* value
@@ -470,73 +691,132 @@ void XmaxRealtimeManager::generate(
 
     if (value)
         incoming = Context{
-            value->prompt, value->reference_path ? value->reference_path : "", value->face_restoration != 0
+            value->prompt,
+            value->reference_path ? value->reference_path : "",
+            value->face_restoration != 0
         };
 
-    const auto epoch = coordinator_.epoch();
-    coordinator_.sync([this, incoming = std::move(incoming), epoch] {
-        require(
-            incoming.has_value() || generation_.context.has_value(), XMAX_INVALID_ARGUMENT,
-            "Initial generation conditions are required"
-        );
-
-        const auto context = incoming ? *incoming : *generation_.context;
-        require(
-            coordinator_.state() == XMAX_READY || coordinator_.state() == XMAX_CONNECTED ||
-                coordinator_.state() == XMAX_GENERATING,
-            XMAX_INVALID_STATE, "Prepare local media before generation"
-        );
-
-        const auto cancel = coordinator_.cancellation(epoch);
-
-        if (coordinator_.state() == XMAX_GENERATING) {
-            generate_impl(context, cancel);
-            return;
-        }
-
-        try {
-            if (coordinator_.state() == XMAX_READY)
-                connect_impl(cancel, epoch, camera_microphone_);
-            generate_impl(context, cancel);
-        } catch (...) {
-            auto original = std::current_exception();
-            try {
-                std::rethrow_exception(original);
-            } catch (const Error& error) {
-                errors_.record(error);
-            } catch (...) {
-                errors_.record(Error(XMAX_INTERNAL_ERROR, "Realtime operation failed"));
-            }
-            coordinator_.invalidate();
-            cleanup(false);
-            std::rethrow_exception(original);
-        }
-    });
+    request_generation(
+        std::move(incoming),
+        false
+    );
 }
 
 /**
- * 替换当前任务的生成条件。
+ * Replaces the current task's generation conditions.
  *
- * @param[in] prompt UTF-8 生成提示词。
- * @param[in] reference 参考图片路径或服务可接受的地址，空文本表示不提供参考图片。
- * @param[in] face 是否启用生成条件中的人脸修复。
+ * @param[in] prompt The generation prompt, encoded as UTF-8.
+ * @param[in] reference A reference image path or service-supported URL; empty omits the reference.
+ * @param[in] face Whether to enable face restoration for generation.
  */
 void XmaxRealtimeManager::update(
     std::string prompt,
     std::string reference,
     bool face
 ) {
-    const auto epoch = coordinator_.epoch();
-    coordinator_.sync([this, context = Context{std::move(prompt), std::move(reference), face}, epoch] {
-        require(coordinator_.state() == XMAX_GENERATING, XMAX_INVALID_STATE, "No generation is active");
-        generate_impl(context, coordinator_.cancellation(epoch));
+    require(
+        coordinator_.state() == XMAX_GENERATING,
+        XMAX_INVALID_STATE,
+        "No generation is active"
+    );
+    request_generation(
+        Context{std::move(prompt), std::move(reference), face},
+        false
+    );
+}
+
+/**
+ * Replaces an unfinished generation request, then executes after its cleanup on the lifecycle queue.
+ *
+ * @param[in] context Conditions to commit on success; an empty value reuses the last committed conditions.
+ * @param[in] microphone Whether to enable microphone capture if a connection must be created.
+ */
+void XmaxRealtimeManager::request_generation(
+    std::optional<Context> context,
+    bool microphone
+) {
+    const auto request = ++generation_request_;
+    coordinator_.sync([this, incoming = std::move(context), microphone, request] {
+        require(
+            generation_request_ == request,
+            XMAX_CANCELLED,
+            "Generation request superseded or cancelled"
+        );
+        require(
+            incoming.has_value() || generation_.context.has_value(),
+            XMAX_INVALID_ARGUMENT,
+            "Initial generation conditions are required"
+        );
+        require(
+            coordinator_.state() == XMAX_READY || coordinator_.state() == XMAX_CONNECTED ||
+                coordinator_.state() == XMAX_GENERATING,
+            XMAX_INVALID_STATE,
+            "Prepare local media before generation"
+        );
+
+        const auto value = incoming ? *incoming : *generation_.context;
+        const auto previous_context = generation_.context;
+        const auto epoch = coordinator_.epoch();
+        const auto cancel = [this, epoch, request] {
+            return coordinator_.epoch() != epoch || generation_request_ != request;
+        };
+        const auto retain_connection = coordinator_.state() != XMAX_READY;
+        try {
+            if (!retain_connection)
+                connect_impl(
+                    cancel,
+                    epoch,
+                    microphone
+                );
+            generate_impl(
+                value,
+                cancel
+            );
+            require(
+                !cancel(),
+                XMAX_CANCELLED,
+                "Generation request superseded or cancelled"
+            );
+        } catch (...) {
+            generation_.context = previous_context;
+            const auto original = std::current_exception();
+            const bool replaced = generation_request_ != request && coordinator_.epoch() == epoch;
+            if (replaced && retain_connection) {
+                try {
+                    stream_.stop_generation(coordinator_.cancellation(epoch));
+                    generation_.reset(false);
+                    render_.trajectory.clear();
+                    errors_.reset();
+                    change_state(XMAX_CONNECTED);
+                    coordinator_.deadline(Clock::now() + heartbeat_interval_);
+                } catch (...) {
+                    coordinator_.invalidate();
+                    cleanup(false);
+                }
+            } else {
+                try {
+                    std::rethrow_exception(original);
+                } catch (const Error& error) {
+                    if (error.code != XMAX_CANCELLED)
+                        errors_.record(error);
+                } catch (...) {
+                    errors_.record(Error(
+                        XMAX_INTERNAL_ERROR,
+                        "Realtime operation failed"
+                    ));
+                }
+                coordinator_.invalidate();
+                cleanup(false);
+            }
+            std::rethrow_exception(original);
+        }
     });
 }
 
 /**
- * 切换正在使用的摄像头，并使用保留的生成条件恢复任务。
+ * Switches the active camera and resumes generation with retained conditions.
  *
- * @param[in] device UTF-8 摄像头设备标识，空文本选择默认摄像头。
+ * @param[in] device The UTF-8 camera identifier; an empty string selects the default camera.
  */
 void XmaxRealtimeManager::switch_camera(
     std::string device
@@ -547,7 +827,8 @@ void XmaxRealtimeManager::switch_camera(
         require(
             media_.camera_active() &&
                 (state == XMAX_READY || state == XMAX_CONNECTED || state == XMAX_GENERATING),
-            XMAX_INVALID_STATE, "No switchable camera stream is active"
+            XMAX_INVALID_STATE,
+            "No switchable camera stream is active"
         );
 
         const auto cancel = coordinator_.cancellation(epoch);
@@ -562,7 +843,11 @@ void XmaxRealtimeManager::switch_camera(
 
             render_.unbind(epoch);
             bind_local();
-            media_.switch_camera(device, media_failure(media_epoch_), cancel);
+            media_.switch_camera(
+                device,
+                media_failure(media_epoch_),
+                cancel
+            );
 
             if (state != XMAX_READY) {
                 media_.external().start([this, cancel](const Frame& frame) {
@@ -571,7 +856,10 @@ void XmaxRealtimeManager::switch_camera(
                 });
                 render_.bind(epoch);
                 if (state == XMAX_GENERATING)
-                    generate_impl(*generation_.context, cancel);
+                    generate_impl(
+                        *generation_.context,
+                        cancel
+                    );
             }
         } catch (...) {
             auto original = std::current_exception();
@@ -580,7 +868,10 @@ void XmaxRealtimeManager::switch_camera(
             } catch (const Error& error) {
                 errors_.record(error);
             } catch (...) {
-                errors_.record(Error(XMAX_INTERNAL_ERROR, "Realtime operation failed"));
+                errors_.record(Error(
+                    XMAX_INTERNAL_ERROR,
+                    "Realtime operation failed"
+                ));
             }
             coordinator_.invalidate();
             cleanup(true);
@@ -590,7 +881,7 @@ void XmaxRealtimeManager::switch_camera(
 }
 
 /**
- * 读取当前会话状态、会话标识和任务标识。
+ * Returns the session state, session identifier, and task identifier.
  */
 xmax_event XmaxRealtimeManager::state_snapshot() {
     xmax_event event{};
@@ -598,14 +889,22 @@ xmax_event XmaxRealtimeManager::state_snapshot() {
         event.struct_size = sizeof(event);
         event.type = XMAX_EVENT_STATE;
         event.state = coordinator_.state();
-        text_copy(event.session_id, sizeof(event.session_id), last_session_id_);
-        text_copy(event.task_id, sizeof(event.task_id), last_task_id_);
+        text_copy(
+            event.session_id,
+            sizeof(event.session_id),
+            last_session_id_
+        );
+        text_copy(
+            event.task_id,
+            sizeof(event.task_id),
+            last_task_id_
+        );
     });
     return event;
 }
 
 /**
- * 读取当前绑定的视频输入规格。
+ * Returns the currently bound input video format.
  */
 xmax_video_format XmaxRealtimeManager::format() {
     xmax_video_format result{};
@@ -614,9 +913,9 @@ xmax_video_format XmaxRealtimeManager::format() {
 }
 
 /**
- * 读取当前或下次连接使用的远端播放音量。
+ * Returns the remote playback volume for the current or next connection.
  *
- * @return 范围为 [0, 1] 的播放音量，初始值为 0。
+ * @return The playback volume in [0, 1], initially 0.
  */
 float XmaxRealtimeManager::volume() {
     float result = 0;
@@ -625,20 +924,25 @@ float XmaxRealtimeManager::volume() {
 }
 
 /**
- * 设置帧插值开关；缺少插值后端时拒绝启用。
+ * Configures frame interpolation; enabling requires a native backend.
  *
- * @param[in] enabled true 表示启用，false 表示关闭。
+ * @param[in] enabled True to enable; false to disable.
  */
 void XmaxRealtimeManager::interpolation(
     bool enabled
 ) {
-    require(!enabled, XMAX_UNSUPPORTED, "This build has no native frame interpolation backend");
+    require(
+        !enabled,
+        XMAX_UNSUPPORTED,
+        "This build has no native frame interpolation backend"
+    );
 }
 
 /**
- * 校验并应用上行码率限制和降级偏好。
+ * Validates and applies uplink bitrate limits and degradation preference.
  *
- * @param[in] value 上行码率限制与降级偏好，单位和特殊值见 xmax_encoding_config。
+ * @param[in] value The uplink bitrate limits and degradation preference; see xmax_encoding_config for units
+ * and special values.
  */
 void XmaxRealtimeManager::encoding(
     xmax_encoding_config value
@@ -647,9 +951,45 @@ void XmaxRealtimeManager::encoding(
 }
 
 /**
- * 开启或关闭画质自适应，并重置网络观察窗口。
+ * Commits RTC publication mirroring before display settings, retaining the previous configuration on
+ * failure.
  *
- * @param[in] enabled true 表示启用，false 表示关闭。
+ * @param[in] value The local preview, remote display, and published-video mirror settings.
+ */
+void XmaxRealtimeManager::video_mirror(
+    xmax_video_mirror_config value
+) {
+    require(
+        (value.local_preview == 0 || value.local_preview == 1) &&
+            (value.remote_view == 0 || value.remote_view == 1) &&
+            (value.published_video == 0 || value.published_video == 1),
+        XMAX_INVALID_ARGUMENT,
+        "Mirror settings must be 0 or 1"
+    );
+    coordinator_.sync([this, value] {
+        stream_.mirror(value.published_video != 0);
+        render_.mirror(
+            value.local_preview != 0,
+            value.remote_view != 0
+        );
+        mirror_ = value;
+        mirror_.struct_size = sizeof(mirror_);
+    });
+}
+
+/**
+ * Returns the mirror configuration retained for the current and next connection.
+ */
+xmax_video_mirror_config XmaxRealtimeManager::video_mirror() {
+    xmax_video_mirror_config value{};
+    coordinator_.sync([this, &value] { value = mirror_; });
+    return value;
+}
+
+/**
+ * Enables or disables quality adaptation and resets the network observation window.
+ *
+ * @param[in] enabled True to enable; false to disable.
  */
 void XmaxRealtimeManager::adaptive(
     bool enabled
@@ -658,9 +998,31 @@ void XmaxRealtimeManager::adaptive(
 }
 
 /**
- * 读取当前双向画质档位及生效的视频规格。
+ * Replaces the serialized remote audio/video listener, preserving playback and the current listener if
+ * native audio observation cannot be enabled.
  *
- * @return 当前自适应开关、上下行画质档位以及实际使用的视频尺寸和帧率。
+ * @param[in] listener The owned-packet callback, or an empty function to discard queued output and stop
+ * observation. An in-flight callback may finish after this method returns.
+ */
+void XmaxRealtimeManager::media_listener(
+    RemoteMediaListener listener
+) {
+    RemoteMediaListener previous;
+    coordinator_.sync([this, &previous, listener = std::move(listener)]() mutable {
+        if (listener) {
+            stream_.observe_remote_media(true);
+            previous = render_.media_listener(std::move(listener));
+        } else {
+            previous = render_.media_listener({});
+            stream_.observe_remote_media(false);
+        }
+    });
+}
+
+/**
+ * Returns the current uplink and downlink quality levels and effective video formats.
+ *
+ * @return The adaptation setting, directional quality levels, and effective dimensions and frame rates.
  */
 xmax_quality_status XmaxRealtimeManager::quality() {
     xmax_quality_status value{};
@@ -669,10 +1031,11 @@ xmax_quality_status XmaxRealtimeManager::quality() {
 }
 
 /**
- * 清理 RTC 与服务端会话，并根据选项释放媒体和生成条件。
+ * Cleans up RTC and the server session, optionally releasing media and generation conditions.
  *
- * @param[in] close 是否同时释放本地媒体和缓存生成条件。
- * @return 服务端会话已成功关闭时返回 true；关闭请求失败时返回 false 并投递错误事件。
+ * @param[in] close Whether to also release local media and cached generation conditions.
+ *
+ * @return True if the server session closed; false if closing failed, with an error event delivered.
  */
 bool XmaxRealtimeManager::cleanup(
     bool close
@@ -695,7 +1058,10 @@ bool XmaxRealtimeManager::cleanup(
         connection_.close(stream_);
     } catch (...) {
         server_closed = false;
-        Error error(XMAX_API_ERROR, "Server session close failed");
+        Error error(
+            XMAX_API_ERROR,
+            "Server session close failed"
+        );
         try {
             throw;
         } catch (const Error& original) {
@@ -708,14 +1074,26 @@ bool XmaxRealtimeManager::cleanup(
         xmax_event event{};
         event.type = XMAX_EVENT_ERROR;
         event.code = error.code;
-        text_copy(event.session_id, sizeof(event.session_id), session_id);
-        text_copy(event.message, sizeof(event.message), XmaxLogger::redact(error.what()));
-        coordinator_.emit(event, XMAX_REASON_FAILURE, &error);
+        text_copy(
+            event.session_id,
+            sizeof(event.session_id),
+            session_id
+        );
+        text_copy(
+            event.message,
+            sizeof(event.message),
+            XmaxLogger::redact(error.what())
+        );
+        coordinator_.emit(
+            event,
+            XMAX_REASON_FAILURE,
+            &error
+        );
     }
 
     if (close) {
         media_.close();
-        render_.unbind_local(++media_epoch_);
+        unbind_local();
         camera_microphone_ = false;
         generation_.context.reset();
     }
@@ -726,13 +1104,14 @@ bool XmaxRealtimeManager::cleanup(
 }
 
 /**
- * 取消在途操作并断开连接，可选择同时关闭本地媒体。
+ * Cancels in-flight work and disconnects, optionally closing local media.
  *
- * @param[in] close 是否同时释放本地媒体和缓存生成条件。
+ * @param[in] close Whether to also release local media and cached generation conditions.
  */
 void XmaxRealtimeManager::disconnect(
     bool close
 ) {
+    ++generation_request_;
     const auto epoch = coordinator_.invalidate();
     media_.stop();
     render_.unbind(epoch);
@@ -740,7 +1119,8 @@ void XmaxRealtimeManager::disconnect(
         errors_.reset();
         if (!cleanup(close))
             throw Error(
-                XMAX_API_ERROR, "Server session close failed; inspect the session ID in the error event",
+                XMAX_API_ERROR,
+                "Server session close failed; inspect the session ID in the error event",
                 errors_.error() ? errors_.error()->api_code : 0,
                 errors_.error() ? errors_.error()->http_status : 0
             );
@@ -748,13 +1128,14 @@ void XmaxRealtimeManager::disconnect(
 }
 
 /**
- * 清理失败操作持有的资源，并投递原始 SDK 错误。
+ * Releases resources held by a failed operation and delivers the original SDK error.
  *
- * @param[in] error 需要保留错误码与诊断的原始 SDK 异常。
+ * @param[in] error The original SDK exception whose code and diagnostic must be preserved.
  */
 void XmaxRealtimeManager::fail(
     Error error
 ) {
+    ++generation_request_;
     coordinator_.invalidate();
     errors_.record(error);
     cleanup(false);
@@ -763,12 +1144,20 @@ void XmaxRealtimeManager::fail(
     event.type = XMAX_EVENT_ERROR;
     event.code = error.code;
     event.state = coordinator_.state();
-    text_copy(event.message, sizeof(event.message), XmaxLogger::redact(error.what()));
-    coordinator_.emit(event, XMAX_REASON_FAILURE, &error);
+    text_copy(
+        event.message,
+        sizeof(event.message),
+        XmaxLogger::redact(error.what())
+    );
+    coordinator_.emit(
+        event,
+        XMAX_REASON_FAILURE,
+        &error
+    );
 }
 
 /**
- * 为活动连接执行到期的服务端与房间保活。
+ * Runs due server-session and RTC room keepalives for an active connection.
  */
 void XmaxRealtimeManager::heartbeat() {
     const auto cancel = coordinator_.cancellation(coordinator_.epoch());
@@ -780,26 +1169,32 @@ void XmaxRealtimeManager::heartbeat() {
         else
             coordinator_.deadline(Clock::time_point::max());
     } catch (const std::exception&) {
-        fail(Error(XMAX_API_ERROR, "Session heartbeat failed"));
+        fail(Error(
+            XMAX_API_ERROR,
+            "Session heartbeat failed"
+        ));
     }
 }
 
 /**
- * 在生成等待期间检查取消，并维持服务端和房间活跃。
+ * Checks cancellation and keeps the session and room alive while waiting for generation.
  *
- * @param[in] cancel 协作式取消判断函数；返回 true 时应终止当前操作。
+ * @param[in] cancel A cooperative cancellation predicate; true requests termination of the operation.
  */
 void XmaxRealtimeManager::keepalive(
     const Cancel& cancel
 ) {
-    connection_.heartbeat(stream_, cancel);
+    connection_.heartbeat(
+        stream_,
+        cancel
+    );
     coordinator_.deadline(Clock::now() + heartbeat_interval_);
 }
 
 /**
- * 设置并保存当前或下次连接使用的远端播放音量。
+ * Sets and retains the remote playback volume for the current or next connection.
  *
- * @param[in] value 范围为 [0, 1] 的有限音量值，0 表示静音。
+ * @param[in] value A finite volume in [0, 1]; 0 mutes playback.
  */
 void XmaxRealtimeManager::volume(
     float value
@@ -808,9 +1203,10 @@ void XmaxRealtimeManager::volume(
 }
 
 /**
- * 更新已就绪且未连接的摄像头编码规格，失败时尝试恢复原规格。
+ * Updates a ready, disconnected camera's encoding format, attempting to restore the previous format on
+ * failure.
  *
- * @param[in] format 模型支持的目标尺寸和帧率。
+ * @param[in] format The target dimensions and frame rate supported by the model.
  */
 void XmaxRealtimeManager::update_camera_format(
     xmax_video_format format
@@ -818,15 +1214,20 @@ void XmaxRealtimeManager::update_camera_format(
     const auto epoch = coordinator_.epoch();
     coordinator_.sync([this, format, epoch] {
         require(
-            coordinator_.state() == XMAX_READY && media_.camera_active(), XMAX_INVALID_STATE,
+            coordinator_.state() == XMAX_READY && media_.camera_active(),
+            XMAX_INVALID_STATE,
             "Camera format can only be updated before connection"
         );
+
         const auto resolved = MediaService::camera_input(format);
         errors_.reset();
         change_state(XMAX_PREPARING);
+
         try {
             media_.update_camera_format(
-                resolved, media_failure(media_epoch_), coordinator_.cancellation(epoch)
+                resolved,
+                media_failure(media_epoch_),
+                coordinator_.cancellation(epoch)
             );
             change_state(XMAX_READY);
         } catch (const Error& error) {
@@ -838,7 +1239,7 @@ void XmaxRealtimeManager::update_camera_format(
 }
 
 /**
- * 读取当前摄像头规格，没有摄像头流时返回全零。
+ * Returns the camera format, or an all-zero format if no camera stream exists.
  */
 xmax_video_format XmaxRealtimeManager::camera_format() {
     xmax_video_format result{};
@@ -850,10 +1251,10 @@ xmax_video_format XmaxRealtimeManager::camera_format() {
 }
 
 /**
- * 在生成中提交指定方向的档位，不锁定后续自动调档。
+ * Applies a directional quality level during generation without locking out subsequent adaptation.
  *
- * @param[in] direction 0 为上行，1 为下行。
- * @param[in] level 目标档位，范围为 [1, 5]。
+ * @param[in] direction 0 for uplink; 1 for downlink.
+ * @param[in] level The target quality level, in [1, 5].
  */
 void XmaxRealtimeManager::quality_level(
     int direction,
@@ -862,19 +1263,25 @@ void XmaxRealtimeManager::quality_level(
     const auto epoch = coordinator_.epoch();
     coordinator_.sync([this, direction, level, epoch] {
         require(
-            coordinator_.state() == XMAX_GENERATING, XMAX_INVALID_STATE,
+            coordinator_.state() == XMAX_GENERATING,
+            XMAX_INVALID_STATE,
             "Quality levels can only be changed during generation"
         );
         const auto cancel = coordinator_.cancellation(epoch);
-        coordinator_.emit(stream_.set_quality(direction, level, cancel, [this, cancel] {
-            if (Clock::now() >= coordinator_.deadline())
-                keepalive(cancel);
-        }));
+        coordinator_.emit(stream_.set_quality(
+            direction,
+            level,
+            cancel,
+            [this, cancel] {
+                if (Clock::now() >= coordinator_.deadline())
+                    keepalive(cancel);
+            }
+        ));
     });
 }
 
 /**
- * 读取包含原因和错误的当前状态快照。
+ * Returns the current state snapshot with its reason and error.
  */
 xmax_event_info XmaxRealtimeManager::state_info() {
     xmax_event_info info{};
@@ -884,8 +1291,16 @@ xmax_event_info XmaxRealtimeManager::state_info() {
         info.event.type = XMAX_EVENT_STATE;
         info.event.state = coordinator_.state();
         info.event.code = errors_.error() ? errors_.error()->code : XMAX_OK;
-        text_copy(info.event.session_id, sizeof(info.event.session_id), last_session_id_);
-        text_copy(info.event.task_id, sizeof(info.event.task_id), last_task_id_);
+        text_copy(
+            info.event.session_id,
+            sizeof(info.event.session_id),
+            last_session_id_
+        );
+        text_copy(
+            info.event.task_id,
+            sizeof(info.event.task_id),
+            last_task_id_
+        );
         info.reason = errors_.reason();
         info.error = errors_.details();
     });
@@ -893,17 +1308,19 @@ xmax_event_info XmaxRealtimeManager::state_info() {
 }
 
 /**
- * 按业务原因断开连接，保留本地媒体。
+ * Disconnects for the specified reason while retaining local media.
  *
- * @param[in] reason 正常停止或方向变化原因。
+ * @param[in] reason The normal-stop or orientation-change reason.
  */
 void XmaxRealtimeManager::disconnect_reason(
     xmax_realtime_reason reason
 ) {
     require(
-        reason == XMAX_REASON_NORMAL || reason == XMAX_REASON_ORIENTATION_CHANGED, XMAX_INVALID_ARGUMENT,
+        reason == XMAX_REASON_NORMAL || reason == XMAX_REASON_ORIENTATION_CHANGED,
+        XMAX_INVALID_ARGUMENT,
         "Failure reasons are reported by the SDK"
     );
+    ++generation_request_;
     const auto epoch = coordinator_.invalidate();
     media_.stop();
     render_.unbind(epoch);
@@ -911,7 +1328,8 @@ void XmaxRealtimeManager::disconnect_reason(
         errors_.reset(reason);
         if (!cleanup(false))
             throw Error(
-                XMAX_API_ERROR, "Server session close failed",
+                XMAX_API_ERROR,
+                "Server session close failed",
                 errors_.error() ? errors_.error()->api_code : 0,
                 errors_.error() ? errors_.error()->http_status : 0
             );
@@ -919,9 +1337,10 @@ void XmaxRealtimeManager::disconnect_reason(
 }
 
 /**
- * 复制视口轨迹并预约异步发送，连续提交仅保留最新采样。
+ * Copies viewport trajectory samples and schedules asynchronous delivery, retaining only the latest pending
+ * sample.
  *
- * @param[in] frame 采样点和实际视频布局。
+ * @param[in] frame The sampled points and actual video layout.
  */
 void XmaxRealtimeManager::submit_interaction(
     const xmax_interaction_frame& frame
@@ -932,7 +1351,8 @@ void XmaxRealtimeManager::submit_interaction(
     const auto epoch = coordinator_.epoch();
     std::lock_guard<std::mutex> lock(interaction_mutex_);
     require(
-        !interaction_task_.empty() && coordinator_.state() == XMAX_GENERATING, XMAX_INVALID_STATE,
+        !interaction_task_.empty() && coordinator_.state() == XMAX_GENERATING,
+        XMAX_INVALID_STATE,
         "No generation is active"
     );
     render_.trajectory.update(points);
@@ -941,30 +1361,46 @@ void XmaxRealtimeManager::submit_interaction(
 }
 
 /**
- * 公平调度单个轨迹采样，避免连续鼠标输入占满生命周期执行器。
+ * Schedules one trajectory sample fairly so continuous input cannot monopolize lifecycle execution.
  */
 void XmaxRealtimeManager::drain_interaction() {
     auto sample = generation_.interaction.take();
     if (!sample)
         return;
+
     const auto epoch = coordinator_.epoch();
     const auto cancel = coordinator_.cancellation(epoch);
     try {
         if (coordinator_.state() == XMAX_GENERATING)
-            generation_.send_interaction(stream_, *sample, epoch, cancel, [this, cancel] {
-                if (Clock::now() >= coordinator_.deadline())
-                    keepalive(cancel);
-            });
+            generation_.send_interaction(
+                stream_,
+                *sample,
+                epoch,
+                cancel,
+                [this, cancel] {
+                    if (Clock::now() >= coordinator_.deadline())
+                        keepalive(cancel);
+                }
+            );
     } catch (const Error& error) {
         if (error.code != XMAX_CANCELLED) {
             xmax_event event{};
             event.type = XMAX_EVENT_ERROR;
             event.code = error.code;
             event.state = coordinator_.state();
-            text_copy(event.message, sizeof(event.message), XmaxLogger::redact(error.what()));
-            coordinator_.emit(event, XMAX_REASON_FAILURE, &error);
+            text_copy(
+                event.message,
+                sizeof(event.message),
+                XmaxLogger::redact(error.what())
+            );
+            coordinator_.emit(
+                event,
+                XMAX_REASON_FAILURE,
+                &error
+            );
         }
     }
+
     coordinator_.enqueue([this] { drain_interaction(); });
 }
 } // namespace xmax::detail

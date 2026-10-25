@@ -16,19 +16,21 @@
 namespace xmax::detail {
 
 /**
- * 将房间信令分片并按滑动发送预算投递，等待期间支持取消及保活。
+ * Fragments and sends room messages under a sliding budget with cancellation and keepalives while waiting.
  */
 class RoomMessageSender {
 
   public:
 
     /**
-     * 按滑动预算发送 UTF-8 信令分片，等待期间检查取消并执行保活。
+     * Sends UTF-8 fragments under a sliding budget, checking cancellation and maintaining keepalives while
+     * waiting.
      *
-     * @param[in] rtc 已连接且可发送信令分片的 RTC 适配器借用引用。
-     * @param[in] message 待序列化并分片发送的房间 JSON 信令。
-     * @param[in] cancelled 协作式取消判断函数；返回 true 时应终止当前操作。
-     * @param[in] maintain 等待或限速期间执行的维护回调，空函数表示无需额外维护。
+     * @param[in] rtc A borrowed connected RTC adapter that can send signaling fragments.
+     * @param[in] message The room JSON message to serialize, fragment, and send.
+     * @param[in] cancelled A cooperative cancellation predicate; true requests termination of the operation.
+     * @param[in] maintain The maintenance callback invoked while waiting or throttled; empty omits
+     * maintenance.
      */
     void
     send(
@@ -39,7 +41,7 @@ class RoomMessageSender {
     );
 
     /**
-     * 清空房间释放后的发送预算历史。
+     * Clears send-budget history after releasing the room.
      */
     void reset() {
         sent_.clear();
@@ -48,7 +50,7 @@ class RoomMessageSender {
   private:
 
     /**
-     * 用于计算滑动信令发送预算的历史发送时间与大小。
+     * The send timestamps and byte counts used for the sliding signaling budget.
      */
     std::deque<std::pair<Clock::time_point, size_t>> sent_;
 };

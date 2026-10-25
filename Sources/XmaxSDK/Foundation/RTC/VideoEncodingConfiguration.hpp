@@ -14,28 +14,33 @@
 namespace xmax::detail {
 
 /**
- * 保存已解析的编码尺寸、帧率、码率限制与降级偏好。
+ * The resolved encoding dimensions, frame rate, bitrate limits, and degradation preference.
  */
 struct VideoEncodingConfiguration {
 
     /**
-     * 原生编码器当前使用的像素宽高和每秒帧数。
+     * The native encoder's current pixel dimensions and frame rate.
      */
     xmax_video_format format;
 
     /**
-     * 生效的最小编码码率，单位为 kbps。
+     * The effective minimum encoding bitrate, in kbps.
      */
     int minimum_bitrate = 100;
 
     /**
-     * 生效的最大编码码率，单位为 kbps。
+     * The effective maximum encoding bitrate, in kbps.
      */
     int maximum_bitrate = 100;
 
     /**
-     * 编码降级偏好，使用 XMAX_ENCODER_* 常量。
+     * The encoding degradation preference, using XMAX_ENCODER_* constants.
      */
     int preference = XMAX_ENCODER_MAINTAIN_FRAMERATE;
+
+    /**
+     * Whether RTC horizontally mirrors uplink encoding; local preview is unaffected.
+     */
+    bool mirrored = false;
 };
 } // namespace xmax::detail

@@ -16,10 +16,10 @@
 namespace xmax::detail {
 
 /**
- * 创建串行生命周期工作线程，并安装心跳和异步失败回调。
+ * Starts the serialized lifecycle worker and installs heartbeat and asynchronous failure callbacks.
  *
- * @param[in] tick 生命周期心跳到期时执行的回调，在工作线程调用。
- * @param[in] failure 接收工作线程报告的异步错误，在工作线程触发。
+ * @param[in] tick The lifecycle heartbeat callback, invoked on the worker thread.
+ * @param[in] failure The asynchronous failure receiver, invoked on the worker thread.
  */
 RealtimeCoordinator::RealtimeCoordinator(
     std::function<void()> tick,
@@ -30,14 +30,14 @@ RealtimeCoordinator::RealtimeCoordinator(
 }
 
 /**
- * 排空并停止生命周期工作线程后释放成员资源。
+ * Drains and stops the lifecycle worker before releasing its resources.
  */
 RealtimeCoordinator::~RealtimeCoordinator() {
     shutdown();
 }
 
 /**
- * 停止接收任务，排空队列并等待工作线程退出。
+ * Stops accepting work, drains the queue, and waits for the worker to exit.
  */
 void RealtimeCoordinator::shutdown() {
     {
@@ -50,9 +50,9 @@ void RealtimeCoordinator::shutdown() {
 }
 
 /**
- * 提交异步生命周期操作；执行器开始关闭后不再接收新任务。
+ * Queues asynchronous lifecycle work; no new work is accepted after shutdown starts.
  *
- * @param[in] fn 排入工作队列的操作，执行失败时通过错误回调报告。
+ * @param[in] fn The queued operation; failures are reported through the error callback.
  */
 void RealtimeCoordinator::enqueue(
     std::function<void()> fn
@@ -65,9 +65,9 @@ void RealtimeCoordinator::enqueue(
 }
 
 /**
- * 在生命周期队列执行操作，并将结果或异常同步传递给调用线程。
+ * Runs work on the lifecycle queue and returns completion or exceptions to the calling thread.
  *
- * @param[in] fn 提交到生命周期队列的操作，同步调用时异常返回到调用线程。
+ * @param[in] fn The lifecycle operation; synchronous execution propagates exceptions to the calling thread.
  */
 void RealtimeCoordinator::sync(
     std::function<void()> fn
@@ -79,14 +79,18 @@ void RealtimeCoordinator::sync(
 }
 
 /**
- * 串行处理生命周期任务和到期的心跳，关闭时排空已接收任务。
+ * Serializes lifecycle work and due heartbeats, draining accepted work during shutdown.
  */
 void RealtimeCoordinator::run() {
     for (;;) {
         std::function<void()> job;
         {
             std::unique_lock<std::mutex> lock(work_mutex_);
-            wake_.wait_until(lock, deadline_, [this] { return exiting_ || !work_.empty(); });
+            wake_.wait_until(
+                lock,
+                deadline_,
+                [this] { return exiting_ || !work_.empty(); }
+            );
 
             if (exiting_ && work_.empty())
                 return;
@@ -103,10 +107,13 @@ void RealtimeCoordinator::run() {
                 tick_();
         } catch (...) {
             deadline_ = Clock::time_point::max();
-            // 隔离异步回调异常，确保工作线程持续处理后续同步操作。
+            // Keep asynchronous callback failures from terminating the lifecycle worker.
             try {
                 if (failure_)
-                    failure_(Error(XMAX_INTERNAL_ERROR, "An asynchronous SDK operation failed"));
+                    failure_(Error(
+                        XMAX_INTERNAL_ERROR,
+                        "An asynchronous SDK operation failed"
+                    ));
                 else {
                     xmax_event event{};
                     event.type = XMAX_EVENT_ERROR;
@@ -120,10 +127,11 @@ void RealtimeCoordinator::run() {
 }
 
 /**
- * 为指定批次创建可跨线程调用的取消判断函数。
+ * Creates a thread-safe cancellation predicate for a revision.
  *
- * @param[in] epoch 调用开始时捕获的取消批次，用于识别失效操作。
- * @return 返回 true 时表示该批次已取消的可调用对象。
+ * @param[in] epoch The cancellation revision captured when the operation starts, used to reject stale work.
+ *
+ * @return A callable returning true when the revision has been cancelled.
  */
 Cancel RealtimeCoordinator::cancellation(
     uint64_t epoch
@@ -132,11 +140,11 @@ Cancel RealtimeCoordinator::cancellation(
 }
 
 /**
- * 将事件加入应用队列，并按当前配置记录诊断信息；队列设有容量上限。
+ * Queues an application event and logs it according to the current configuration; the queue is bounded.
  *
- * @param[in] event 需要加入应用事件队列的事件。
- * @param[in] reason 当前状态或错误的业务原因。
- * @param[in] error 关联错误详情，调用时复制。
+ * @param[in] event The event to enqueue.
+ * @param[in] reason The state-transition reason for the current state or error.
+ * @param[in] error Associated error details, copied during the call.
  */
 void RealtimeCoordinator::emit(
     xmax_event event,
@@ -146,22 +154,32 @@ void RealtimeCoordinator::emit(
     RtcStatsLogger::event(event);
 
     if (event.type == XMAX_EVENT_ERROR)
-        XmaxLogger::write(LogCategory::Realtime, XMAX_LOG_ERROR, [&](auto language) {
-            return XmaxLogger::localized(
-                       language, "实时操作失败 (Realtime Operation Failed)", "Realtime Operation Failed"
-                   ) +
-                   "\n├─ code=" + std::to_string(event.code) + ", session=" + event.session_id +
-                   ", task=" + event.task_id + "\n└─ " + std::string(event.message);
-        });
+        XmaxLogger::write(
+            LogCategory::Realtime,
+            XMAX_LOG_ERROR,
+            [&](auto language) {
+                return XmaxLogger::localized(
+                    language,
+                    "实时操作失败 (Realtime Operation Failed)",
+                    "Realtime Operation Failed"
+                ) +
+                       "\n├─ code=" + std::to_string(event.code) + ", session=" + event.session_id +
+                       ", task=" + event.task_id + "\n└─ " + std::string(event.message);
+            }
+        );
 
     event.struct_size = sizeof(event);
 
     std::lock_guard<std::mutex> lock(event_mutex_);
 
     if (events_.size() >= 256) {
-        auto old = std::find_if(events_.begin(), events_.end(), [](const auto& e) {
-            return e.event.type == XMAX_EVENT_STATISTICS;
-        });
+        auto old = std::find_if(
+            events_.begin(),
+            events_.end(),
+            [](const auto& e) {
+                return e.event.type == XMAX_EVENT_STATISTICS;
+            }
+        );
         if (old != events_.end())
             events_.erase(old);
         else
@@ -181,16 +199,21 @@ void RealtimeCoordinator::emit(
         auto length = std::min(safe.size(), sizeof(info.error.message) - 1);
         while (length && length < safe.size() && (static_cast<unsigned char>(safe[length]) & 0xc0) == 0x80)
             --length;
-        std::memcpy(info.error.message, safe.data(), length);
+        std::memcpy(
+            info.error.message,
+            safe.data(),
+            length
+        );
     }
     events_.push_back(info);
 }
 
 /**
- * 非阻塞取出最早的待处理应用事件。
+ * Acquires the oldest pending application event without blocking.
  *
- * @param[out] event 接收最早的待处理应用事件，队列为空时保持原值。
- * @return 取得事件返回 true；队列为空返回 false。
+ * @param[out] event Receives the oldest pending event; unchanged if the queue is empty.
+ *
+ * @return True if an event was retrieved; false if the queue is empty.
  */
 bool RealtimeCoordinator::poll(
     xmax_event& event
@@ -203,10 +226,11 @@ bool RealtimeCoordinator::poll(
 }
 
 /**
- * 非阻塞取出带状态原因与错误详情的最早事件。
+ * Acquires the oldest event with state reason and error details without blocking.
  *
- * @param[out] info 接收事件快照，队列为空时保持不变。
- * @return 是否取得事件。
+ * @param[out] info Receives the event snapshot; unchanged if the queue is empty.
+ *
+ * @return Whether an event was retrieved.
  */
 bool RealtimeCoordinator::poll(
     xmax_event_info& info

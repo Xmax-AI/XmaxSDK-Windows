@@ -14,22 +14,22 @@
 namespace xmax {
 
 /**
- * 保存已复制到调用方内存的上传结果元数据。
+ * Upload-result metadata copied into app-owned storage.
  */
 struct uploaded_file_info {
 
     /**
-     * 上传成功后的文件访问地址。
+     * The URL of the successfully uploaded file.
      */
     std::string url;
 
     /**
-     * 存储服务返回的对象键，用于定位已上传对象。
+     * The storage object key used to locate the uploaded object.
      */
     std::string object_key;
 
     /**
-     * 上传对象的 ETag；服务未返回该值时为空文本。
+     * The uploaded object's ETag, or an empty string if absent from the response.
      */
     std::string etag;
 };

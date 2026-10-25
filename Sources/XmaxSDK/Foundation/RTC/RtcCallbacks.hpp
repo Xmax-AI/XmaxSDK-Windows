@@ -10,32 +10,38 @@
 
 #pragma once
 #include "Foundation/Media/VideoFrame.hpp"
+#include "Foundation/Media/AudioFrame.hpp"
 
 namespace xmax::detail {
 
 /**
- * 向实时控制器交付 RTC 帧、事件、错误和首帧发布通知。
+ * Delivers RTC frames, events, failures, and first-publication notifications to realtime control.
  */
 struct RtcCallbacks {
 
     /**
-     * 交付独立拥有的视频帧的回调，在原生媒体线程调用。
+     * The owned-frame callback, invoked on the native media thread.
      */
     std::function<void(Frame)> frame;
 
     /**
-     * 交付 RTC 状态、统计和网络质量事件的回调。
+     * The receiver for RTC state, statistics, and network-quality events.
      */
     std::function<void(xmax_event)> event;
 
     /**
-     * 接收原生 RTC 失败原因的回调，在原生 RTC 线程调用。
+     * The native RTC failure callback, invoked on a native RTC thread.
      */
     std::function<void(Error)> failure;
 
     /**
-     * 确认本地视频首次实际发布的通知，区别于单次推帧返回成功。
+     * The first-actual-publication notification, distinct from successful frame submission.
      */
     std::function<void()> published;
+
+    /**
+     * The copied result-user PCM callback, invoked before remote-user mixing on the native media thread.
+     */
+    std::function<void(AudioFrame)> audio;
 };
 } // namespace xmax::detail

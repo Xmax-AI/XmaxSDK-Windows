@@ -5,6 +5,7 @@
 #include <QGuiApplication>
 #include <QImageReader>
 #include <QNetworkProxyFactory>
+#include <QPainter>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQuickItem>
@@ -14,6 +15,7 @@
 #include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QTimer>
+#include <QVideoFrame>
 #ifdef XLAB_TEST_SUPPORT
 #include <QTest>
 #endif
@@ -167,6 +169,48 @@ int main(int argc, char** argv) {
             }
             click("startButton");
             verify(controller.active, "Start Camera should open preview session");
+            // Check actual video pixels so UI overlays and stream data cannot hide a double flip.
+            QImage direction(200, 100, QImage::Format_ARGB32);
+            direction.fill(Qt::red);
+            {
+                QPainter painter(&direction);
+                painter.fillRect(100, 0, 100, 100, Qt::blue);
+            }
+            for (const bool mirrored : {true, false}) {
+                controller.setVideoMirrored(mirrored);
+                QVideoFrame frame(direction);
+                frame.setMirrored(mirrored);
+                controller.localSink()->setVideoFrame(frame);
+                controller.remoteSink()->setVideoFrame(frame);
+                QTest::qWait(150);
+                const auto image = window->grabWindow();
+                if (!dir.isEmpty())
+                    verify(image.save(dir + (mirrored ? "/mirror-on.png" : "/mirror-off.png")),
+                           "Cannot capture video mirror verification");
+                for (const auto* name : {"localVideoOutput", "remoteVideoOutput"}) {
+                    auto output = window->findChild<QQuickItem*>(name);
+                    verify(output != nullptr, "Video output is missing");
+                    if (!output)
+                        continue;
+                    // Qt's software scene graph does not render VideoOutput pixels.
+                    if (qEnvironmentVariable("QT_QUICK_BACKEND") == "software")
+                        continue;
+                    // Read screen coordinates from the untransformed panel, not the mirrored video.
+                    auto panel = output->parentItem();
+                    auto sample = [&](double x) {
+                        const auto point = panel->mapToScene(QPointF(panel->width() * x, panel->height() * 0.82));
+                        return image.pixelColor(int(point.x() * image.width() / window->width()),
+                                                int(point.y() * image.height() / window->height()));
+                    };
+                    const auto left = sample(0.2), right = sample(0.8);
+                    verify(mirrored ? left.blue() > 200 && right.red() > 200
+                                    : left.red() > 200 && right.blue() > 200,
+                           "Preview and result must follow the same display-only mirror setting");
+                }
+            }
+            controller.setVideoMirrored(true);
+            controller.localSink()->setVideoFrame({});
+            controller.remoteSink()->setVideoFrame({});
             click("mode_clothx");
             verify(controller.mode() == "clothx", "Virtual Try-On tab did not switch");
             const auto refs = controller.references();

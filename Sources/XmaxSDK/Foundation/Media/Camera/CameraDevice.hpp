@@ -14,22 +14,22 @@
 namespace xmax::detail {
 
 /**
- * 描述摄像头的稳定设备标识、显示名称及默认设备标记。
+ * A camera's stable device identifier, display name, and default-device flag.
  */
 struct CameraDevice {
 
     /**
-     * 摄像头设备标识，用于后续明确选择该设备。
+     * The camera identifier used to select this device explicitly.
      */
     std::string id;
 
     /**
-     * 用于界面显示的摄像头名称，不用于唯一匹配设备。
+     * The camera's display name; not a unique device identifier.
      */
     std::string name;
 
     /**
-     * 设备是否为本次枚举结果中的默认摄像头。
+     * Whether this camera is the default in the current enumeration.
      */
     bool is_default = false;
 };

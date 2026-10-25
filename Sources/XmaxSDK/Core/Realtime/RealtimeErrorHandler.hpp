@@ -18,17 +18,17 @@
 namespace xmax::detail {
 
 /**
- * 保存当前实时状态的业务原因与原始错误，统一生成已脱敏的错误快照。
- * 本组件由生命周期线程访问，调用方负责过滤过期媒体和连接批次。
+ * Retains the state reason and original error and builds redacted error snapshots. Access is confined to the
+ * lifecycle thread; callers filter stale media and connection revisions.
  */
 class RealtimeErrorHandler {
 
   public:
 
     /**
-     * 开始新的正常操作，清除上次失败原因。
+     * Begins a normal operation and clears the previous failure reason.
      *
-     * @param[in] reason 正常停止或显示方向变化等业务原因。
+     * @param[in] reason A state-transition reason, such as normal stop or display-orientation change.
      */
     void reset(
         xmax_realtime_reason reason = XMAX_REASON_NORMAL
@@ -38,9 +38,9 @@ class RealtimeErrorHandler {
     }
 
     /**
-     * 保存操作失败的完整错误，不覆盖服务端业务码与 HTTP 状态码。
+     * Retains the original failure, including service and HTTP status codes.
      *
-     * @param[in] error 当前操作的原始 SDK 错误。
+     * @param[in] error The current operation's original SDK error.
      */
     void record(
         Error error
@@ -50,48 +50,54 @@ class RealtimeErrorHandler {
     }
 
     /**
-     * 读取当前状态的业务原因。
+     * Returns the state-transition reason for the current state.
      */
     xmax_realtime_reason reason() const {
         return reason_;
     }
 
     /**
-     * 获取关联错误的借用指针；没有失败原因时为空，下一次修改后失效。
+     * Returns a borrowed error pointer, or null without a failure; invalidated by the next mutation.
      */
     const Error* error() const {
         return error_ ? &*error_ : nullptr;
     }
 
     /**
-     * 生成可跨 C ABI 返回的已脱敏错误详情副本。
+     * Builds an owned, redacted error snapshot for the C ABI.
      */
     xmax_error_info details() const {
         xmax_error_info info{};
         info.struct_size = sizeof(info);
         if (!error_)
             return info;
+
         info.code = error_->code;
         info.api_code = error_->api_code;
         info.http_status = error_->http_status;
+
         const auto message = XmaxLogger::redact(error_->what());
         auto length = std::min(message.size(), sizeof(info.message) - 1);
         while (length && length < message.size() &&
                (static_cast<unsigned char>(message[length]) & 0xc0) == 0x80)
             --length;
-        std::memcpy(info.message, message.data(), length);
+        std::memcpy(
+            info.message,
+            message.data(),
+            length
+        );
         return info;
     }
 
   private:
 
     /**
-     * 最近一次有效操作的业务原因。
+     * The state-transition reason for the latest valid operation.
      */
     xmax_realtime_reason reason_ = XMAX_REASON_NORMAL;
 
     /**
-     * 与当前状态关联的原始错误。
+     * The original error associated with the current state.
      */
     std::optional<Error> error_;
 };

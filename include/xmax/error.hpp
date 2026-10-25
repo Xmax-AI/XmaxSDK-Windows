@@ -15,18 +15,18 @@
 namespace xmax {
 
 /**
- * 封装失败的 SDK 结果码及诊断信息，供 C++ 接入方以异常方式处理错误。
+ * An SDK result code and diagnostic exposed as an exception to C++ callers.
  */
 class error : public std::runtime_error {
 
   public:
 
     /**
-     * 使用 SDK 错误码与诊断文本构造异常。
+     * Creates an exception with an SDK result code and diagnostic text.
      *
-     * @param[in] code 本异常保存的 SDK 结果码。
-     * @param[in] message 以 NUL 结尾的诊断文本，构造时复制，不能为空指针。
-     * @param[in] detail 本次失败的结构化详情。
+     * @param[in] code The SDK result code retained by the exception.
+     * @param[in] message The non-null NUL-terminated diagnostic, copied during construction.
+     * @param[in] detail The structured details of this failure.
      */
     error(
         xmax_result code,
@@ -37,21 +37,21 @@ class error : public std::runtime_error {
     }
 
     /**
-     * 读取构造异常时保存的 SDK 错误码。
+     * Returns the SDK result code retained at construction.
      */
     xmax_result code() const noexcept {
         return code_;
     }
 
     /**
-     * 读取服务端业务错误码；0 表示未提供。
+     * Returns the service error code, or 0 if absent.
      */
     int32_t api_code() const noexcept {
         return detail_.api_code;
     }
 
     /**
-     * 读取 HTTP 响应状态码；0 表示未获得响应。
+     * Returns the HTTP response status, or 0 if no response was received.
      */
     int32_t http_status() const noexcept {
         return detail_.http_status;
@@ -60,20 +60,20 @@ class error : public std::runtime_error {
   private:
 
     /**
-     * 构造异常时保存的原始 SDK 错误码。
+     * The original SDK error code retained at construction.
      */
     xmax_result code_;
 
     /**
-     * 本次失败的服务端业务码及 HTTP 响应信息。
+     * The service error code and HTTP response information for this failure.
      */
     xmax_error_info detail_;
 };
 
 /**
- * 将负数 C 接口结果转换为当前线程上的 C++ SDK 异常。
+ * Translates negative C interface results to C++ SDK exceptions on the calling thread.
  *
- * @param[in] result 待处理的 C 接口结果；XMAX_OK 和 XMAX_NO_EVENT 不抛出异常。
+ * @param[in] result The C interface result; XMAX_OK and XMAX_NO_EVENT do not throw.
  */
 inline void check(
     xmax_result result
@@ -82,7 +82,11 @@ inline void check(
         xmax_error_info info{};
         info.struct_size = sizeof(info);
         xmax_last_error_info(&info);
-        throw error(result, xmax_last_error(), info);
+        throw error(
+            result,
+            xmax_last_error(),
+            info
+        );
     }
 }
 } // namespace xmax

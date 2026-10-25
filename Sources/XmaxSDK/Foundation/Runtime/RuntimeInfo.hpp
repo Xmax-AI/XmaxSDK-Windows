@@ -14,17 +14,17 @@
 namespace xmax::detail {
 
 /**
- * 构造创建服务端会话所需的 SDK、系统与设备元数据。
+ * Builds SDK, system, and device metadata for server-session creation.
  */
 json runtime_info();
 
 /**
- * 生成用于信令关联和分片传输的随机标识。
+ * Generates a random identifier for signaling correlation and fragmentation.
  */
 std::string random_id();
 
 /**
- * 生成符合生成信令格式的任务标识。
+ * Generates a task identifier in the generation signaling format.
  */
 std::string task_id();
 } // namespace xmax::detail

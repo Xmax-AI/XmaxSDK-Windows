@@ -16,29 +16,33 @@
 namespace xmax {
 
 /**
- * 以独占所有权管理上传结果句柄，可读取其元数据副本。
+ * Exclusively owns an upload-result handle and provides metadata copies.
  */
 class uploaded_file : public detail::owner<xmax_uploaded_file, xmax_uploaded_file_release> {
 
   public:
 
     /**
-     * 继承句柄所有者的构造接口，接管传入句柄；空句柄表示空对象。
+     * Inherits the handle owner's constructors; an empty handle creates an empty owner.
      *
-     * @note 不复制底层资源，销毁时调用与句柄匹配的释放接口。
+     * @note The underlying resource is not copied. Destruction invokes its matching release function.
      */
     using owner::owner;
 
     /**
-     * 将上传结果元数据复制到调用方拥有的字符串。
+     * Copies upload metadata into app-owned strings.
      *
-     * @return 访问地址、对象键及 ETag 的副本，缺失 ETag 时为空字符串。
+     * @return Copies of the URL, object key, and ETag; missing ETags become empty strings.
+     *
      * @see xmax_uploaded_file_get_info
      */
     uploaded_file_info info() const {
         xmax_uploaded_file_info result{};
         result.struct_size = sizeof(result);
-        check(xmax_uploaded_file_get_info(get(), &result));
+        check(xmax_uploaded_file_get_info(
+            get(),
+            &result
+        ));
 
         return {result.url, result.object_key, result.etag ? result.etag : ""};
     }

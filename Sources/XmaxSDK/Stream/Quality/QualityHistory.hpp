@@ -15,24 +15,24 @@
 namespace xmax::detail {
 
 /**
- * 按模型与传输方向持久化最近有效档位，缓存失效时使用默认档位。
+ * Persists valid levels by model and direction, falling back to defaults when cache entries expire.
  */
 class QualityHistory {
 
     /**
-     * 缓存所属的模型标识。
+     * The model identifier owning the cache entry.
      */
     std::string model_;
 
     /**
-     * 共享的非凭证偏好持久化后端。
+     * The shared noncredential preference backend.
      */
     std::shared_ptr<PreferenceStore> store_;
 
     /**
-     * 构造按模型与传输方向区分的非凭证偏好键。
+     * Builds a noncredential preference key scoped by model and direction.
      *
-     * @param[in] downlink true 表示下行，false 表示上行。
+     * @param[in] downlink True for downlink; false for uplink.
      */
     std::string key(
         bool downlink
@@ -43,7 +43,7 @@ class QualityHistory {
   public:
 
     /**
-     * 保存模型标识与可选偏好后端，用于隔离双向画质历史。
+     * Retains model identity and an optional preference backend for independent directional history.
      */
     QualityHistory(
         std::string model,
@@ -53,7 +53,7 @@ class QualityHistory {
     }
 
     /**
-     * 读取画质缓存过期判断使用的 Unix UTC 秒数。
+     * Returns Unix UTC seconds for quality-history expiry checks.
      */
     static int64_t now() {
         return std::chrono::duration_cast<std::chrono::seconds>(
@@ -63,11 +63,12 @@ class QualityHistory {
     }
 
     /**
-     * 读取一小时内的有效画质档位；缓存缺失、失效或无效时使用档位 2。
+     * Returns a valid cached level from the last hour, or level 2 for missing, expired, or invalid entries.
      *
-     * @param[in] downlink true 表示下行，false 表示上行。
-     * @param[in] time Unix 秒时间；缺省值由当前时钟提供，用于缓存有效期判断。
-     * @return 范围为 [1, 5] 的有效档位，缓存不可用时返回 2。
+     * @param[in] downlink True for downlink; false for uplink.
+     * @param[in] time Unix time in seconds, defaulting to the current clock, for cache expiry.
+     *
+     * @return A valid level in [1, 5], or 2 when cached history is unavailable.
      */
     int read(
         bool downlink,
@@ -98,11 +99,11 @@ class QualityHistory {
     }
 
     /**
-     * 保存有效的方向画质档位，缓存失败不影响媒体操作。
+     * Persists a valid directional level without allowing cache failure to affect media operations.
      *
-     * @param[in] level 画质档位，范围为 [1, 5]。
-     * @param[in] downlink true 表示下行，false 表示上行。
-     * @param[in] time Unix 秒时间；缺省值由当前时钟提供，用于缓存有效期判断。
+     * @param[in] level The quality level, in [1, 5].
+     * @param[in] downlink True for downlink; false for uplink.
+     * @param[in] time Unix time in seconds, defaulting to the current clock, for cache expiry.
      */
     void write(
         int level,
@@ -111,7 +112,10 @@ class QualityHistory {
     ) const noexcept {
         try {
             if (store_ && level >= 1 && level <= 5 && time > 0)
-                store_->write(key(downlink), json{{"level", level}, {"time", time}}.dump());
+                store_->write(
+                    key(downlink),
+                    json{{"level", level}, {"time", time}}.dump()
+                );
         } catch (...) {
         } // Cache failures must never fail a successfully applied quality change.
     }

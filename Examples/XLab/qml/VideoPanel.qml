@@ -14,7 +14,10 @@ Rectangle {
     layer.enabled: !softwareRendering
     layer.effect: MultiEffect { maskEnabled: true; maskSource: mask }
     Rectangle { id: mask; anchors.fill: parent; radius: 24; color: "white"; visible: false; layer.enabled: true }
-    VideoOutput { id: video; anchors.fill: parent; fillMode: VideoOutput.PreserveAspectFit }
+    VideoOutput {
+        id: video; objectName: panel.result ? "remoteVideoOutput" : "localVideoOutput"
+        anchors.fill: parent; fillMode: VideoOutput.PreserveAspectFit
+    }
     Text {
         anchors.verticalCenter: parent.verticalCenter
         x: controller.statisticsVisible ? 280 : 24

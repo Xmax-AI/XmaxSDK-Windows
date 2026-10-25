@@ -14,22 +14,22 @@
 namespace xmax {
 
 /**
- * 保存已复制到调用方内存的摄像头标识、名称及默认设备标记。
+ * Camera identifiers, names, and default-device flags copied into app-owned storage.
  */
 struct camera_device {
 
     /**
-     * 摄像头设备标识，用于后续明确选择该设备。
+     * The camera identifier used to select this device explicitly.
      */
     std::string id;
 
     /**
-     * 用于界面显示的摄像头名称，不用于唯一匹配设备。
+     * The camera's display name; not a unique device identifier.
      */
     std::string name;
 
     /**
-     * 设备是否为本次枚举结果中的默认摄像头。
+     * Whether this camera is the default in the current enumeration.
      */
     bool is_default;
 };

@@ -118,6 +118,18 @@ if (remote) {
 
 Qt 用 QImage / QVideoFrame 显示 SDK 帧；其他宿主可自行显示 CPU 帧。Windows 还提供 `xmax_frame_render_window(frame, hwnd, XMAX_CONTENT_FIT)`，应由 HWND 所属线程在重绘时调用。支持 FIT / FILL，当前为 GDI CPU 绘制，不提供 D3D11 纹理或自动重绘。WPF 可通过 P/Invoke 获取帧，或通过宿主 HWND 接入。[最小 .NET 消费端](../Examples/DotNetSmoke/Program.cs) 演示 Cdecl、UTF-8、Pack=8 和句柄释放；它用于 ABI 验证，不是完整托管 SDK。
 
+## 镜像
+
+本地预览、远端结果显示和上行发布分别配置，默认均关闭。自拍界面通常启用前两项，并保持发布镜像关闭，使服务端收到原始方向的视频：
+
+```cpp
+realtime.video_mirror(true, true, false);
+```
+
+C 接口使用 `xmax_video_mirror_config` 和 `xmax_realtime_set_video_mirror`。设置可在准备媒体前或连接后调用，断开重连后继续保留。修改发布镜像时由声网编码器执行，不在 CPU 上逐像素翻转；画质变化也会保留该设置。RTC 更新失败时整组镜像配置保持原值。
+
+显示镜像不改变帧的像素视图。`frame.mirrored()` / `xmax_frame_get_mirrored` 返回取帧时的显示镜像标记，已取得的帧不随后续配置改变。SDK 的 HWND 渲染自动应用此标记；自定义渲染应读取该标记并应用一次水平翻转。例如 Qt 6.8 可设置 `QVideoFrame::setMirrored`，WPF 可在显示变换中处理。不要在宿主界面再次叠加镜像，也不要将显示变换后的画面重新推流。轨迹坐标仍以显示区域为准。
+
 ## 编码、画质与事件
 
 ```cpp
@@ -239,7 +251,7 @@ Windows 实机的设备、权限、RTC、上传与生成联调仍需单独验收
 
 ## 源码排版与接口注释
 
-SDK 的 C/C++ 接口统一使用多行 `/** ... */` Doxygen 注释，正文使用符合中文阅读习惯的简体中文。Visual Studio 支持此格式的提示与注释补全。规范依据见 [Visual Studio 官方说明](https://devblogs.microsoft.com/cppblog/doxygen-and-xml-doc-comment-support/) 和 [Doxygen 文档](https://www.doxygen.nl/manual/docblocks.html)。
+SDK 的 C/C++ 接口文档使用多行 `/** ... */` Doxygen 注释，新增和修订的源码注释统一使用英文，重点说明实际行为、调用约束和资源所有权。Visual Studio 支持此格式的提示与注释补全。格式参考见 [Visual Studio 官方说明](https://devblogs.microsoft.com/cppblog/doxygen-and-xml-doc-comment-support/) 和 [Doxygen 文档](https://www.doxygen.nl/manual/docblocks.html)。
 
 - 方法、函数之间保留一个空行；短方法也展开函数体，不把多个方法挤在一起。根目录 `.clang-format` 的 `AllowShortFunctionsOnASingleLine: None` 和 `SeparateDefinitionBlocks: Always` 固定此规则。
 - 每个 SDK 方法声明都写用途说明 `@brief`，包括构造、析构、重载及私有方法。契约以头文件为准；对应实现无需重复整段说明，局部辅助函数和平台回调在定义处注明职责。

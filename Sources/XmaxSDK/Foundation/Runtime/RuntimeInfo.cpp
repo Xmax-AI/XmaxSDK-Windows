@@ -22,7 +22,7 @@
 namespace xmax::detail {
 
 /**
- * 构造创建服务端会话所需的 SDK、系统与设备元数据。
+ * Builds SDK, system, and device metadata for server-session creation.
  */
 json runtime_info() {
     std::string os = "unknown", device = "unknown";
@@ -40,24 +40,36 @@ json runtime_info() {
     }
 #endif
 
-    // 服务端使用 Windows 产品的固定协议标识识别本 SDK。
+    // The service identifies this SDK by the fixed Windows product protocol identifier.
     return {
-        {"platform", "windows"}, {"os_version", os}, {"sdk_version", XMAX_VERSION}, {"device_model", device}
+        {"platform", "windows"},
+        {"os_version", os},
+        {"sdk_version", XMAX_VERSION},
+        {"device_model", device}
     };
 }
 
 /**
- * 生成用于信令关联和分片传输的随机标识。
+ * Generates a random identifier for signaling correlation and fragmentation.
  */
 std::string random_id() {
     uint8_t bytes[16];
 #ifdef _WIN32
     require(
-        BCryptGenRandom(nullptr, bytes, sizeof(bytes), BCRYPT_USE_SYSTEM_PREFERRED_RNG) == 0,
-        XMAX_INTERNAL_ERROR, "Random number generation failed"
+        BCryptGenRandom(
+            nullptr,
+            bytes,
+            sizeof(bytes),
+            BCRYPT_USE_SYSTEM_PREFERRED_RNG
+        ) == 0,
+        XMAX_INTERNAL_ERROR,
+        "Random number generation failed"
     );
 #else
-    arc4random_buf(bytes, sizeof(bytes));
+    arc4random_buf(
+        bytes,
+        sizeof(bytes)
+    );
 #endif
 
     std::ostringstream out;
@@ -69,7 +81,7 @@ std::string random_id() {
 }
 
 /**
- * 生成符合生成信令格式的任务标识。
+ * Generates a task identifier in the generation signaling format.
  */
 std::string task_id() {
     const auto hex = random_id();
@@ -79,7 +91,14 @@ std::string task_id() {
     int bits = 0;
 
     for (size_t i = 0; i < hex.size(); i += 2) {
-        accumulator = (accumulator << 8) | unsigned(std::stoul(hex.substr(i, 2), nullptr, 16));
+        accumulator = (accumulator << 8) | unsigned(std::stoul(
+            hex.substr(
+                                                   i,
+                                                   2
+                                               ),
+            nullptr,
+            16
+        ));
         bits += 8;
         while (bits >= 6) {
             bits -= 6;

@@ -14,22 +14,22 @@
 namespace xmax::detail {
 
 /**
- * 可在摄像头切换或重新连接后复用的生成条件。
+ * Generation conditions reusable after camera switching or reconnection.
  */
 struct RealtimeContext {
 
     /**
-     * UTF-8 生成提示词。
+     * The generation prompt, encoded as UTF-8.
      */
     std::string prompt;
 
     /**
-     * 参考图片的服务地址，空文本表示不使用参考图。
+     * The reference image's service URL, or empty to omit the reference.
      */
     std::string reference;
 
     /**
-     * 是否启用人脸修复。
+     * Whether to enable face restoration.
      */
     bool face = false;
 };

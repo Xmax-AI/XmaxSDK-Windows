@@ -14,17 +14,17 @@
 namespace xmax::detail {
 
 /**
- * 保存服务端会话标识和已验证的 RTC 连接信息。
+ * The server-session identifier and validated RTC connection information.
  */
 struct RealtimeSession {
 
     /**
-     * 服务端会话标识，用于保活、关闭和失败回滚。
+     * The server-session identifier used for keepalive, closing, and failure rollback.
      */
     std::string id;
 
     /**
-     * 服务端会话分配的 RTC 连接信息。
+     * The RTC connection information allocated by the session.
      */
     Connection room;
 };

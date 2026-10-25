@@ -30,6 +30,9 @@ int main() {
     if (session || moved.state().state != XMAX_READY || moved.format().height != 1024)
         return 5;
     moved.volume(.4f);
+    moved.video_mirror(true, true);
+    if (!moved.video_mirror().local_preview || moved.video_mirror().published_video)
+        return 23;
     moved.encoding();
     moved.adaptive_quality(false);
     moved.interpolation(false);
@@ -48,7 +51,7 @@ int main() {
     moved.push(input);
     auto local = moved.acquire_local_frame();
     auto kept = std::move(local);
-    if (local || !kept || kept.view().planes[0][0] != 37)
+    if (local || !kept || !kept.mirrored() || kept.view().planes[0][0] != 37)
         return 7;
     moved.disconnect();
     moved.close();

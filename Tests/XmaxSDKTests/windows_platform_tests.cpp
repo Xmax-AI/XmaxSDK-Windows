@@ -34,6 +34,13 @@ int main() {
         xmax_video_format format{1920, 1024, 30};
         CHECK(xmax_realtime_prepare_external(realtime, &format) == XMAX_OK);
         std::vector<uint8_t> pixels(size_t(format.width) * format.height * 4, 255);
+        for (uint32_t y = 0; y < format.height; ++y)
+            for (uint32_t x = 0; x < format.width; ++x) {
+                auto* pixel = pixels.data() + (size_t(y) * format.width + x) * 4;
+                pixel[0] = x < format.width / 2 ? 0 : 255;
+                pixel[1] = 0;
+                pixel[2] = x < format.width / 2 ? 255 : 0;
+            }
         xmax_video_frame input{};
         input.struct_size = sizeof(input);
         input.pixel_format = XMAX_BGRA;
@@ -50,11 +57,35 @@ int main() {
         type.hInstance = GetModuleHandleW(nullptr);
         type.lpszClassName = L"XmaxSDK.NativeTest";
         CHECK(RegisterClassW(&type) != 0);
-        window = CreateWindowExW(0, type.lpszClassName, L"SDK native rendering test", WS_OVERLAPPEDWINDOW, 0,
+        window = CreateWindowExW(0, type.lpszClassName, L"SDK native rendering test", WS_OVERLAPPEDWINDOW | WS_VISIBLE, 0,
                                  0, 320, 240, nullptr, nullptr, type.hInstance, nullptr);
         CHECK(window);
         CHECK(xmax_frame_render_window(frame, window, XMAX_CONTENT_FIT) == XMAX_OK);
         CHECK(xmax_frame_render_window(frame, window, XMAX_CONTENT_FILL) == XMAX_OK);
+        for (int32_t mirrored : {0, 1}) {
+            const xmax_video_mirror_config mirror{sizeof(mirror), mirrored, 0, 0};
+            CHECK(xmax_realtime_set_video_mirror(realtime, &mirror) == XMAX_OK);
+            input.timestamp_us++;
+            CHECK(xmax_realtime_push_video_frame(realtime, &input) == XMAX_OK);
+            xmax_frame_release(frame);
+            frame = nullptr;
+            CHECK(xmax_realtime_acquire_local_frame(realtime, &frame) == XMAX_OK);
+            int32_t snapshot = -1;
+            CHECK(xmax_frame_get_mirrored(frame, &snapshot) == XMAX_OK && snapshot == mirrored);
+            for (int32_t mode : {XMAX_CONTENT_FIT, XMAX_CONTENT_FILL}) {
+                CHECK(xmax_frame_render_window(frame, window, mode) == XMAX_OK);
+                GdiFlush();
+                RECT bounds{};
+                CHECK(GetClientRect(window, &bounds));
+                const auto dc = GetDC(window);
+                const auto left = GetPixel(dc, bounds.right / 4, bounds.bottom / 2);
+                const auto right = GetPixel(dc, bounds.right * 3 / 4, bounds.bottom / 2);
+                ReleaseDC(window, dc);
+                CHECK(left != CLR_INVALID && right != CLR_INVALID);
+                CHECK(GetRValue(mirrored ? right : left) > 200);
+                CHECK(GetBValue(mirrored ? left : right) > 200);
+            }
+        }
         auto wrong_thread = std::async(std::launch::async, [&] {
             const auto result = xmax_frame_render_window(frame, window, XMAX_CONTENT_FIT);
             CHECK(std::string(xmax_last_error()).size() > 0);

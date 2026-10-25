@@ -15,35 +15,37 @@
 namespace xmax::detail {
 
 /**
- * 保存当前批次的最新一帧，读取时转移其所有权，不积压历史视频帧。
+ * Retains only the current revision's latest frame, transferring ownership on acquisition without
+ * accumulating history.
  */
 class RemoteVideoFramePipeline {
 
   public:
 
     /**
-     * 启用指定批次的帧交付，并丢弃先前待处理帧。
+     * Enables frame delivery for a revision and discards previously pending frames.
      *
-     * @param[in] token 当前连接或媒体绑定的批次，用于拒收旧回调。
+     * @param[in] token The connection or media-binding revision used to reject stale callbacks.
      */
     void activate(
         uint64_t token
     );
 
     /**
-     * 停用帧交付，并丢弃待处理帧。
+     * Disables frame delivery and clears pending frames.
      *
-     * @param[in] token 当前连接或媒体绑定的批次，用于拒收旧回调。
+     * @param[in] token The connection or media-binding revision used to reject stale callbacks.
      */
     void deactivate(
         uint64_t token
     );
 
     /**
-     * 仅接收属于当前批次的视频帧，并替换缓冲区中的旧帧。
+     * Accepts frames only for the current revision, replacing the pending frame.
      *
-     * @param[in] frame 待交付的视频帧或借用视图；同步调用返回前像素必须有效。
-     * @param[in] token 当前连接或媒体绑定的批次，用于拒收旧回调。
+     * @param[in] frame The frame or borrowed view to deliver; its pixels must remain valid until this
+     * synchronous call returns.
+     * @param[in] token The connection or media-binding revision used to reject stale callbacks.
      */
     void submit(
         Frame frame,
@@ -51,31 +53,44 @@ class RemoteVideoFramePipeline {
     );
 
     /**
-     * 非阻塞取出最新帧，并清空帧缓冲区。
+     * Shares already-owned pixels with the active mailbox without copying their buffers.
      *
-     * @return 独立拥有的最新帧；当前无待处理帧时为 nullptr。
+     * @param[in] frame The owned read-only frame to share.
+     * @param[in] token The producer's binding revision.
+     *
+     * @return Whether the active binding accepted this frame.
+     */
+    bool submit_owned(
+        std::shared_ptr<Frame> frame,
+        uint64_t token
+    );
+
+    /**
+     * Acquires the latest frame without blocking and clears the mailbox.
+     *
+     * @return An independently owned latest frame, or nullptr if none is pending.
      */
     std::shared_ptr<Frame> acquire();
 
   private:
 
     /**
-     * 保护当前帧批次、接收状态和帧缓冲区的互斥锁。
+     * The mutex protecting frame revision, reception state, and the pending frame.
      */
     std::mutex mutex_;
 
     /**
-     * 当前接收的视频帧所属批次。
+     * The revision of currently accepted frames.
      */
     uint64_t token_ = 0;
 
     /**
-     * 是否接收当前批次的视频帧。
+     * Whether frames for the current revision are accepted.
      */
     bool active_ = false;
 
     /**
-     * 等待接入方消费的最新帧；新帧替换旧帧，消费后置空。
+     * The latest pending frame; new frames replace it and acquisition clears it.
      */
     std::shared_ptr<Frame> latest_;
 };

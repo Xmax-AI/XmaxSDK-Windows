@@ -15,7 +15,7 @@
 namespace xmax::detail {
 
 /**
- * SDK 内部使用的 JSON 值类型，负责服务负载和信令的结构化处理。
+ * The JSON value type used for service payloads and structured signaling.
  */
 using json = nlohmann::json;
 } // namespace xmax::detail

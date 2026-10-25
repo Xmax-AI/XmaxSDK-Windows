@@ -14,37 +14,37 @@
 namespace xmax {
 
 /**
- * 摄像头编码分辨率快捷选项，实际支持范围由模型决定。
+ * Camera encoding-resolution presets; supported formats depend on the model.
  */
 enum class RealtimeCameraPreset {
 
     /**
-     * 没有摄像头流或没有匹配的预设。
+     * No camera stream or no matching preset.
      */
     none = XMAX_CAMERA_PRESET_NONE,
 
     /**
-     * 16:9 横向画面。
+     * A 16:9 landscape frame.
      */
     resolution1920x1080 = XMAX_CAMERA_PRESET_1920_1080,
 
     /**
-     * 9:16 竖向画面。
+     * A 9:16 portrait frame.
      */
     resolution1080x1920 = XMAX_CAMERA_PRESET_1080_1920,
 
     /**
-     * 1:1 正方形画面。
+     * A 1:1 square frame.
      */
     resolution1408x1408 = XMAX_CAMERA_PRESET_1408_1408,
 
     /**
-     * 3:4 竖向画面。
+     * A 3:4 portrait frame.
      */
     resolution1152x1536 = XMAX_CAMERA_PRESET_1152_1536,
 
     /**
-     * 4:3 横向画面。
+     * A 4:3 landscape frame.
      */
     resolution1536x1152 = XMAX_CAMERA_PRESET_1536_1152
 };

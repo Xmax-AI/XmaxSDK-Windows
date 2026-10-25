@@ -19,17 +19,18 @@
 namespace xmax::detail {
 
 /**
- * 串行执行实时生命周期操作，管理取消批次、心跳期限及设有容量上限的事件队列。
+ * Serializes realtime lifecycle work, cancellation revisions, heartbeat deadlines, and bounded event
+ * delivery.
  */
 class RealtimeCoordinator {
 
   public:
 
     /**
-     * 创建串行生命周期工作线程，并安装心跳和异步失败回调。
+     * Starts the serialized lifecycle worker and installs heartbeat and asynchronous failure callbacks.
      *
-     * @param[in] tick 生命周期心跳到期时执行的回调，在工作线程调用。
-     * @param[in] failure 接收工作线程报告的异步错误，在工作线程触发。
+     * @param[in] tick The lifecycle heartbeat callback, invoked on the worker thread.
+     * @param[in] failure The asynchronous failure receiver, invoked on the worker thread.
      */
     explicit RealtimeCoordinator(
         std::function<void()> tick,
@@ -37,68 +38,71 @@ class RealtimeCoordinator {
     );
 
     /**
-     * 排空并停止生命周期工作线程后释放成员资源。
+     * Drains and stops the lifecycle worker before releasing its resources.
      */
     ~RealtimeCoordinator();
 
     /**
-     * 停止接收任务，排空队列并等待工作线程退出。
+     * Stops accepting work, drains the queue, and waits for the worker to exit.
      */
     void shutdown();
 
     /**
-     * 在生命周期队列执行操作，并将结果或异常同步传递给调用线程。
+     * Runs work on the lifecycle queue and returns completion or exceptions to the calling thread.
      *
-     * @param[in] fn 提交到生命周期队列的操作，同步调用时异常返回到调用线程。
+     * @param[in] fn The lifecycle operation; synchronous execution propagates exceptions to the calling
+     * thread.
      */
     void sync(
         std::function<void()> fn
     );
 
     /**
-     * 提交异步生命周期操作；执行器开始关闭后不再接收新任务。
+     * Queues asynchronous lifecycle work; no new work is accepted after shutdown starts.
      *
-     * @param[in] fn 排入工作队列的操作，执行失败时通过错误回调报告。
+     * @param[in] fn The queued operation; failures are reported through the error callback.
      */
     void enqueue(
         std::function<void()> fn
     );
 
     /**
-     * 原子读取当前取消批次。
+     * Returns the cancellation revision atomically.
      */
     uint64_t epoch() const {
         return epoch_.load();
     }
 
     /**
-     * 使此前批次的操作失效，并返回新的取消批次。
+     * Invalidates earlier operations and returns the new cancellation revision.
      */
     uint64_t invalidate() {
         return ++epoch_;
     }
 
     /**
-     * 为指定批次创建可跨线程调用的取消判断函数。
+     * Creates a thread-safe cancellation predicate for a revision.
      *
-     * @param[in] epoch 调用开始时捕获的取消批次，用于识别失效操作。
-     * @return 返回 true 时表示该批次已取消的可调用对象。
+     * @param[in] epoch The cancellation revision captured when the operation starts, used to reject stale
+     * work.
+     *
+     * @return A callable returning true when the revision has been cancelled.
      */
     Cancel cancellation(
         uint64_t epoch
     );
 
     /**
-     * 读取当前生命周期状态，不等待执行队列。
+     * Returns lifecycle state without waiting for queued work.
      */
     xmax_state state() const {
         return state_.load();
     }
 
     /**
-     * 原子发布新的生命周期状态。
+     * Publishes a lifecycle state atomically.
      *
-     * @param[in] value 新的实时生命周期状态。
+     * @param[in] value The new realtime lifecycle state.
      */
     void state(
         xmax_state value
@@ -107,11 +111,11 @@ class RealtimeCoordinator {
     }
 
     /**
-     * 将事件加入应用队列，并按当前配置记录诊断信息；队列设有容量上限。
+     * Queues an application event and logs it according to the current configuration; the queue is bounded.
      *
-     * @param[in] event 需要加入应用事件队列的事件。
-     * @param[in] reason 当前状态或错误的业务原因。
-     * @param[in] error 关联错误详情，调用时复制。
+     * @param[in] event The event to enqueue.
+     * @param[in] reason The state-transition reason for the current state or error.
+     * @param[in] error Associated error details, copied during the call.
      */
     void
     emit(
@@ -121,29 +125,31 @@ class RealtimeCoordinator {
     );
 
     /**
-     * 非阻塞取出最早的待处理应用事件。
+     * Acquires the oldest pending application event without blocking.
      *
-     * @param[out] event 接收最早的待处理应用事件，队列为空时保持原值。
-     * @return 取得事件返回 true；队列为空返回 false。
+     * @param[out] event Receives the oldest pending event; unchanged if the queue is empty.
+     *
+     * @return True if an event was retrieved; false if the queue is empty.
      */
     bool poll(
         xmax_event& event
     );
 
     /**
-     * 非阻塞取出带状态原因与错误详情的最早事件。
+     * Acquires the oldest event with state reason and error details without blocking.
      *
-     * @param[out] info 接收事件快照，队列为空时保持不变。
-     * @return 是否取得事件；与旧事件轮询共用同一个队列。
+     * @param[out] info Receives the event snapshot; unchanged if the queue is empty.
+     *
+     * @return Whether an event was retrieved; shares the legacy polling queue.
      */
     bool poll(
         xmax_event_info& info
     );
 
     /**
-     * 更新下一次心跳的单调时钟期限。
+     * Updates the next heartbeat's monotonic deadline.
      *
-     * @param[in] value 下一次心跳到期的单调时钟时间点。
+     * @param[in] value The next heartbeat deadline on the monotonic clock.
      */
     void deadline(
         Clock::time_point value
@@ -152,7 +158,7 @@ class RealtimeCoordinator {
     }
 
     /**
-     * 读取下一次心跳的单调时钟期限。
+     * Returns the next heartbeat's monotonic deadline.
      */
     Clock::time_point deadline() const {
         return deadline_;
@@ -161,67 +167,67 @@ class RealtimeCoordinator {
   private:
 
     /**
-     * 到期心跳处理函数，在生命周期工作线程调用。
+     * The due-heartbeat handler, invoked on the lifecycle worker.
      */
     std::function<void()> tick_;
 
     /**
-     * 处理异步生命周期操作失败的回调，在工作线程调用。
+     * The asynchronous lifecycle failure callback, invoked on the worker.
      */
     std::function<void(Error)> failure_;
 
     /**
-     * 串行处理生命周期操作的工作线程。
+     * The worker that serializes lifecycle operations.
      */
     std::thread worker_;
 
     /**
-     * 保护待执行任务队列及关闭标记的互斥锁。
+     * The mutex protecting pending work and shutdown state.
      */
     std::mutex work_mutex_;
 
     /**
-     * 保护应用事件队列的互斥锁。
+     * The mutex protecting the application event queue.
      */
     std::mutex event_mutex_;
 
     /**
-     * 通知工作线程有新任务、关闭请求或期限变更的条件变量。
+     * Notifies the worker of new work, shutdown, or deadline changes.
      */
     std::condition_variable wake_;
 
     /**
-     * 按提交顺序保存的生命周期操作队列。
+     * The lifecycle operations in submission order.
      */
     std::deque<std::function<void()>> work_;
 
     /**
-     * 供接入方非阻塞消费的设有容量上限的事件队列。
+     * The bounded application event queue for nonblocking consumption.
      */
     std::deque<xmax_event_info> events_;
 
     /**
-     * 工作线程是否已开始关闭，受工作队列锁保护。
+     * Whether shutdown has started, protected by the work-queue mutex.
      */
     bool exiting_ = false;
 
     /**
-     * 取消批次，递增后使旧批次操作失效。
+     * The cancellation revision; incrementing it invalidates earlier work.
      */
     std::atomic<uint64_t> epoch_{0};
 
     /**
-     * 可跨线程原子读取的实时生命周期状态。
+     * The lifecycle state, read atomically across threads.
      */
     std::atomic<xmax_state> state_{XMAX_IDLE};
 
     /**
-     * 下一次心跳到期的单调时钟时间点。
+     * The next heartbeat deadline on the monotonic clock.
      */
     Clock::time_point deadline_ = Clock::time_point::max();
 
     /**
-     * 串行处理生命周期任务和到期的心跳，关闭时排空已接收任务。
+     * Serializes lifecycle work and due heartbeats, draining accepted work during shutdown.
      */
     void run();
 };

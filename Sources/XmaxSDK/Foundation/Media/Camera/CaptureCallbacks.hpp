@@ -14,17 +14,17 @@
 namespace xmax::detail {
 
 /**
- * 接收具有独立所有权的采集帧和异步采集错误；回调运行于采集线程。
+ * Receives owned capture frames and asynchronous failures on the capture thread.
  */
 struct CaptureCallbacks {
 
     /**
-     * 交付独立拥有的视频帧的回调，在原生媒体线程调用。
+     * The owned-frame callback, invoked on the native media thread.
      */
     std::function<void(Frame)> frame;
 
     /**
-     * 接收原生采集失败原因的回调，在原生媒体线程调用。
+     * The native capture failure receiver, invoked on the media thread.
      */
     std::function<void(Error)> failure;
 };

@@ -15,16 +15,16 @@
 namespace xmax::detail {
 
 /**
- * 管理 RTC 房间的分配、加入、离开、跨线程发布和信令发送。
+ * Manages RTC room allocation, joining, leaving, cross-thread publication, and signaling.
  */
 class RoomController {
 
   public:
 
     /**
-     * 保留房间适配器工厂，加入前不启动网络连接。
+     * Retains the RTC adapter factory without connecting before room join.
      *
-     * @param[in] factory 创建原生 RTC 后端的工厂。
+     * @param[in] factory The native RTC backend factory.
      */
     explicit RoomController(
         RtcFactory factory = make_rtc
@@ -33,29 +33,37 @@ class RoomController {
     }
 
     /**
-     * 排空房间回调并释放原生后端。
+     * Drains room callbacks and releases the native backend.
      */
     ~RoomController() {
         leave();
     }
 
     /**
-     * 在创建服务端会话前校验并分配原生 RTC 后端。
+     * Validates and allocates a native RTC backend before creating a server session.
      */
     void allocate() {
-        require(!rtc_, XMAX_INVALID_STATE, "An RTC backend is already allocated");
+        require(
+            !rtc_,
+            XMAX_INVALID_STATE,
+            "An RTC backend is already allocated"
+        );
         rtc_ = factory_();
-        require(bool(rtc_), XMAX_UNSUPPORTED, "No RTC backend is available");
+        require(
+            bool(rtc_),
+            XMAX_UNSUPPORTED,
+            "No RTC backend is available"
+        );
     }
 
     /**
-     * 加入服务端指定房间，成功后才允许媒体线程发布帧。
+     * Joins the server-assigned room and enables media-thread publication only after success.
      *
-     * @param[in] value 服务端分配的房间身份和凭证。
-     * @param[in] encoding 本次上行视频编码配置。
-     * @param[in] microphone 是否启动麦克风。
-     * @param[in] callbacks 房间结果帧、统计和错误回调。
-     * @param[in] cancel 协作式取消判断。
+     * @param[in] value The server-assigned room identity and credentials.
+     * @param[in] encoding The uplink encoding configuration for this join.
+     * @param[in] microphone Whether to start the microphone.
+     * @param[in] callbacks The room's result-frame, statistics, and failure callbacks.
+     * @param[in] cancel The cooperative cancellation predicate.
      */
     void join(
         const Connection& value,
@@ -64,13 +72,32 @@ class RoomController {
         RtcCallbacks callbacks,
         const Cancel& cancel
     ) {
-        require(rtc_ && !joined_, XMAX_INVALID_STATE, "Allocate an RTC backend before joining");
+        require(
+            rtc_ && !joined_,
+            XMAX_INVALID_STATE,
+            "Allocate an RTC backend before joining"
+        );
+
         connection = value;
         try {
-            rtc_->join(value, encoding, microphone, std::move(callbacks), cancel);
-            require(!cancel(), XMAX_CANCELLED, "RTC join cancelled");
+            rtc_->join(
+                value,
+                encoding,
+                microphone,
+                std::move(callbacks),
+                cancel
+            );
+            require(
+                !cancel(),
+                XMAX_CANCELLED,
+                "RTC join cancelled"
+            );
+
             joined_ = true;
-            std::atomic_store(&media_rtc_, rtc_);
+            std::atomic_store(
+                &media_rtc_,
+                rtc_
+            );
         } catch (...) {
             leave();
             throw;
@@ -78,10 +105,13 @@ class RoomController {
     }
 
     /**
-     * 关闭媒体线程入口，离开房间并排空回调；可重复调用。
+     * Disables media-thread access, leaves the room, and drains callbacks; safe to repeat.
      */
     void leave() noexcept {
-        std::atomic_store(&media_rtc_, std::shared_ptr<Rtc>{});
+        std::atomic_store(
+            &media_rtc_,
+            std::shared_ptr<Rtc>{}
+        );
         if (rtc_) {
             rtc_->leave();
             rtc_.reset();
@@ -93,23 +123,23 @@ class RoomController {
     }
 
     /**
-     * 查询当前是否已完成房间加入。
+     * Reports whether room join has completed.
      */
     bool joined() const {
         return joined_;
     }
 
     /**
-     * 借用原生后端，仅供生命周期线程使用；离开房间后失效。
+     * Borrows the native backend on the lifecycle thread only; invalid after leaving.
      */
     Rtc* backend() const {
         return rtc_.get();
     }
 
     /**
-     * 通过原子房间快照发布视频帧，允许从媒体线程调用。
+     * Publishes frames through an atomic room snapshot from a media thread.
      *
-     * @param[in] frame 调用期间保持有效的视频帧。
+     * @param[in] frame The video frame, valid throughout the call.
      */
     void push(
         const Frame& frame
@@ -120,77 +150,91 @@ class RoomController {
     }
 
     /**
-     * 当前房间的连接信息，仅由生命周期线程访问。
+     * The room connection information, accessed only on the lifecycle thread.
      */
     Connection connection;
 
     /**
-     * 当前生成任务标识，未生成时为空。
+     * The generation task identifier, or empty when generation is inactive.
      */
     std::string task;
 
     /**
-     * 通过同一个发送预算发送房间信令。
+     * Sends room signaling using the shared send budget.
      *
-     * @param[in] message 未分片的业务消息。
-     * @param[in] cancel 协作式取消判断。
-     * @param[in] maintain 等待预算期间的保活操作。
+     * @param[in] message The unfragmented business message.
+     * @param[in] cancel The cooperative cancellation predicate.
+     * @param[in] maintain The keepalive operation invoked while waiting for send budget.
      */
     void send(
         const json& message,
         const Cancel& cancel,
         const std::function<void()>& maintain = {}
     ) {
-        require(joined_, XMAX_INVALID_STATE, "No RTC room is connected");
-        sender_.send(*rtc_, message, cancel, maintain);
+        require(
+            joined_,
+            XMAX_INVALID_STATE,
+            "No RTC room is connected"
+        );
+        sender_.send(
+            *rtc_,
+            message,
+            cancel,
+            maintain
+        );
     }
 
     /**
-     * 为当前任务发送归一化轨迹，拒绝空点集和无效坐标。
+     * Sends normalized points for the current task, rejecting empty or invalid coordinates.
      *
-     * @param[in] points 按采样顺序排列、范围为 [0, 1] 的坐标。
-     * @param[in] cancel 协作式取消判断。
-     * @param[in] maintain 发送等待期间执行的保活回调。
+     * @param[in] points The coordinates in sampling order, each in [0, 1].
+     * @param[in] cancel The cooperative cancellation predicate.
+     * @param[in] maintain The keepalive callback invoked during send waits.
      */
     void tracks(
         const std::vector<xmax_point>& points,
         const Cancel& cancel,
         const std::function<void()>& maintain
     ) {
-        require(!task.empty(), XMAX_INVALID_STATE, "No generation task is active");
+        require(
+            !task.empty(),
+            XMAX_INVALID_STATE,
+            "No generation task is active"
+        );
         json values = json::array();
         for (const auto& point : points)
             values.push_back(json::array({point.x, point.y}));
         send(
             {{"event", "tracks"}, {"tracks", std::move(values)}, {"user_id", connection.user}, {"uid", task}},
-            cancel, maintain
+            cancel,
+            maintain
         );
     }
 
   private:
 
     /**
-     * 原生 RTC 后端工厂，成功分配后由当前房间管理。
+     * The native RTC factory; allocated backends are managed by this room.
      */
     RtcFactory factory_;
 
     /**
-     * 生命周期线程拥有的原生 RTC 后端。
+     * The native RTC backend owned by the lifecycle thread.
      */
     std::shared_ptr<Rtc> rtc_;
 
     /**
-     * 媒体线程可原子读取的已加入房间后端。
+     * The joined-room backend read atomically by media threads.
      */
     std::shared_ptr<Rtc> media_rtc_;
 
     /**
-     * 是否已经完成 RTC 加入，仅由生命周期线程访问。
+     * Whether RTC join completed, accessed only by the lifecycle thread.
      */
     bool joined_ = false;
 
     /**
-     * 负责信令分片和滑动窗口预算的发送器。
+     * The sender managing fragmentation and sliding-window budget.
      */
     RoomMessageSender sender_;
 };

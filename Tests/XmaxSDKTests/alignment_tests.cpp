@@ -142,13 +142,22 @@ static void manual_quality_and_interaction() {
     config.key = "test";
     XmaxRealtimeManager manager(std::make_shared<ApiService>(config, http), [rtc] { return rtc; });
     CHECK(manager.quality().uplink_level == 0);
+    CHECK(!manager.video_mirror().published_video);
+    manager.video_mirror({sizeof(xmax_video_mirror_config), 1, 0, 1});
     manager.prepare({1280, 720, 30});
     expect_error(XMAX_INVALID_STATE, [&] { manager.quality_level(0, 1); });
     manager.start("prompt", "", false, false);
+    CHECK(rtc->encoding.mirrored && manager.video_mirror().local_preview);
     CHECK(rtc->encoding.minimum_bitrate == 500);
     manager.quality_level(0, 1);
     CHECK(manager.quality().uplink_level == 1 && rtc->encoding.format.width == 1280);
+    CHECK(rtc->encoding.mirrored);
     rtc->fail_encoding = true;
+    expect_error(XMAX_RTC_ERROR, [&] {
+        manager.video_mirror({sizeof(xmax_video_mirror_config), 0, 1, 0});
+    });
+    CHECK(manager.video_mirror().local_preview == 1 && manager.video_mirror().remote_view == 0);
+    CHECK(manager.video_mirror().published_video == 1 && rtc->encoding.mirrored);
     expect_error(XMAX_RTC_ERROR, [&] { manager.quality_level(0, 4); });
     CHECK(manager.quality().uplink_level == 1);
     rtc->fail_encoding = false;
@@ -160,6 +169,9 @@ static void manual_quality_and_interaction() {
     rtc->fail_send = false;
     manager.encoding({sizeof(xmax_encoding_config), -1, 80, XMAX_ENCODER_AUTO});
     CHECK(rtc->encoding.minimum_bitrate == 80 && rtc->encoding.maximum_bitrate == 80);
+    CHECK(rtc->encoding.mirrored);
+    manager.video_mirror({sizeof(xmax_video_mirror_config), 1, 1, 0});
+    CHECK(!rtc->encoding.mirrored);
     xmax_point points[]{{50, 50}, {10, 10}, {75, 75}};
     xmax_interaction_frame sample{sizeof(sample), points, 3, 100, 100, 1920, 1080, XMAX_CONTENT_FIT};
     const auto mapped = InteractionCoordinateMapper::map(sample);
@@ -178,6 +190,7 @@ static void manual_quality_and_interaction() {
     }
     CHECK(tracks_found && manager.trajectory().size() == 2);
     manager.disconnect(false);
+    CHECK(manager.video_mirror().remote_view == 1 && !manager.video_mirror().published_video);
     CHECK(manager.trajectory().empty() && manager.quality().uplink_level == 0);
     expect_error(XMAX_INVALID_STATE, [&] { manager.submit_interaction(sample); });
     sample.points = nullptr;

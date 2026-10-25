@@ -14,19 +14,19 @@
 namespace xmax::detail {
 
 /**
- * 计算输入字节的 SHA-1 小写十六进制摘要。
+ * Computes the input's lowercase hexadecimal SHA-1 digest.
  *
- * @param[in] data 参与 SHA-1 摘要计算的完整字节内容。
+ * @param[in] data The complete bytes used to compute the SHA-1 digest.
  */
 std::string sha1_hex(
     const std::string& data
 );
 
 /**
- * 计算用于存储鉴权的 HMAC-SHA1 小写十六进制签名。
+ * Computes a lowercase hexadecimal HMAC-SHA1 signature for storage authentication.
  *
- * @param[in] key 用于 HMAC-SHA1 计算的密钥字节。
- * @param[in] data 待处理的编码字节，本次同步调用返回前必须有效。
+ * @param[in] key The HMAC-SHA1 key bytes.
+ * @param[in] data The encoded bytes to process; they must remain valid until this synchronous call returns.
  */
 std::string hmac_sha1_hex(
     const std::string& key,

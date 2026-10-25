@@ -16,33 +16,33 @@
 namespace xmax::detail {
 
 /**
- * 定义非凭证偏好数据的持久化接口，读取和写入失败均不得向调用方抛出异常。
+ * The noncredential persistence interface; read and write failures must not throw to callers.
  */
 class PreferenceStore {
 
   public:
 
     /**
-     * 在所有调用结束后释放偏好缓存后端。
+     * Releases the preference backend after all calls finish.
      *
-     * @note 销毁前应结束使用本对象的并发调用。
+     * @note Finish concurrent calls using this object before destroying it.
      */
     virtual ~PreferenceStore() = default;
 
     /**
-     * 读取已缓存字节；缓存不存在或不可读时返回 std::nullopt。
+     * Returns cached bytes, or std::nullopt for missing or unreadable entries.
      *
-     * @param[in] key 有效的非凭证偏好缓存键，不得包含目录穿越字符。
+     * @param[in] key A valid noncredential preference key without path-traversal components.
      */
     virtual std::optional<std::string> read(
         const std::string& key
     ) noexcept = 0;
 
     /**
-     * 以尽力而为的方式保存非凭证偏好，缓存失败不抛出异常。
+     * Persists noncredential preferences on a best-effort basis without throwing on failure.
      *
-     * @param[in] key 有效的非凭证偏好缓存键，不得包含目录穿越字符。
-     * @param[in] value 需要持久化的非凭证字节内容。
+     * @param[in] key A valid noncredential preference key without path-traversal components.
+     * @param[in] value The noncredential bytes to persist.
      */
     virtual void write(
         const std::string& key,
@@ -51,10 +51,11 @@ class PreferenceStore {
 };
 
 /**
- * 创建非凭证缓存后端；空目录参数使用当前用户的应用缓存目录。
+ * Creates a noncredential cache backend; an empty directory selects the current user's application cache.
  *
- * @param[in] directory 非凭证缓存根目录，空文本使用当前用户应用缓存目录。
- * @return 可共享的非凭证偏好后端。
+ * @param[in] directory The noncredential cache root; empty selects the current user's application cache.
+ *
+ * @return A shared noncredential preference backend.
  */
 std::shared_ptr<PreferenceStore> make_preference_store(
     std::filesystem::path directory = {}

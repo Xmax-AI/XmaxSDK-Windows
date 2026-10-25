@@ -13,9 +13,9 @@
 namespace xmax::detail {
 
 /**
- * 根据服务环境解析通用 API 或实时会话地址。
+ * Resolves the general or realtime API endpoint for the service environment.
  *
- * @param[in] realtime 是否使用实时会话地址。
+ * @param[in] realtime Whether to use the realtime-session endpoint.
  */
 std::string Config::base_url(
     bool realtime
@@ -23,7 +23,8 @@ std::string Config::base_url(
     RealtimeModelDefinition::parse(model);
     const auto region = environment;
     require(
-        region == XMAX_ENVIRONMENT_CHINA || region == XMAX_ENVIRONMENT_GLOBAL, XMAX_INVALID_ARGUMENT,
+        region == XMAX_ENVIRONMENT_CHINA || region == XMAX_ENVIRONMENT_GLOBAL,
+        XMAX_INVALID_ARGUMENT,
         "Invalid service environment"
     );
     if (region == XMAX_ENVIRONMENT_CHINA)

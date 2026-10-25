@@ -14,52 +14,59 @@
 namespace xmax::detail {
 
 /**
- * 拥有视频像素及其布局信息；对外视图借用本对象的存储，不转移像素所有权。
+ * Owns video pixels and their layout; external views borrow storage without transferring ownership.
  */
 struct Frame {
 
     /**
-     * 当前帧的像素格式，决定平面数量及各平面的布局。
+     * The pixel format determining plane count and layout.
      */
     xmax_pixel_format format = XMAX_BGRA;
 
     /**
-     * 视频宽度，单位为像素。
+     * The video width, in pixels.
      */
     uint32_t width = 0;
 
     /**
-     * 视频高度，单位为像素。
+     * The video height, in pixels.
      */
     uint32_t height = 0;
 
     /**
-     * 严格递增的单调微秒时间戳，用于同一输入绑定内的帧排序。
+     * The strictly increasing monotonic timestamp, in microseconds, within one input binding.
      */
     int64_t timestamp_us = 0;
 
     /**
-     * 视频平面存储，平面数量和布局由像素格式决定。
+     * The horizontal presentation-mirror flag; pixels and publication direction are unchanged.
+     */
+    bool presentation_mirrored = false;
+
+    /**
+     * The video plane storage, with plane count and layout determined by pixel format.
      */
     std::vector<uint8_t> planes[3];
 
     /**
-     * 各平面的行步幅，单位为字节，不是像素数。
+     * The row stride of each plane, in bytes rather than pixels.
      */
     size_t strides[3]{};
 
     /**
-     * 借用本帧的只读像素布局，视图不延长像素存储的生命周期。
+     * Returns a borrowed pixel-layout view without extending storage lifetime.
      *
-     * @return 借用本帧像素的只读视图，在本帧被修改或销毁前有效。
+     * @return A read-only pixel view valid until this frame is modified or destroyed.
      */
     xmax_video_frame view() const;
 
     /**
-     * 校验外部视频视图，并将有效像素行复制到 SDK 拥有的存储。
+     * Validates an external frame view and copies its active rows into owned storage.
      *
-     * @param[in] source 需校验并复制的只读像素视图；各平面的可访问长度必须完整声明。
-     * @return 拥有像素副本的视频帧，不再依赖原始平面存储。
+     * @param[in] source The read-only view to validate and copy; each plane must declare its complete
+     * accessible size.
+     *
+     * @return A frame owning its pixels independently of the source planes.
      */
     static Frame copy(
         const xmax_video_frame& source
@@ -67,18 +74,18 @@ struct Frame {
 };
 
 /**
- * 校验非零偶数尺寸、像素预算和帧率范围。
+ * Validates nonzero even dimensions, pixel budget, and frame-rate limits.
  *
- * @param[in] f 宽、高均为 [2, 8192] 内的偶数，总像素不超过 2100000，帧率为 [1, 60]。
+ * @param[in] f Even dimensions in [2, 8192], at most 2100000 pixels, and a frame rate in [1, 60].
  */
 void validate_format(
     xmax_video_format f
 );
 
 /**
- * 校验像素格式、平面指针、字节步幅、可访问长度和视频尺寸。
+ * Validates pixel format, plane pointers, byte strides, accessible sizes, and dimensions.
  *
- * @param[in] s 待校验的只读视频视图，像素存储在本次校验期间有效。
+ * @param[in] s The read-only frame view; pixel storage remains valid during validation.
  */
 void validate_frame(
     const xmax_video_frame& s

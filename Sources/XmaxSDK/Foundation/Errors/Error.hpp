@@ -17,32 +17,32 @@
 namespace xmax::detail {
 
 /**
- * 携带 SDK 错误码和诊断文本的内部异常，由 C 接口转换为结果码。
+ * An internal exception carrying an SDK result and diagnostic, translated by the C interface.
  */
 struct Error : std::runtime_error {
 
     /**
-     * 本异常携带的 SDK 错误码。
+     * The SDK error code carried by this exception.
      */
     xmax_result code;
 
     /**
-     * 服务端业务错误码，0 表示未提供。
+     * The service error code, or 0 if absent.
      */
     int32_t api_code = 0;
 
     /**
-     * HTTP 响应状态码，0 表示未获得响应。
+     * The HTTP response status, or 0 if no response was received.
      */
     int32_t http_status = 0;
 
     /**
-     * 使用 SDK 错误码与诊断文本构造内部异常。
+     * Creates an internal exception with an SDK result and diagnostic text.
      *
-     * @param[in] c 本异常保存的 SDK 错误码。
-     * @param[in] message 本异常保存的诊断文本，构造时复制到异常对象。
-     * @param[in] api 服务端业务错误码，0 表示未提供。
-     * @param[in] http HTTP 响应状态码，0 表示未获得响应。
+     * @param[in] c The SDK error code retained by this exception.
+     * @param[in] message The diagnostic message copied into this exception at construction.
+     * @param[in] api The service error code, or 0 if absent.
+     * @param[in] http The HTTP response status, or 0 if no response was received.
      */
     Error(
         xmax_result c,

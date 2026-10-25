@@ -15,43 +15,68 @@
 namespace xmax {
 
 /**
- * 以独占所有权管理视频帧句柄，提供只读像素视图和原生窗口呈现。
+ * Exclusively owns a frame handle with read-only pixel access and native window rendering.
  */
 class frame : public detail::owner<xmax_frame, xmax_frame_release> {
 
   public:
 
     /**
-     * 继承句柄所有者的构造接口，接管传入句柄；空句柄表示空对象。
+     * Inherits the handle owner's constructors; an empty handle creates an empty owner.
      *
-     * @note 不复制底层资源，销毁时调用与句柄匹配的释放接口。
+     * @note The underlying resource is not copied. Destruction invokes its matching release function.
      */
     using owner::owner;
 
     /**
-     * 借用帧的只读像素视图，视图在帧对象释放前有效。
+     * Returns a borrowed pixel view valid until the frame owner is released.
      *
      * @see xmax_frame_get_view
      */
     xmax_video_frame view() const {
         xmax_video_frame result{};
         result.struct_size = sizeof(result);
-        check(xmax_frame_get_view(get(), &result));
+        check(xmax_frame_get_view(
+            get(),
+            &result
+        ));
         return result;
     }
 
     /**
-     * 在目标 HWND 的所属线程呈现视频帧。
+     * Returns the horizontal display-mirror flag; pixels retain capture or decode orientation.
      *
-     * @param[in] hwnd 目标 Windows HWND 转换为 void* 的值，必须由当前线程拥有。
-     * @param[in] mode XMAX_CONTENT_FIT 等比例适应，或 XMAX_CONTENT_FILL 居中填满。
+     * @return Whether custom rendering should flip horizontally; native window rendering handles this
+     * automatically.
+     *
+     * @see xmax_frame_get_mirrored
+     */
+    bool mirrored() const {
+        int32_t value = 0;
+        check(xmax_frame_get_mirrored(
+            get(),
+            &value
+        ));
+        return value != 0;
+    }
+
+    /**
+     * Renders a frame on the target HWND's owner thread.
+     *
+     * @param[in] hwnd The target Windows HWND as void*, owned by the calling thread.
+     * @param[in] mode XMAX_CONTENT_FIT for aspect fit, or XMAX_CONTENT_FILL for centered aspect fill.
+     *
      * @see xmax_frame_render_window
      */
     void render_window(
         void* hwnd,
         int32_t mode = XMAX_CONTENT_FIT
     ) const {
-        check(xmax_frame_render_window(get(), hwnd, mode));
+        check(xmax_frame_render_window(
+            get(),
+            hwnd,
+            mode
+        ));
     }
 };
 } // namespace xmax

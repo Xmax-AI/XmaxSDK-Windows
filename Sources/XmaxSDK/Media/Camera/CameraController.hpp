@@ -16,14 +16,14 @@
 namespace xmax::detail {
 
 /**
- * 启动原生采集，保持帧的实际尺寸和像素格式，等待真实首帧后完成准备。
+ * Starts native capture, preserves actual frame dimensions and format, and waits for the first real frame.
  */
 class CameraController {
 
   public:
 
     /**
-     * 保存用于摄像头枚举与采集的原生适配器工厂。
+     * Retains the native camera adapter factory for enumeration and capture.
      */
     explicit CameraController(
         CameraFactory factory = make_camera_capture
@@ -32,28 +32,30 @@ class CameraController {
     }
 
     /**
-     * 停止摄像头采集并排空回调，然后释放拥有的媒体资源。
+     * Stops camera capture, drains callbacks, and releases owned media resources.
      */
     ~CameraController() {
         stop();
     }
 
     /**
-     * 枚举摄像头标识与名称，不启动采集。
+     * Enumerates camera identifiers and names without starting capture.
      *
-     * @return 摄像头设备信息快照，不存在可用设备时为空集合。
+     * @return A camera information snapshot, or an empty collection if no cameras are available.
      */
     std::vector<CameraDevice> devices() {
         return factory_()->devices();
     }
 
     /**
-     * 启动原生采集并直接交付原始尺寸的视频帧，等待首帧、错误或取消。
+     * Starts native capture and delivers frames at their original dimensions, waiting for the first frame,
+     * failure, or cancellation.
      *
-     * @param[in] device UTF-8 摄像头设备标识，空文本选择默认摄像头。
-     * @param[in] format 请求的视频像素宽高及每秒帧数，须符合调用接口的规格限制。
-     * @param[in] output 接收原始采集帧和采集错误的回调，在原生媒体线程同步触发。
-     * @param[in] cancel 协作式取消判断函数；返回 true 时应终止当前操作。
+     * @param[in] device The UTF-8 camera identifier; an empty string selects the default camera.
+     * @param[in] format The requested pixel dimensions and frame rate, subject to the interface's format
+     * limits.
+     * @param[in] output The synchronous native-thread callbacks for capture frames and errors.
+     * @param[in] cancel A cooperative cancellation predicate; true requests termination of the operation.
      */
     void
     start(
@@ -64,44 +66,44 @@ class CameraController {
     );
 
     /**
-     * 停止摄像头采集，并在返回前排空帧与错误回调。
+     * Stops camera capture and drains frame and failure callbacks before returning.
      */
     void stop() noexcept;
 
   private:
 
     /**
-     * 创建原生摄像头适配器的工厂，用于枚举与采集。
+     * The native camera adapter factory for enumeration and capture.
      */
     CameraFactory factory_;
 
     /**
-     * 当前独占的原生摄像头适配器。
+     * The exclusively owned native camera adapter.
      */
     std::unique_ptr<CameraCapture> capture_;
 
     /**
-     * 保护采集就绪标记、失败原因和最近时间戳的互斥锁。
+     * The mutex protecting readiness, failure reason, and the latest timestamp.
      */
     std::mutex mutex_;
 
     /**
-     * 通知首帧就绪或采集失败的条件变量。
+     * Notifies waiters when the first frame arrives or capture fails.
      */
     std::condition_variable changed_;
 
     /**
-     * 当前采集绑定是否已收到并交付有效首帧。
+     * Whether this capture binding has received and delivered its first valid frame.
      */
     bool ready_ = false;
 
     /**
-     * 最近一次采集或帧转换失败原因，供启动等待者读取。
+     * The latest capture or conversion failure, read by startup waiters.
      */
     std::string failure_;
 
     /**
-     * 当前输入绑定最近一次已接收的单调微秒时间戳。
+     * The latest accepted monotonic timestamp for this input binding, in microseconds.
      */
     int64_t last_timestamp_ = -1;
 };

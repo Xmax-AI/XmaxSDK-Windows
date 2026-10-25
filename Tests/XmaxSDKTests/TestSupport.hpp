@@ -64,6 +64,7 @@ struct FakeRtc : Rtc {
     VideoEncodingConfiguration encoding{};
     float remote_volume = -1;
     bool microphone = false;
+    bool observing_media = false;
     void join(const Connection&, VideoEncodingConfiguration config, bool mic, RtcCallbacks cb,
               const Cancel& cancel) override {
         callbacks = std::move(cb);
@@ -91,6 +92,7 @@ struct FakeRtc : Rtc {
         require(!cancel(), XMAX_CANCELLED, "Cancelled");
     }
     void volume(float value) override { remote_volume = value; }
+    void observe_remote_media(bool enabled) override { observing_media = enabled; }
     void configure_encoding(VideoEncodingConfiguration value) override { encoding = value; }
     void leave() noexcept override { ++leaves; }
     int messages_count() {

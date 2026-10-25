@@ -14,34 +14,34 @@
 namespace xmax::detail {
 
 /**
- * 保存复制后的 API 凭证、模型标识和 HTTP 超时配置。
+ * The copied API credentials, model identifier, and HTTP timeout.
  */
 struct Config {
 
     /**
-     * 已复制的 API 凭证，不得输出到未脱敏日志。
+     * The copied API credentials; never write them to unredacted logs.
      */
     std::string key;
 
     /**
-     * 实时生成模型标识，当前仅支持 x2.1。
+     * The realtime model identifier; only x2.1 is supported.
      */
     std::string model = "x2.1";
 
     /**
-     * HTTP 请求超时，单位为毫秒。
+     * The HTTP request timeout, in milliseconds.
      */
     uint32_t timeout_ms = 15000;
 
     /**
-     * 通用 API 和实时会话使用的服务环境，默认国内。
+     * The general and realtime API environment, defaulting to China.
      */
     xmax_environment environment = XMAX_ENVIRONMENT_CHINA;
 
     /**
-     * 根据环境解析服务 API 根地址。
+     * Resolves the API root for the environment.
      *
-     * @param[in] realtime true 使用实时会话地址，false 使用通用 API 地址。
+     * @param[in] realtime True selects the realtime-session endpoint; false selects the general API.
      */
     std::string base_url(
         bool realtime = false

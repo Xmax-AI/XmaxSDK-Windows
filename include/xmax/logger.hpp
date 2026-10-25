@@ -15,45 +15,56 @@
 namespace xmax {
 
 /**
- * 提供进程级日志配置及非阻塞消费接口，不依赖客户端或实时会话实例。
+ * Provides process-wide logging configuration and nonblocking consumption independently of client or
+ * realtime instances.
  */
 class logger {
 
   public:
 
     /**
-     * 设置进程级日志选项和输出语言，默认不启用日志。
+     * Sets process-wide logging options and language; logging is disabled by default.
      *
-     * @param[in] options 业务与性能日志选项位掩码，0 表示关闭日志。
-     * @param[in] language 日志输出语言，使用 XMAX_LOG_CHINESE 或 XMAX_LOG_ENGLISH。
+     * @param[in] options The business and performance logging bitmask; 0 disables logging.
+     * @param[in] language The logging language: XMAX_LOG_CHINESE or XMAX_LOG_ENGLISH.
+     *
      * @see xmax_logger_configure
      */
     static void configure(
         uint32_t options,
         xmax_log_language language = XMAX_LOG_CHINESE
     ) {
-        check(xmax_logger_configure(options, language));
+        check(xmax_logger_configure(
+            options,
+            language
+        ));
     }
 
     /**
-     * 读取进程级日志选项和输出语言。
+     * Returns process-wide logging options and output language.
      *
-     * @return 日志选项位掩码与输出语言组成的二元组。
+     * @return The logging bitmask and output-language pair.
+     *
      * @see xmax_logger_get_config
      */
     static std::pair<uint32_t, xmax_log_language> configuration() {
         uint32_t options = 0;
         xmax_log_language language = XMAX_LOG_CHINESE;
-        check(xmax_logger_get_config(&options, &language));
+        check(xmax_logger_get_config(
+            &options,
+            &language
+        ));
 
         return {options, language};
     }
 
     /**
-     * 非阻塞消费最早的日志记录。
+     * Consumes the oldest log record without blocking.
      *
-     * @param[out] record 接收已脱敏的日志记录；本方法自动设置 struct_size。
-     * @return 取得记录返回 true；当前无记录返回 false。
+     * @param[out] record Receives a redacted record; this method initializes struct_size.
+     *
+     * @return True if a record was retrieved; false if none is pending.
+     *
      * @see xmax_logger_poll
      */
     static bool poll(

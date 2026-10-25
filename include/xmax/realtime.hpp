@@ -12,6 +12,10 @@
 #include "handle_owner.hpp"
 #include "error.hpp"
 #include "frame.hpp"
+#include "media_frame.hpp"
+#include "external_frame_sink.hpp"
+#include <functional>
+#include <memory>
 #include "RealtimeCameraPreset.hpp"
 #include "RealtimeQualityLevel.hpp"
 #include <string>
@@ -20,39 +24,111 @@
 namespace xmax {
 
 /**
- * 管理媒体输入、RTC 连接和生成任务；耗时操作应在工作线程调用。
+ * Manages media input, RTC connection, and generation; call blocking operations on worker threads.
  */
 class realtime : public detail::owner<xmax_realtime, xmax_realtime_destroy> {
 
   public:
 
     /**
-     * 继承句柄所有者的构造接口，接管传入句柄；空句柄表示空对象。
+     * Inherits the handle owner's constructors; an empty handle creates an empty owner.
      *
-     * @note 不复制底层资源，销毁时调用与句柄匹配的释放接口。
+     * @note The underlying resource is not copied. Destruction invokes its matching release function.
      */
     using owner::owner;
 
     /**
-     * 绑定由接入方提供视频帧的外部输入。
+     * Binds external input supplied by your app.
      *
-     * @param[in] format 输入尺寸和帧率，支持范围见 xmax_video_format。
-     * @note 操作会阻塞，应在工作线程调用；失败时抛出 xmax::error。
+     * @param[in] format The input dimensions and frame rate; see xmax_video_format for limits.
+     *
+     * @note This call blocks. Call it on a worker thread; failures throw xmax::error.
+     *
      * @see xmax_realtime_prepare_external
      */
     void prepare(
         xmax_video_format format
     ) {
-        check(xmax_realtime_prepare_external(get(), &format));
+        check(xmax_realtime_prepare_external(
+            get(),
+            &format
+        ));
     }
 
     /**
-     * 启动 SDK 摄像头采集并等待第一张真实帧。
+     * Binds caller-owned video and returns a receiver scoped to this source's frames and errors.
      *
-     * @param[in] device UTF-8 摄像头设备标识，空文本选择默认摄像头。
-     * @param[in] format 输入尺寸和帧率，支持范围见 xmax_video_format。
-     * @param[in] microphone 是否在加入 RTC 房间时启动麦克风采集。
-     * @note 操作会阻塞，应在工作线程调用；失败时抛出 xmax::error。
+     * @param[in] format The exact external input dimensions and frame rate.
+     *
+     * @return A move-only receiver; older source receivers become stale after replacement or closure.
+     *
+     * @see xmax_realtime_bind_external_video
+     */
+    external_frame_sink bind_external(
+        xmax_video_format format
+    ) {
+        xmax_external_frame_sink result = nullptr;
+        check(xmax_realtime_bind_external_video(
+            get(),
+            &format,
+            &result
+        ));
+        return external_frame_sink(result);
+    }
+
+    /**
+     * Sets one serialized callback for result-user PCM and decoded video on a shared rendering timeline.
+     *
+     * @param[in] listener The background callback, or an empty function to discard queued output and stop
+     * observation. Each invocation owns its packet and may move it elsewhere for asynchronous use.
+     *
+     * @note Registration preserves playback volume and subscriptions. Replacing a listener may leave an
+     * in-flight callback running; captured objects stay alive until that invocation finishes. Forward
+     * packets promptly to avoid the bounded queue dropping later output.
+     *
+     * @see xmax_realtime_set_remote_media_frame_listener
+     */
+    void remote_media_listener(
+        std::function<void(media_frame)> listener
+    ) {
+        if (!listener) {
+            check(xmax_realtime_set_remote_media_frame_listener(
+                get(),
+                nullptr
+            ));
+            return;
+        }
+
+        auto context = std::make_unique<std::function<void(media_frame)>>(std::move(listener));
+        const xmax_remote_media_listener registration{
+            sizeof(registration),
+            [](void* user_data, xmax_media_frame borrowed) {
+                xmax_media_frame retained = nullptr;
+                check(xmax_media_frame_retain(
+                    borrowed,
+                    &retained
+                ));
+                (*static_cast<std::function<void(media_frame)>*>(user_data))(media_frame(retained));
+            },
+            context.get(),
+            [](void* user_data) { delete static_cast<std::function<void(media_frame)>*>(user_data); }
+        };
+        check(xmax_realtime_set_remote_media_frame_listener(
+            get(),
+            &registration
+        ));
+        context.release();
+    }
+
+    /**
+     * Starts SDK camera capture and waits for the first real frame.
+     *
+     * @param[in] device The UTF-8 camera identifier; an empty string selects the default camera.
+     * @param[in] format The input dimensions and frame rate; see xmax_video_format for limits.
+     * @param[in] microphone Whether to start microphone capture when joining the RTC room.
+     *
+     * @note This call blocks. Call it on a worker thread; failures throw xmax::error.
+     *
      * @see xmax_realtime_prepare_camera
      */
     void prepare_camera(
@@ -61,28 +137,40 @@ class realtime : public detail::owner<xmax_realtime, xmax_realtime_destroy> {
         bool microphone = false
     ) {
         const xmax_camera_config config{
-            sizeof(config), device.empty() ? nullptr : device.c_str(), format, microphone
+            sizeof(config),
+            device.empty() ? nullptr : device.c_str(),
+            format,
+            microphone
         };
-        check(xmax_realtime_prepare_camera(get(), &config));
+        check(xmax_realtime_prepare_camera(
+            get(),
+            &config
+        ));
     }
 
     /**
-     * 切换活动摄像头，保留当前连接与生成条件。
+     * Switches the active camera while retaining the connection and generation conditions.
      *
-     * @param[in] device UTF-8 摄像头设备标识，空文本选择默认摄像头。
-     * @note 操作会阻塞，应在工作线程调用；失败时抛出 xmax::error。
+     * @param[in] device The UTF-8 camera identifier; an empty string selects the default camera.
+     *
+     * @note This call blocks. Call it on a worker thread; failures throw xmax::error.
+     *
      * @see xmax_realtime_switch_camera
      */
     void switch_camera(
         const std::string& device
     ) {
-        check(xmax_realtime_switch_camera(get(), device.c_str()));
+        check(xmax_realtime_switch_camera(
+            get(),
+            device.c_str()
+        ));
     }
 
     /**
-     * 在断开连接后释放本地采集和输入绑定。
+     * Releases local capture and input bindings after disconnection.
      *
-     * @note 操作会阻塞，应在工作线程调用；失败时抛出 xmax::error。
+     * @note This call blocks. Call it on a worker thread; failures throw xmax::error.
+     *
      * @see xmax_realtime_stop_media
      */
     void stop_media() {
@@ -90,26 +178,33 @@ class realtime : public detail::owner<xmax_realtime, xmax_realtime_destroy> {
     }
 
     /**
-     * 创建服务端会话并加入 RTC，暂不启动生成。
+     * Creates a server session and joins RTC without starting generation.
      *
-     * @param[in] microphone 是否在加入 RTC 房间时启动麦克风采集。
-     * @note 操作会阻塞，应在工作线程调用；失败时抛出 xmax::error。
+     * @param[in] microphone Whether to start microphone capture when joining the RTC room.
+     *
+     * @note This call blocks. Call it on a worker thread; failures throw xmax::error.
+     *
      * @see xmax_realtime_connect
      */
     void connect(
         bool microphone = false
     ) {
-        check(xmax_realtime_connect(get(), microphone));
+        check(xmax_realtime_connect(
+            get(),
+            microphone
+        ));
     }
 
     /**
-     * 连接并启动生成，阻塞等待结果首帧。
+     * Connects and starts generation, blocking until the first result frame.
      *
-     * @param[in] prompt UTF-8 生成提示词。
-     * @param[in] reference 参考图片路径或服务可接受的地址，空文本表示不提供参考图片。
-     * @param[in] microphone 是否在加入 RTC 房间时启动麦克风采集。
-     * @param[in] face 是否启用生成条件中的人脸修复。
-     * @note 操作会阻塞，应在工作线程调用；失败时抛出 xmax::error。
+     * @param[in] prompt The generation prompt, encoded as UTF-8.
+     * @param[in] reference A reference image path or service-supported URL; empty omits the reference.
+     * @param[in] microphone Whether to start microphone capture when joining the RTC room.
+     * @param[in] face Whether to enable face restoration for generation.
+     *
+     * @note This call blocks. Call it on a worker thread; failures throw xmax::error.
+     *
      * @see xmax_realtime_start
      */
     void start(
@@ -119,28 +214,41 @@ class realtime : public detail::owner<xmax_realtime, xmax_realtime_destroy> {
         bool face = false
     ) {
         const xmax_generation_context context{
-            sizeof(context), prompt.c_str(), reference.empty() ? nullptr : reference.c_str(), face
+            sizeof(context),
+            prompt.c_str(),
+            reference.empty() ? nullptr : reference.c_str(),
+            face
         };
-        check(xmax_realtime_start(get(), &context, microphone));
+        check(xmax_realtime_start(
+            get(),
+            &context,
+            microphone
+        ));
     }
 
     /**
-     * 在已有连接上使用缓存条件启动生成。
+     * Starts generation on an existing connection using cached conditions.
      *
-     * @note 操作会阻塞，应在工作线程调用；失败时抛出 xmax::error。
+     * @note This call blocks. Call it on a worker thread; failures throw xmax::error.
+     *
      * @see xmax_realtime_generate
      */
     void generate() {
-        check(xmax_realtime_generate(get(), nullptr));
+        check(xmax_realtime_generate(
+            get(),
+            nullptr
+        ));
     }
 
     /**
-     * 在已有连接上使用指定条件启动生成。
+     * Starts generation on an existing connection using supplied conditions.
      *
-     * @param[in] prompt UTF-8 生成提示词。
-     * @param[in] reference 参考图片路径或服务可接受的地址，空文本表示不提供参考图片。
-     * @param[in] face 是否启用生成条件中的人脸修复。
-     * @note 操作会阻塞，应在工作线程调用；失败时抛出 xmax::error。
+     * @param[in] prompt The generation prompt, encoded as UTF-8.
+     * @param[in] reference A reference image path or service-supported URL; empty omits the reference.
+     * @param[in] face Whether to enable face restoration for generation.
+     *
+     * @note This call blocks. Call it on a worker thread; failures throw xmax::error.
+     *
      * @see xmax_realtime_generate
      */
     void generate(
@@ -149,18 +257,26 @@ class realtime : public detail::owner<xmax_realtime, xmax_realtime_destroy> {
         bool face = false
     ) {
         const xmax_generation_context context{
-            sizeof(context), prompt.c_str(), reference.empty() ? nullptr : reference.c_str(), face
+            sizeof(context),
+            prompt.c_str(),
+            reference.empty() ? nullptr : reference.c_str(),
+            face
         };
-        check(xmax_realtime_generate(get(), &context));
+        check(xmax_realtime_generate(
+            get(),
+            &context
+        ));
     }
 
     /**
-     * 替换活动任务的生成条件。
+     * Replaces the active task's generation conditions.
      *
-     * @param[in] prompt UTF-8 生成提示词。
-     * @param[in] reference 参考图片路径或服务可接受的地址，空文本表示不提供参考图片。
-     * @param[in] face 是否启用生成条件中的人脸修复。
-     * @note 操作会阻塞，应在工作线程调用；失败时抛出 xmax::error。
+     * @param[in] prompt The generation prompt, encoded as UTF-8.
+     * @param[in] reference A reference image path or service-supported URL; empty omits the reference.
+     * @param[in] face Whether to enable face restoration for generation.
+     *
+     * @note This call blocks. Call it on a worker thread; failures throw xmax::error.
+     *
      * @see xmax_realtime_update
      */
     void update(
@@ -169,129 +285,174 @@ class realtime : public detail::owner<xmax_realtime, xmax_realtime_destroy> {
         bool face = false
     ) {
         const xmax_generation_context context{
-            sizeof(context), prompt.c_str(), reference.empty() ? nullptr : reference.c_str(), face
+            sizeof(context),
+            prompt.c_str(),
+            reference.empty() ? nullptr : reference.c_str(),
+            face
         };
-        check(xmax_realtime_update(get(), &context));
+        check(xmax_realtime_update(
+            get(),
+            &context
+        ));
     }
 
     /**
-     * 检查当前连接是否请求接入方提交外部视频帧。
+     * Reports whether the connection requests external video frames from your app.
      *
-     * @return 当前需要外部输入帧时为 true；SDK 摄像头模式返回 false。
+     * @return True when external frames are requested; false in SDK camera mode.
+     *
      * @see xmax_realtime_is_requesting_frames
      */
     bool requesting_frames() const {
         int32_t result = 0;
-        check(xmax_realtime_is_requesting_frames(get(), &result));
+        check(xmax_realtime_is_requesting_frames(
+            get(),
+            &result
+        ));
         return result != 0;
     }
 
     /**
-     * 同步复制并提交一帧外部视频，返回后接入方可复用原像素内存。
+     * Copies and submits an external frame synchronously; your app may reuse source pixels after return.
      *
-     * @param[in] value 带 struct_size 的外部视频视图，尺寸须匹配绑定规格且时间戳严格递增。
+     * @param[in] value The external view with struct_size initialized, matching bound dimensions and a
+     * strictly increasing timestamp.
+     *
      * @see xmax_realtime_push_video_frame
      */
     void push(
         const xmax_video_frame& value
     ) {
-        check(xmax_realtime_push_video_frame(get(), &value));
+        check(xmax_realtime_push_video_frame(
+            get(),
+            &value
+        ));
     }
 
     /**
-     * 设置并保存当前或下次连接使用的远端播放音量。
+     * Sets and retains the remote playback volume for the current or next connection.
      *
-     * @param[in] value 范围为 [0, 1] 的有限音量值，0 表示静音。
+     * @param[in] value A finite volume in [0, 1]; 0 mutes playback.
+     *
      * @see xmax_realtime_set_remote_volume
      */
     void volume(
         float value
     ) {
-        check(xmax_realtime_set_remote_volume(get(), value));
+        check(xmax_realtime_set_remote_volume(
+            get(),
+            value
+        ));
     }
 
     /**
-     * 读取当前或下次连接使用的远端播放音量。
+     * Returns the remote playback volume for the current or next connection.
      *
-     * @return 范围为 [0, 1] 的播放音量，初始值为 0。
+     * @return The playback volume in [0, 1], initially 0.
+     *
      * @see xmax_realtime_get_remote_volume
      */
     float volume() const {
         float value = 0;
-        check(xmax_realtime_get_remote_volume(get(), &value));
+        check(xmax_realtime_get_remote_volume(
+            get(),
+            &value
+        ));
         return value;
     }
 
     /**
-     * 读取当前状态快照，不消费待处理事件。
+     * Returns the current state snapshot without consuming pending events.
      *
-     * @return 包含当前状态与会话标识的快照事件。
+     * @return The current state and session identifier snapshot.
+     *
      * @see xmax_realtime_get_state
      */
     xmax_event state() const {
         xmax_event value{};
         value.struct_size = sizeof(value);
-        check(xmax_realtime_get_state(get(), &value));
+        check(xmax_realtime_get_state(
+            get(),
+            &value
+        ));
         return value;
     }
 
     /**
-     * 读取当前绑定的视频输入规格。
+     * Returns the currently bound input video format.
      *
      * @see xmax_realtime_get_format
      */
     xmax_video_format format() const {
         xmax_video_format value{};
-        check(xmax_realtime_get_format(get(), &value));
+        check(xmax_realtime_get_format(
+            get(),
+            &value
+        ));
         return value;
     }
 
     /**
-     * 非阻塞消费下一个应用事件。
+     * Consumes the next application event without blocking.
      *
-     * @param[out] event 接收最早的待处理应用事件，本方法自动设置 struct_size。
-     * @return 取得事件返回 true；当前无事件返回 false。
+     * @param[out] event Receives the oldest pending event; this method initializes struct_size.
+     *
+     * @return True if an event was retrieved; false if no event is pending.
+     *
      * @see xmax_realtime_poll_event
      */
     bool poll(
         xmax_event& event
     ) const {
         event.struct_size = sizeof(event);
-        const auto result = xmax_realtime_poll_event(get(), &event);
+        const auto result = xmax_realtime_poll_event(
+            get(),
+            &event
+        );
         check(result);
         return result == XMAX_OK;
     }
 
     /**
-     * 非阻塞取出最新的远端结果帧，并转移该帧的所有权。
+     * Acquires the latest remote result frame without blocking, transferring ownership.
      *
-     * @return 返回的帧持有像素数据；没有新帧时返回空对象。
+     * @return A frame that retains its pixels, or an empty object if no new frame is available.
+     *
      * @see xmax_realtime_acquire_frame
      */
     frame acquire_frame() const {
         xmax_frame value = nullptr;
-        check(xmax_realtime_acquire_frame(get(), &value));
+        check(xmax_realtime_acquire_frame(
+            get(),
+            &value
+        ));
         return frame(value);
     }
 
     /**
-     * 非阻塞取出最新的本地预览帧，并转移该帧的所有权。
+     * Acquires the latest local preview frame without blocking, transferring ownership.
      *
-     * @return 返回的帧持有像素数据；没有新帧时返回空对象。
+     * @return A frame that retains its pixels, or an empty object if no new frame is available.
+     *
      * @see xmax_realtime_acquire_local_frame
      */
     frame acquire_local_frame() const {
         xmax_frame value = nullptr;
-        check(xmax_realtime_acquire_local_frame(get(), &value));
+        check(xmax_realtime_acquire_local_frame(
+            get(),
+            &value
+        ));
         return frame(value);
     }
 
     /**
-     * 设置上行码率限制及画质或帧率的降级偏好。
+     * Sets uplink bitrate limits and quality or frame-rate degradation preference.
      *
-     * @param[in] minimum 最小码率，单位为 kbps；-1 使用策略默认值，0 不设置最小限制。
-     * @param[in] maximum 最大码率，单位为 kbps；0 使用策略估计值。
-     * @param[in] preference 使用 XMAX_ENCODER_* 表示的编码降级偏好。
+     * @param[in] minimum The minimum bitrate in kbps; -1 selects the policy default and 0 omits the minimum
+     * limit.
+     * @param[in] maximum The maximum bitrate in kbps; 0 uses the policy estimate.
+     * @param[in] preference The XMAX_ENCODER_* degradation preference.
+     *
      * @see xmax_realtime_set_encoding
      */
     void encoding(
@@ -299,51 +460,114 @@ class realtime : public detail::owner<xmax_realtime, xmax_realtime_destroy> {
         int maximum = 0,
         int preference = XMAX_ENCODER_MAINTAIN_FRAMERATE
     ) {
-        const xmax_encoding_config value{sizeof(value), minimum, maximum, preference};
-        check(xmax_realtime_set_encoding(get(), &value));
+        const xmax_encoding_config value{
+            sizeof(value),
+            minimum,
+            maximum,
+            preference
+        };
+        check(xmax_realtime_set_encoding(
+            get(),
+            &value
+        ));
     }
 
     /**
-     * 开启或关闭独立的双向画质自适应。
+     * Sets preview, result-display, and publication mirroring independently, retaining settings after
+     * disconnection.
      *
-     * @param[in] enabled true 表示启用，false 表示关闭。
+     * @param[in] local_preview Whether to horizontally mirror local preview.
+     * @param[in] remote_view Whether to horizontally mirror result display.
+     * @param[in] published_video Whether RTC mirrors uplink encoding; disabled by default.
+     *
+     * @see xmax_realtime_set_video_mirror
+     */
+    void video_mirror(
+        bool local_preview,
+        bool remote_view,
+        bool published_video = false
+    ) const {
+        const xmax_video_mirror_config value{
+            sizeof(value),
+            local_preview,
+            remote_view,
+            published_video
+        };
+        check(xmax_realtime_set_video_mirror(
+            get(),
+            &value
+        ));
+    }
+
+    /**
+     * Returns the mirror configuration retained for the current and next connection.
+     *
+     * @see xmax_realtime_get_video_mirror
+     */
+    xmax_video_mirror_config video_mirror() const {
+        xmax_video_mirror_config value{};
+        value.struct_size = sizeof(value);
+        check(xmax_realtime_get_video_mirror(
+            get(),
+            &value
+        ));
+        return value;
+    }
+
+    /**
+     * Enables or disables independent uplink and downlink quality adaptation.
+     *
+     * @param[in] enabled True to enable; false to disable.
+     *
      * @see xmax_realtime_set_adaptive_quality
      */
     void adaptive_quality(
         bool enabled
     ) {
-        check(xmax_realtime_set_adaptive_quality(get(), enabled));
+        check(xmax_realtime_set_adaptive_quality(
+            get(),
+            enabled
+        ));
     }
 
     /**
-     * 读取当前双向画质档位及生效的视频规格。
+     * Returns the current uplink and downlink quality levels and effective video formats.
      *
-     * @return 当前自适应开关、上下行画质档位以及实际使用的视频尺寸和帧率。
+     * @return The adaptation setting, directional quality levels, and effective dimensions and frame rates.
+     *
      * @see xmax_realtime_get_quality
      */
     xmax_quality_status quality() const {
         xmax_quality_status value{};
         value.struct_size = sizeof(value);
-        check(xmax_realtime_get_quality(get(), &value));
+        check(xmax_realtime_get_quality(
+            get(),
+            &value
+        ));
         return value;
     }
 
     /**
-     * 设置原生帧插值开关；缺少后端时拒绝启用。
+     * Configures native frame interpolation; enabling without a backend is rejected.
      *
-     * @param[in] enabled true 表示启用，false 表示关闭。
+     * @param[in] enabled True to enable; false to disable.
+     *
      * @see xmax_realtime_set_interpolation
      */
     void interpolation(
         bool enabled
     ) {
-        check(xmax_realtime_set_interpolation(get(), enabled));
+        check(xmax_realtime_set_interpolation(
+            get(),
+            enabled
+        ));
     }
 
     /**
-     * 关闭服务端和 RTC 资源，保留本地预览与缓存生成条件。
+     * Closes server and RTC resources while retaining local preview and cached conditions.
      *
-     * @note 操作会阻塞，应在工作线程调用；失败时抛出 xmax::error。
+     * @note This call blocks. Call it on a worker thread; failures throw xmax::error.
+     *
      * @see xmax_realtime_disconnect
      */
     void disconnect() {
@@ -351,9 +575,10 @@ class realtime : public detail::owner<xmax_realtime, xmax_realtime_destroy> {
     }
 
     /**
-     * 断开连接并释放本地媒体和缓存生成条件。
+     * Disconnects and releases local media and cached generation conditions.
      *
-     * @note 操作会阻塞，应在工作线程调用；失败时抛出 xmax::error。
+     * @note This call blocks. Call it on a worker thread; failures throw xmax::error.
+     *
      * @see xmax_realtime_close
      */
     void close() {
@@ -361,140 +586,183 @@ class realtime : public detail::owner<xmax_realtime, xmax_realtime_destroy> {
     }
 
     /**
-     * 更新已就绪且未连接的摄像头编码规格，保留设备和预览绑定。
+     * Updates a ready, disconnected camera's encoding format, retaining device and preview bindings.
      *
-     * @param[in] format 模型支持的新规格。
+     * @param[in] format The model-supported new format.
      */
     void update_camera_format(
         xmax_video_format format
     ) {
-        check(xmax_realtime_update_camera_format(get(), &format));
+        check(xmax_realtime_update_camera_format(
+            get(),
+            &format
+        ));
     }
 
     /**
-     * 更新摄像头分辨率，沿用当前帧率、码率和编码偏好。
+     * Updates camera resolution while retaining frame rate, bitrate, and encoding preference.
      *
-     * @param[in] preset 模型支持的摄像头分辨率。
+     * @param[in] preset The model-supported camera resolution.
      */
     void update_camera_format(
         RealtimeCameraPreset preset
     ) {
-        check(xmax_realtime_update_camera_preset(get(), static_cast<xmax_camera_preset>(preset)));
+        check(xmax_realtime_update_camera_preset(
+            get(),
+            static_cast<xmax_camera_preset>(preset)
+        ));
     }
 
     /**
-     * 获取摄像头编码规格；无摄像头流时返回全零。
+     * Returns the camera encoding format, or an all-zero format without a camera stream.
      */
     xmax_video_format camera_format() const {
         xmax_video_format result{};
         xmax_camera_preset preset{};
-        check(xmax_realtime_get_camera_format(get(), &result, &preset));
+        check(xmax_realtime_get_camera_format(
+            get(),
+            &result,
+            &preset
+        ));
         return result;
     }
 
     /**
-     * 获取当前摄像头预设；无摄像头流时返回 none。
+     * Returns the current camera preset, or none without a camera stream.
      */
     RealtimeCameraPreset camera_preset() const {
         xmax_video_format format{};
         xmax_camera_preset result{};
-        check(xmax_realtime_get_camera_format(get(), &format, &result));
+        check(xmax_realtime_get_camera_format(
+            get(),
+            &format,
+            &result
+        ));
         return static_cast<RealtimeCameraPreset>(result);
     }
 
     /**
-     * 在生成中调整上行档位，后续网络自适应仍可继续调档。
+     * Changes uplink quality during generation without disabling subsequent network adaptation.
      *
-     * @param[in] level 目标上行档位。
+     * @param[in] level The target uplink quality level.
      */
     void uplink_quality_level(
         RealtimeQualityLevel level
     ) {
-        check(xmax_realtime_set_uplink_quality_level(get(), static_cast<int32_t>(level)));
+        check(xmax_realtime_set_uplink_quality_level(
+            get(),
+            static_cast<int32_t>(level)
+        ));
     }
 
     /**
-     * 在生成中调整下行档位，发送失败时保持此前档位。
+     * Changes downlink quality during generation, retaining the previous level on send failure.
      *
-     * @param[in] level 目标下行档位。
+     * @param[in] level The target downlink quality level.
      */
     void downlink_quality_level(
         RealtimeQualityLevel level
     ) {
-        check(xmax_realtime_set_downlink_quality_level(get(), static_cast<int32_t>(level)));
+        check(xmax_realtime_set_downlink_quality_level(
+            get(),
+            static_cast<int32_t>(level)
+        ));
     }
 
     /**
-     * 获取包含状态原因与错误详情的状态快照。
+     * Returns a state snapshot with reason and error details.
      */
     xmax_event_info state_info() const {
         xmax_event_info info{};
         info.struct_size = sizeof(info);
-        check(xmax_realtime_get_state_info(get(), &info));
+        check(xmax_realtime_get_state_info(
+            get(),
+            &info
+        ));
         return info;
     }
 
     /**
-     * 非阻塞取出包含原因与错误详情的事件，与旧 poll 接口共用事件队列。
+     * Acquires an event with reason and error details without blocking, sharing the legacy poll queue.
      *
-     * @param[out] info 接收最早事件，队列为空时不变。
-     * @return 是否取得事件。
+     * @param[out] info Receives the oldest event; unchanged if the queue is empty.
+     *
+     * @return Whether an event was retrieved.
      */
     bool poll(
         xmax_event_info& info
     ) {
         info.struct_size = sizeof(info);
-        const auto result = xmax_realtime_poll_event_info(get(), &info);
+        const auto result = xmax_realtime_poll_event_info(
+            get(),
+            &info
+        );
         check(result);
         return result == XMAX_OK;
     }
 
     /**
-     * 按业务原因断开连接，保留本地媒体预览。
+     * Disconnects for the specified reason while retaining local media preview.
      *
-     * @param[in] reason 正常停止或显示方向变化。
+     * @param[in] reason Normal stop or display-orientation change.
      */
     void disconnect(
         xmax_realtime_reason reason
     ) {
-        check(xmax_realtime_disconnect_with_reason(get(), reason));
+        check(xmax_realtime_disconnect_with_reason(
+            get(),
+            reason
+        ));
     }
 
     /**
-     * 提交轨迹采样，由 SDK 完成坐标映射和异步信令发送。
+     * Submits trajectory samples for SDK coordinate mapping and asynchronous signaling.
      *
-     * @param[in] frame 采样点、视口尺寸和实际视频布局。
+     * @param[in] frame The sample points, viewport dimensions, and actual video layout.
      */
     void submit_interaction(
         const xmax_interaction_frame& frame
     ) {
-        check(xmax_realtime_submit_interaction(get(), &frame));
+        check(xmax_realtime_submit_interaction(
+            get(),
+            &frame
+        ));
     }
 
     /**
-     * 获取尚未过期的归一化轨迹副本，供界面自定义绘制。
+     * Returns unexpired normalized trajectories for custom rendering.
      */
     std::vector<xmax_point> trajectory() const {
         std::vector<xmax_point> points(256);
         size_t count = 0;
-        check(xmax_realtime_get_trajectory(get(), points.data(), points.size(), &count));
+        check(xmax_realtime_get_trajectory(
+            get(),
+            points.data(),
+            points.size(),
+            &count
+        ));
         points.resize(count);
         return points;
     }
 
     /**
-     * 在 HWND 上显示帧并绘制默认轨迹效果，须在窗口所属线程调用。
+     * Renders a frame and default trajectory effects on the HWND owner thread.
      *
-     * @param[in] value 待显示的视频帧。
-     * @param[in] window 当前线程拥有的 HWND。
-     * @param[in] content_mode 等比例适应或居中填满。
+     * @param[in] value The video frame to display.
+     * @param[in] window An HWND owned by the calling thread.
+     * @param[in] content_mode Aspect fit or centered aspect fill.
      */
     void render_window(
         xmax_frame value,
         void* window,
         int32_t content_mode = XMAX_CONTENT_FIT
     ) {
-        check(xmax_realtime_render_window(get(), value, window, content_mode));
+        check(xmax_realtime_render_window(
+            get(),
+            value,
+            window,
+            content_mode
+        ));
     }
 };
 } // namespace xmax

@@ -15,16 +15,16 @@
 namespace xmax::detail {
 
 /**
- * 保存当前任务的短时轨迹快照，支持原生效果和接入方自定义绘制。
+ * Retains short-lived task trajectories for native effects and custom rendering.
  */
 class TrajectoryRegistry {
 
   public:
 
     /**
-     * 保存本次采样，并在 600 毫秒后自动失效。
+     * Stores a sample with an expiry of 600 milliseconds.
      *
-     * @param[in] points 归一化轨迹，最多 256 个点。
+     * @param[in] points The normalized trajectory, containing at most 256 points.
      */
     void update(
         std::vector<xmax_point> points
@@ -35,7 +35,7 @@ class TrajectoryRegistry {
     }
 
     /**
-     * 获取尚未过期的轨迹副本；没有有效轨迹时为空。
+     * Returns an unexpired trajectory copy, or an empty collection if none is valid.
      */
     std::vector<xmax_point> snapshot() const {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -43,7 +43,7 @@ class TrajectoryRegistry {
     }
 
     /**
-     * 任务停止或切换时立即移除轨迹。
+     * Removes trajectories immediately when a task stops or changes.
      */
     void clear() {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -54,17 +54,17 @@ class TrajectoryRegistry {
   private:
 
     /**
-     * 保护轨迹缓存的互斥锁。
+     * The mutex protecting the trajectory cache.
      */
     mutable std::mutex mutex_;
 
     /**
-     * 当前任务最新的归一化轨迹。
+     * The current task's latest normalized trajectory.
      */
     std::vector<xmax_point> points_;
 
     /**
-     * 轨迹显示到期时间，使用单调时钟。
+     * The trajectory display deadline on the monotonic clock.
      */
     Clock::time_point expires_{};
 };

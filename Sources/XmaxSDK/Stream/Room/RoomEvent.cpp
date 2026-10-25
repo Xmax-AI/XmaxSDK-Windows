@@ -16,15 +16,15 @@
 namespace xmax::detail {
 
 /**
- * 构造携带房间、任务、视频规格与生成条件的信令。
+ * Builds signaling with room, task, video format, and generation conditions.
  *
- * @param[in] event 生成信令的事件名称。
- * @param[in] c 当前 RTC 房间连接信息。
- * @param[in] task 当前生成任务标识；控制信令允许省略时为空文本。
- * @param[in] format 服务端生成画布尺寸和帧率，由模型规则解析。
- * @param[in] prompt UTF-8 生成提示词。
- * @param[in] reference 参考图片路径或服务可接受的地址，空文本表示不提供参考图片。
- * @param[in] face 是否启用生成条件中的人脸修复。
+ * @param[in] event The generation signaling event name.
+ * @param[in] c The current RTC room connection information.
+ * @param[in] task The current generation task identifier; empty where control signaling permits omission.
+ * @param[in] format The model-resolved generation canvas dimensions and frame rate.
+ * @param[in] prompt The generation prompt, encoded as UTF-8.
+ * @param[in] reference A reference image path or service-supported URL; empty omits the reference.
+ * @param[in] face Whether to enable face restoration for generation.
  */
 json generation_event(
     const std::string& event,
@@ -55,16 +55,22 @@ json generation_event(
         params["max_bitrate"] = std::min(10000, bitrate({format.width, format.height, 24}).second);
     }
 
-    return {{"event", event}, {"params", params},    {"user_id", c.user},
-            {"uid", task},    {"session_uid", task}, {"runtime", runtime_info()}};
+    return {
+        {"event", event},
+        {"params", params},
+        {"user_id", c.user},
+        {"uid", task},
+        {"session_uid", task},
+        {"runtime", runtime_info()}
+    };
 }
 
 /**
- * 构造携带房间信息和可选任务标识的控制信令。
+ * Builds a room control message with an optional task identifier.
  *
- * @param[in] event 房间控制信令的事件名称。
- * @param[in] connection 当前 RTC 房间连接信息。
- * @param[in] task 当前生成任务标识；控制信令允许省略时为空文本。
+ * @param[in] event The room control event name.
+ * @param[in] connection The current RTC room connection information.
+ * @param[in] task The current generation task identifier; empty where control signaling permits omission.
  */
 json room_event(
     const std::string& event,

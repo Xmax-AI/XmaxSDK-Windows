@@ -16,11 +16,11 @@
 namespace xmax::detail {
 
 /**
- * 将画质档位解析为指定方向的视频尺寸和帧率。
+ * Resolves video dimensions and frame rate for a directional quality level.
  *
- * @param[in] baseline 绑定输入的基准视频规格。
- * @param[in] level 画质档位，范围为 [1, 5]。
- * @param[in] downlink true 表示下行，false 表示上行。
+ * @param[in] baseline The bound input's baseline video format.
+ * @param[in] level The quality level, in [1, 5].
+ * @param[in] downlink True for downlink; false for uplink.
  */
 xmax_video_format quality_format(
     xmax_video_format baseline,
@@ -33,7 +33,10 @@ xmax_video_format quality_format(
     const auto short_side = std::min(baseline.width, baseline.height);
     const auto scale = std::max(scales[index], double(std::min(short_side, 240u)) / short_side);
     const auto alignment = downlink ? 4u : 2u;
-    const auto divisor = std::gcd(baseline.width, baseline.height);
+    const auto divisor = std::gcd(
+        baseline.width,
+        baseline.height
+    );
     const auto units = uint32_t(std::floor(divisor * scale + 1e-7)) / alignment * alignment;
     xmax_video_format result{};
 
@@ -53,7 +56,7 @@ xmax_video_format quality_format(
 }
 
 /**
- * 清空网络观察窗口，保留当前画质档位。
+ * Clears the network observation window while retaining the current quality level.
  */
 void QualityDirection::reset_samples() {
     good_ = poor_ = 0;
@@ -61,12 +64,15 @@ void QualityDirection::reset_samples() {
 }
 
 /**
- * 观察带时间戳的网络质量样本，在满足稳定与冷却条件时建议新档位。
+ * Observes timestamped network samples and recommends levels after stability and cooldown checks.
  *
- * @param[in] quality 原生网络质量枚举值，用于当前方向的档位观察。
- * @param[in] sampled_at 网络样本产生时的单调秒时间，过期或重复样本不参与决策。
- * @param[in] now 当前单调秒时间，用于冷却、稳定窗口及样本时效判断。
- * @return 符合稳定、样本时效及冷却条件的新档位，否则返回 std::nullopt。
+ * @param[in] quality The native network-quality value for this direction.
+ * @param[in] sampled_at The sample's monotonic time in seconds; expired or duplicate samples are ignored.
+ * @param[in] now The current monotonic time in seconds, used for cooldowns, stable windows, and sample
+ * expiry.
+ *
+ * @return A proposed level satisfying stability, freshness, and cooldown requirements; otherwise
+ * std::nullopt.
  */
 std::optional<int> QualityDirection::observe(
     int quality,
@@ -102,11 +108,12 @@ std::optional<int> QualityDirection::observe(
 }
 
 /**
- * 记录档位变更结果，更新冷却期限及失败升级的回退窗口。
+ * Records a level-change result and updates cooldown and failed-upgrade rollback windows.
  *
- * @param[in] next 本次尝试应用的画质档位，范围为 [1, 5]。
- * @param[in] success 原生编码或下行画质变更是否已成功应用。
- * @param[in] now 当前单调秒时间，用于冷却、稳定窗口及样本时效判断。
+ * @param[in] next The attempted quality level, in [1, 5].
+ * @param[in] success Whether native encoding or downlink quality changes succeeded.
+ * @param[in] now The current monotonic time in seconds, used for cooldowns, stable windows, and sample
+ * expiry.
  */
 void QualityDirection::complete(
     int next,

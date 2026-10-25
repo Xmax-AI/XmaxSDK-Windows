@@ -14,49 +14,71 @@
 namespace xmax::detail {
 
 /**
- * 校验并绑定输入规格，重置当前绑定的时间戳状态。
+ * Validates and binds an input format, resetting timestamp tracking for the binding.
  *
- * @param[in] format 输入尺寸和帧率，支持范围见 xmax_video_format。
+ * @param[in] format The input dimensions and frame rate; see xmax_video_format for limits.
+ * @param[in] binding The source revision; zero reserves the channel for unversioned camera delivery.
  */
 void ExternalVideoController::prepare(
-    xmax_video_format format
+    xmax_video_format format,
+    uint64_t binding
 ) {
     validate_format(format);
     require(
-        format.width >= 4 && format.height >= 4, XMAX_INVALID_ARGUMENT,
+        format.width >= 4 && format.height >= 4,
+        XMAX_INVALID_ARGUMENT,
         "External input must be at least 4 by 4 pixels"
     );
 
     std::lock_guard<std::mutex> lock(mutex_);
-    require(!requesting_, XMAX_INVALID_STATE, "Stop delivery before replacing an external source");
+    require(
+        !requesting_,
+        XMAX_INVALID_STATE,
+        "Stop delivery before replacing an external source"
+    );
     format_ = format;
+    binding_ = binding;
     last_timestamp_ = -1;
-    XmaxLogger::write(LogCategory::Media, XMAX_LOG_INFO, [&](auto language) {
-        return XmaxLogger::localized(
-                   language, "外部视频已绑定 (External Video Bound)", "External Video Bound"
-               ) +
-               "\n└─ " + std::to_string(format.width) + " × " + std::to_string(format.height) + " @ " +
-               std::to_string(format.fps) + " fps";
-    });
+    XmaxLogger::write(
+        LogCategory::Media,
+        XMAX_LOG_INFO,
+        [&](auto language) {
+            return XmaxLogger::localized(
+                language,
+                "外部视频已绑定 (External Video Bound)",
+                "External Video Bound"
+            ) +
+                   "\n└─ " + std::to_string(format.width) + " × " + std::to_string(format.height) + " @ " +
+                   std::to_string(format.fps) + " fps";
+        }
+    );
 }
 
 /**
- * 安装发布接收器并开始请求输入帧。
+ * Installs a publication receiver and starts requesting input frames.
  *
- * @param[in] sink 接收视频帧的同步回调，在提交帧的媒体线程调用。
+ * @param[in] sink The synchronous frame receiver, invoked on the submitting media thread.
  */
 void ExternalVideoController::start(
     VideoFrameSink sink
 ) {
     std::lock_guard<std::mutex> lock(mutex_);
-    require(format_.width != 0, XMAX_INVALID_STATE, "No external input is bound");
-    require(bool(sink), XMAX_INVALID_ARGUMENT, "An external frame sink is required");
+    require(
+        format_.width != 0,
+        XMAX_INVALID_STATE,
+        "No external input is bound"
+    );
+    require(
+        bool(sink),
+        XMAX_INVALID_ARGUMENT,
+        "An external frame sink is required"
+    );
     sink_ = std::move(sink);
     requesting_ = true;
 }
 
 /**
- * 停止发布交付，保留输入规格和本地预览。
+ * Stops publication delivery while retaining the input format and local preview.
  */
 void ExternalVideoController::stop() {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -65,18 +87,19 @@ void ExternalVideoController::stop() {
 }
 
 /**
- * 清除输入规格、发布状态和时间戳，释放当前输入绑定。
+ * Releases the input binding, clearing format, publication state, and timestamp tracking.
  */
 void ExternalVideoController::close() {
     std::lock_guard<std::mutex> lock(mutex_);
     requesting_ = false;
     sink_ = {};
     format_ = {};
+    binding_ = 0;
     last_timestamp_ = -1;
 }
 
 /**
- * 检查是否已绑定有效的外部输入规格。
+ * Reports whether a valid external input format is bound.
  */
 bool ExternalVideoController::bound() const {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -84,9 +107,9 @@ bool ExternalVideoController::bound() const {
 }
 
 /**
- * 在绑定锁保护下读取当前输入规格。
+ * Returns the input format under the binding lock.
  *
- * @return 当前绑定的视频输入规格，未绑定时宽高和帧率为 0。
+ * @return The bound input format; dimensions and frame rate are 0 when unbound.
  */
 xmax_video_format ExternalVideoController::format() const {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -94,22 +117,34 @@ xmax_video_format ExternalVideoController::format() const {
 }
 
 /**
- * 校验并复制借用的外部帧，同步交付给推流和本地预览接收器。
+ * Validates and copies a borrowed external frame, delivering it synchronously to publication and preview
+ * receivers.
  *
- * @param[in] source 待读取的视频帧或借用视图，需包含有效的像素布局。
+ * @param[in] source The frame or borrowed view to read, with a valid pixel layout.
+ * @param[in] binding The source revision; zero uses the current legacy binding. Stale revisions are ignored.
  */
 void ExternalVideoController::push(
-    const xmax_video_frame& source
+    const xmax_video_frame& source,
+    uint64_t binding
 ) {
-    // 停止操作使用同一把锁，确保返回前已完成正在执行的帧交付。
+    // Stop shares this lock so in-flight frame delivery finishes before it returns.
     std::lock_guard<std::mutex> lock(mutex_);
-    require(format_.width != 0, XMAX_INVALID_STATE, "No external input is bound");
+    if (binding != 0 && binding != binding_)
+        return;
+
     require(
-        source.width == format_.width && source.height == format_.height, XMAX_INVALID_ARGUMENT,
+        format_.width != 0,
+        XMAX_INVALID_STATE,
+        "No external input is bound"
+    );
+    require(
+        source.width == format_.width && source.height == format_.height,
+        XMAX_INVALID_ARGUMENT,
         "External frame does not match the negotiated format"
     );
     require(
-        source.timestamp_us > last_timestamp_, XMAX_INVALID_ARGUMENT,
+        source.timestamp_us > last_timestamp_,
+        XMAX_INVALID_ARGUMENT,
         "External frame timestamps must increase strictly"
     );
 
@@ -124,29 +159,42 @@ void ExternalVideoController::push(
 }
 
 /**
- * 替换本地预览接收器，回调在提交帧的媒体线程执行。
+ * Replaces the local preview receiver, invoked on the submitting media thread.
  *
- * @param[in] sink 接收视频帧的同步回调，在提交帧的媒体线程调用。
+ * @param[in] sink The synchronous frame receiver, invoked on the submitting media thread.
+ * @param[in] binding A nonzero replacement revision invalidates previous sources before preview changes.
  */
 void ExternalVideoController::preview(
-    std::function<void(Frame)> sink
+    std::function<void(Frame)> sink,
+    uint64_t binding
 ) {
     std::lock_guard<std::mutex> lock(mutex_);
+    if (binding)
+        binding_ = binding;
     preview_ = std::move(sink);
 }
 
 /**
- * 按实际采集尺寸交付摄像头帧，由 RTC 根据编码目标处理尺寸和比例。
+ * Delivers camera frames at capture dimensions; RTC handles encoding dimensions and aspect ratio.
  *
- * @param[in] frame 待交付的视频帧或借用视图；同步调用返回前像素必须有效。
+ * @param[in] frame The frame or borrowed view to deliver; its pixels must remain valid until this
+ * synchronous call returns.
  */
 void ExternalVideoController::push_owned(
     Frame frame
 ) {
     std::lock_guard<std::mutex> lock(mutex_);
-    require(format_.width != 0, XMAX_INVALID_STATE, "No camera input is bound");
+    require(
+        format_.width != 0,
+        XMAX_INVALID_STATE,
+        "No camera input is bound"
+    );
     validate_frame(frame.view());
-    require(frame.timestamp_us > last_timestamp_, XMAX_INVALID_ARGUMENT, "Capture timestamps must increase");
+    require(
+        frame.timestamp_us > last_timestamp_,
+        XMAX_INVALID_ARGUMENT,
+        "Capture timestamps must increase"
+    );
     last_timestamp_ = frame.timestamp_us;
 
     if (requesting_ && sink_)

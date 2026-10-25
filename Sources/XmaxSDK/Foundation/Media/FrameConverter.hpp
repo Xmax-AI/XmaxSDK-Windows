@@ -14,10 +14,12 @@
 namespace xmax::detail {
 
 /**
- * 将支持的视频帧转换或复制为 SDK 拥有的 BGRA 帧。
+ * Converts or copies a supported frame to owned BGRA pixels.
  *
- * @param[in] source 待转换的有效帧，源像素在本次同步调用返回前保持有效。
- * @return 拥有独立像素存储的 BGRA 帧，保留输入尺寸和时间戳。
+ * @param[in] source The valid source frame; its pixels must remain valid until this synchronous call
+ * returns.
+ *
+ * @return An independently owned BGRA frame preserving source dimensions and timestamp.
  */
 Frame bgra_frame(
     const Frame& source

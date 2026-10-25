@@ -70,6 +70,15 @@ Pill {
                 contentItem: Text { text: refresh.text; color: "#111318"; font.pixelSize: 12; verticalAlignment: Text.AlignVCenter }
                 onClicked: picker.controller.refreshCameras()
             }
+            CheckDelegate {
+                objectName: "cameraMirror"
+                width: 260; height: 34
+                text: "Mirror preview and result"
+                checked: picker.controller.videoMirrored
+                onClicked: picker.controller.videoMirrored = !picker.controller.videoMirrored
+                ToolTip.visible: hovered
+                ToolTip.text: "Display only; the published video is unchanged"
+            }
         }
     }
 

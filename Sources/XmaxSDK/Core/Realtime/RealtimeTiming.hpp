@@ -15,38 +15,38 @@
 namespace xmax::detail {
 
 /**
- * 记录服务端会话、RTC 加入、本地发布和结果首帧的启动耗时。
- * 生命周期线程更新阶段记录；RTC 回调仅原子写入对应发布批次。
+ * Tracks session creation, RTC join, local publication, and first-result startup durations. Lifecycle code
+ * updates stages; RTC callbacks atomically update their publication revision only.
  */
 class RealtimeTiming {
 
   public:
 
     /**
-     * 在 RTC 回调与生命周期线程之间共享的单次发布记录。
+     * A single publication record shared between RTC callbacks and lifecycle execution.
      */
     struct Publication {
 
         /**
-         * 首次实际发布的单调微秒时间，-1 表示尚未收到通知。
+         * The first actual publication time in monotonic microseconds; -1 until notified.
          */
         std::atomic<int64_t> first_us{-1};
 
         /**
-         * 开始交付本地视频帧的单调微秒时间，-1 表示尚未开始。
+         * The start of local frame delivery in monotonic microseconds; -1 until started.
          */
         int64_t started_us = -1;
     };
 
     /**
-     * 单调时钟读取函数，可注入确定性时钟验证阶段时长。
+     * The injectable monotonic clock used to measure stage durations.
      */
     using Now = std::function<Clock::time_point()>;
 
     /**
-     * 保留单调时钟；注入函数应返回同一时间基准的时间点。
+     * Retains a monotonic clock whose readings use one time base.
      *
-     * @param[in] now 单调时钟读取函数，需支持生命周期线程调用。
+     * @param[in] now The monotonic clock callable, safe to invoke on the lifecycle thread.
      */
     explicit RealtimeTiming(
         Now now = [] { return Clock::now(); }
@@ -55,7 +55,7 @@ class RealtimeTiming {
     }
 
     /**
-     * 开始一次连接启动计时，清除之前的阶段值。
+     * Starts connection timing and clears previous stage values.
      */
     void begin() {
         started_ = now_();
@@ -68,14 +68,17 @@ class RealtimeTiming {
     }
 
     /**
-     * 记录服务端会话创建完成。
+     * Records completion of server-session creation.
      */
     void finish_session() {
-        snapshot_.session_ms = elapsed(started_, now_());
+        snapshot_.session_ms = elapsed(
+            started_,
+            now_()
+        );
     }
 
     /**
-     * 开始 RTC 加入计时，并分配独立的发布批次。
+     * Starts RTC join timing and allocates a publication revision.
      */
     void begin_join() {
         joining_ = now_();
@@ -83,7 +86,7 @@ class RealtimeTiming {
     }
 
     /**
-     * 开始本地帧交付，作为首次实际发布耗时的起点。
+     * Starts local frame delivery timing for the first actual publication.
      */
     void begin_publication() {
         if (publication_)
@@ -91,42 +94,52 @@ class RealtimeTiming {
     }
 
     /**
-     * 记录 RTC 加入与本地交付建立完成。
+     * Records completion of RTC join and local delivery setup.
      */
     void finish_join() {
-        snapshot_.rtc_join_ms = elapsed(joining_, now_());
+        snapshot_.rtc_join_ms = elapsed(
+            joining_,
+            now_()
+        );
     }
 
     /**
-     * 开始发送本次生成请求，等待该任务结果首帧。
+     * Starts timing generation signaling and the task's first result frame.
      */
     void begin_signal() {
         signalling_ = now_();
     }
 
     /**
-     * 记录结果首帧与总启动时长，并汇总已到达的发布通知。
+     * Records first-result and total startup durations and merges publication notifications.
      */
     void finish_signal() {
         const auto now = now_();
-        snapshot_.first_frame_ms = elapsed(signalling_, now);
-        snapshot_.total_ms = elapsed(started_, now);
+        snapshot_.first_frame_ms = elapsed(
+            signalling_,
+            now
+        );
+        snapshot_.total_ms = elapsed(
+            started_,
+            now
+        );
         update_publication();
     }
 
     /**
-     * 获取可由当前连接 RTC 回调持有的发布批次。
+     * Returns the publication revision retained by this connection's RTC callbacks.
      */
     std::shared_ptr<Publication> publication() const {
         return publication_;
     }
 
     /**
-     * 原子记录某批次的首次实际发布通知，重复通知不覆盖时间。
+     * Atomically records the first publication notification without overwriting its timestamp.
      *
-     * @param[in] publication 回调创建时保留的发布批次。
-     * @param[in] at 通知发生的单调时钟时间。
-     * @return 本批次第一次收到通知时返回 true。
+     * @param[in] publication The publication revision retained when the callback was created.
+     * @param[in] at The notification's monotonic timestamp.
+     *
+     * @return True for the first notification of this revision.
      */
     static bool published(
         const std::shared_ptr<Publication>& publication,
@@ -134,15 +147,20 @@ class RealtimeTiming {
     ) {
         if (!publication)
             return false;
+
         int64_t missing = -1;
-        return publication->first_us.compare_exchange_strong(missing, microseconds(at));
+        return publication->first_us.compare_exchange_strong(
+            missing,
+            microseconds(at)
+        );
     }
 
     /**
-     * 合并当前批次的首次发布通知，拒绝旧连接的批次。
+     * Merges first-publication timing for the current revision and rejects earlier connections.
      *
-     * @param[in] publication 待检查的发布批次。
-     * @return 新写入有效发布耗时时返回 true。
+     * @param[in] publication The publication revision to check.
+     *
+     * @return True when a valid publication duration was newly recorded.
      */
     bool update_publication(
         const std::shared_ptr<Publication>& publication
@@ -153,14 +171,14 @@ class RealtimeTiming {
     }
 
     /**
-     * 获取当前阶段快照；尚未完成的阶段值为 -1，单位为毫秒。
+     * Returns stage durations in milliseconds; unfinished stages are -1.
      */
     xmax_event snapshot() const {
         return snapshot_;
     }
 
     /**
-     * 释放当前发布批次，旧 RTC 回调不能修改后续连接记录。
+     * Releases the publication revision so old RTC callbacks cannot affect later connection timing.
      */
     void reset_publication() {
         publication_.reset();
@@ -169,40 +187,41 @@ class RealtimeTiming {
   private:
 
     /**
-     * 当前计时使用的单调时钟。
+     * The monotonic clock used for timing.
      */
     Now now_;
 
     /**
-     * 本次连接开始时间。
+     * The current connection's start time.
      */
     Clock::time_point started_{};
 
     /**
-     * RTC 加入开始时间。
+     * The RTC join start time.
      */
     Clock::time_point joining_{};
 
     /**
-     * 当前生成信令开始时间。
+     * The current generation signaling start time.
      */
     Clock::time_point signalling_{};
 
     /**
-     * 最新的阶段耗时快照。
+     * The latest stage-duration snapshot.
      */
     xmax_event snapshot_{};
 
     /**
-     * 当前连接的发布通知记录。
+     * The current connection's publication notification record.
      */
     std::shared_ptr<Publication> publication_;
 
     /**
-     * 将单调时间点转换为微秒，用于跨线程原子通知。
+     * Converts a monotonic timestamp to microseconds for atomic cross-thread notification.
      *
-     * @param[in] at 单调时钟时间点。
-     * @return 从单调时钟原点开始的微秒数。
+     * @param[in] at The monotonic timestamp.
+     *
+     * @return The microseconds elapsed since the monotonic clock's epoch.
      */
     static int64_t microseconds(
         Clock::time_point at
@@ -211,11 +230,12 @@ class RealtimeTiming {
     }
 
     /**
-     * 计算阶段耗时，避免负时长。
+     * Calculates a nonnegative stage duration.
      *
-     * @param[in] begin 阶段开始时间。
-     * @param[in] end 阶段完成时间。
-     * @return 以毫秒为单位的非负耗时。
+     * @param[in] begin The stage start time.
+     * @param[in] end The stage completion time.
+     *
+     * @return The nonnegative duration, in milliseconds.
      */
     static double elapsed(
         Clock::time_point begin,
@@ -225,9 +245,9 @@ class RealtimeTiming {
     }
 
     /**
-     * 合并已经收到且具有起点的首次发布记录。
+     * Merges a received first-publication notification when its start time is known.
      *
-     * @return 已写入有效发布耗时时返回 true。
+     * @return True if a valid publication duration was recorded.
      */
     bool update_publication() {
         if (!publication_ || publication_->started_us < 0)

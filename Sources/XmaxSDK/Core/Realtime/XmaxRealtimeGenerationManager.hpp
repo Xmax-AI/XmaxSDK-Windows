@@ -17,35 +17,36 @@
 namespace xmax::detail {
 
 /**
- * 管理生成条件缓存、结果确认和当前任务的轨迹发送。
+ * Manages cached generation conditions, result confirmation, and task trajectory delivery.
  */
 class XmaxRealtimeGenerationManager {
 
   public:
 
     /**
-     * 生成条件的服务层值类型。
+     * The service-layer generation-conditions type.
      */
     using Context = RealtimeContext;
 
     /**
-     * 最近成功提交的生成条件；首次调用前为空。
+     * The most recently committed generation conditions; empty before the first submission.
      */
     std::optional<Context> context;
 
     /**
-     * 负责映射和合并采样的线程安全交互控制器。
+     * The thread-safe controller for coordinate mapping and sample coalescing.
      */
     InteractionController interaction;
 
     /**
-     * 启动生成并等待真实首帧，或更新当前任务的条件；成功后才缓存条件。
+     * Starts generation and waits for a real first frame, or updates current conditions; caches conditions
+     * only on success.
      *
-     * @param[in,out] stream 当前连接的实时传输控制器。
-     * @param[in] value 本次生成条件。
-     * @param[in] updating 是否仅更新当前任务的条件。
-     * @param[in] cancel 协作式取消判断。
-     * @param[in] maintain 等待期间执行的会话保活。
+     * @param[in,out] stream The current connection's realtime transport controller.
+     * @param[in] value The conditions for this generation.
+     * @param[in] updating Whether to update only the current task's conditions.
+     * @param[in] cancel The cooperative cancellation predicate.
+     * @param[in] maintain The session keepalive callback invoked while waiting.
      */
     void run(
         StreamController& stream,
@@ -55,24 +56,44 @@ class XmaxRealtimeGenerationManager {
         const std::function<void()>& maintain
     ) {
         if (updating)
-            stream.update(value.prompt, value.reference, value.face, cancel, maintain);
+            stream.update(
+                value.prompt,
+                value.reference,
+                value.face,
+                cancel,
+                maintain
+            );
         else {
             interaction.clear();
-            stream.start(value.prompt, value.reference, value.face, cancel, maintain);
-            stream.wait_remote(cancel, maintain);
+            stream.start(
+                value.prompt,
+                value.reference,
+                value.face,
+                cancel,
+                maintain
+            );
+            stream.wait_remote(
+                cancel,
+                maintain
+            );
         }
-        require(!cancel(), XMAX_CANCELLED, "Generation cancelled");
+
+        require(
+            !cancel(),
+            XMAX_CANCELLED,
+            "Generation cancelled"
+        );
         context = value;
     }
 
     /**
-     * 只向同一连接批次和同一生成任务发送采样。
+     * Sends samples only to the same connection revision and generation task.
      *
-     * @param[in,out] stream 当前连接的实时传输控制器。
-     * @param[in] sample 提交时复制的采样。
-     * @param[in] epoch 当前连接取消批次。
-     * @param[in] cancel 协作式取消判断。
-     * @param[in] maintain 等待期间执行的会话保活。
+     * @param[in,out] stream The current connection's realtime transport controller.
+     * @param[in] sample The sample copied at submission.
+     * @param[in] epoch The current connection's cancellation revision.
+     * @param[in] cancel The cooperative cancellation predicate.
+     * @param[in] maintain The session keepalive callback invoked while waiting.
      */
     void send_interaction(
         StreamController& stream,
@@ -82,13 +103,17 @@ class XmaxRealtimeGenerationManager {
         const std::function<void()>& maintain
     ) {
         if (sample.epoch == epoch && sample.task == stream.task() && !cancel())
-            stream.tracks(sample.points, cancel, maintain);
+            stream.tracks(
+                sample.points,
+                cancel,
+                maintain
+            );
     }
 
     /**
-     * 停用轨迹，按需同时清除缓存条件。
+     * Disables trajectory delivery and optionally clears cached conditions.
      *
-     * @param[in] clear_context 是否丢弃生成条件。
+     * @param[in] clear_context Whether to discard generation conditions.
      */
     void reset(
         bool clear_context
