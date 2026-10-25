@@ -288,6 +288,18 @@ int main(int argc, char** argv) {
             QTest::qWait(100);
             if (!dir.isEmpty())
                 verify(window->grabWindow().save(dir + "/free-prompt.png"), "Cannot capture Free Prompt page");
+            QImage reference(64, 64, QImage::Format_ARGB32);
+            reference.fill(QColor("#2f46e2"));
+            const auto referencePath = testSettings.filePath("reference.png");
+            verify(reference.save(referencePath), "Cannot create local reference fixture");
+            controller.uploadReference(QUrl::fromLocalFile(referencePath), "free");
+            QTest::qWait(100);
+            auto removeReference = visualFind(window->contentItem(), "removeReferenceButton");
+            verify(removeReference && removeReference->isVisible(), "Reference thumbnail must expose its remove button");
+            if (!dir.isEmpty())
+                verify(window->grabWindow().save(dir + "/free-reference.png"), "Cannot capture reference remove button");
+            click("removeReferenceButton");
+            verify(controller.referencesFor("free").isEmpty(), "Remove button must clear the reference image");
             click("statisticsButton");
             verify(!controller.statisticsVisible, "Statistics toggle did not hide panels");
             click("statisticsButton");

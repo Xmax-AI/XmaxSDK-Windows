@@ -261,7 +261,27 @@ ApplicationWindow {
                                     anchors.fill: parent; radius: 22; visible: window.freeReferences.length > 0 && window.freeReferences[0].state !== "ready"; color: "#99000000"
                                     Text { anchors.centerIn: parent; text: window.freeReferences.length && window.freeReferences[0].state === "error" ? "Retry" : window.freeReferences.length ? Math.round((window.freeReferences[0].progress || 0) * 100) + "%" : ""; color: "white"; font.pixelSize: 10 }
                                 }
-                                ToolButton { x: 31; y: -4; width: 18; height: 18; text: "×"; onClicked: controller.removeFreeReference(); Accessible.name: "Remove reference" }
+                                ToolButton {
+                                    id: removeReference
+                                    objectName: "removeReferenceButton"
+                                    x: 22; y: -12; width: 32; height: 32; padding: 0
+                                    hoverEnabled: true
+                                    background: Item {
+                                        Rectangle {
+                                            anchors.fill: parent; anchors.margins: 6
+                                            radius: width / 2
+                                            color: removeReference.down ? "#333333" : removeReference.hovered ? "#525252" : "#3d3d3d"
+                                            border.width: removeReference.visualFocus ? 1 : 0
+                                            border.color: "#2f46e2"
+                                        }
+                                    }
+                                    contentItem: Item {
+                                        Icon { anchors.centerIn: parent; width: 11; height: 11; kind: "close"; tint: "white" }
+                                    }
+                                    HoverHandler { cursorShape: Qt.PointingHandCursor }
+                                    onClicked: controller.removeFreeReference()
+                                    Accessible.name: "Remove reference"
+                                }
                             }
                             Pill { objectName: "submitButton"; glyph: "arrow"; width: 44; height: 44; primary: true; showsShadow: false; implicitWidth: 44; ToolTip.text: "Submit prompt"; enabled: window.freeReferences.length === 0 || window.freeReferences[0].state === "ready"; onClicked: controller.submitPrompt() }
                         }
