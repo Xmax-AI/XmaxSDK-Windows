@@ -8,6 +8,7 @@
 #include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QTest>
+#include <limits>
 
 class BehaviorTests : public QObject {
     Q_OBJECT
@@ -15,6 +16,58 @@ class BehaviorTests : public QObject {
     void init() {
         QSettings().remove("xmax.xlab.cameraId");
         QSettings().remove("xmax.xlab.videoMirrored");
+    }
+
+    void volumeChangesAreCoalescedAndKeepTheLatestValue() {
+        XLabController controller(true);
+        auto handles = std::make_shared<SdkHandles>();
+        const xmax_client_config config{sizeof(config), XMAX_ABI_VERSION, "test", "x2.1", 100};
+        QCOMPARE(xmax_client_create(&config, &handles->client), XMAX_OK);
+        QCOMPARE(xmax_realtime_create(handles->client, &handles->realtime), XMAX_OK);
+        controller.handles_ = handles;
+        controller.busy = true;
+
+        controller.setVolume(.1f);
+        controller.setVolume(.25f);
+        QVERIFY(!controller.volume_updating_);
+        QCOMPARE(controller.volume(), .25f);
+        controller.volume_ready_ = true;
+        controller.applyVolume();
+        QVERIFY(controller.volume_updating_);
+        for (int value = 0; value <= 100; ++value)
+            controller.setVolume(value / 100.f);
+        controller.setVolume(.75f);
+        controller.setVolume(std::numeric_limits<float>::quiet_NaN());
+        controller.setVolume(-1);
+        controller.setVolume(2);
+        QCOMPARE(controller.volume(), .75f);
+
+        QTRY_VERIFY_WITH_TIMEOUT(!controller.volume_updating_, 2000);
+        float applied = -1;
+        QCOMPARE(xmax_realtime_get_remote_volume(handles->realtime, &applied), XMAX_OK);
+        QCOMPARE(applied, .75f);
+        QVERIFY(controller.error.isEmpty());
+        controller.busy = false;
+        controller.stop();
+        QTRY_VERIFY_WITH_TIMEOUT(!controller.closing, 2000);
+    }
+
+    void stoppingIgnoresPendingVolumeCompletion() {
+        XLabController controller(true);
+        auto handles = std::make_shared<SdkHandles>();
+        const xmax_client_config config{sizeof(config), XMAX_ABI_VERSION, "test", "x2.1", 100};
+        QCOMPARE(xmax_client_create(&config, &handles->client), XMAX_OK);
+        QCOMPARE(xmax_realtime_create(handles->client, &handles->realtime), XMAX_OK);
+        controller.handles_ = handles;
+        controller.volume_ready_ = true;
+        controller.setVolume(.6f);
+        QVERIFY(controller.volume_updating_);
+        controller.stop();
+        QVERIFY(!controller.volume_updating_);
+        QVERIFY(!controller.volume_ready_);
+        QTRY_VERIFY_WITH_TIMEOUT(!controller.closing, 2000);
+        QVERIFY(!controller.handles_ && !controller.busy);
+        QVERIFY(controller.error.isEmpty());
     }
 
     void displayMirrorIsRememberedWithoutStartingCapture() {

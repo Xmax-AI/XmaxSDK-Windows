@@ -100,6 +100,7 @@ ApplicationWindow {
                     }
                     Pill {
                         id: volumeButton; glyph: controller.volume > 0 ? "volume" : "muted"; ToolTip.text: "Remote volume"
+                        secondaryForeground: true
                         onClicked: volumePopup.open()
                         Popup {
                             id: volumePopup; x: parent.width - width; y: parent.height + 8; width: 240; padding: 14

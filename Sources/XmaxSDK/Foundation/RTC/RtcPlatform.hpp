@@ -117,9 +117,12 @@ class Rtc {
     ) = 0;
 
     /**
-     * Applies a remote playback volume in [0, 1].
+     * Retains result-user playback volume and applies it when remote audio is available.
      *
      * @param[in] value A finite volume in [0, 1]; 0 mutes playback.
+     *
+     * @note May run concurrently with room join and leave. Native resources and the retained setting
+     * must remain protected without holding a lock across connection or first-frame waits.
      */
     virtual void volume(
         float value

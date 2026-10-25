@@ -2,6 +2,8 @@
 #include "Foundation/Media/FrameConverter.hpp"
 #include "Stream/Quality/QualityController.hpp"
 #include "TestSupport.hpp"
+#include <future>
+#include <limits>
 #include <iostream>
 struct CaptureProbe {
     std::atomic<int> starts{0}, stops{0};
@@ -218,6 +220,238 @@ static void playback_policy_before_join() {
     CHECK(sdk.volume() == .25f);
     sdk.disconnect(true);
 }
+
+/**
+ * Checks that playback volume completes while RTC join remains blocked.
+ */
+static void playback_volume_during_startup() {
+    auto http = std::make_shared<FakeHttp>();
+    auto rtc = std::make_shared<FakeRtc>();
+    Config config;
+    config.key = "test";
+    XmaxRealtimeManager sdk(std::make_shared<ApiService>(config, http), [rtc] { return rtc; });
+    sdk.prepare({1920, 1024, 30});
+    rtc->block_join = true;
+
+    auto startup = std::async(std::launch::async, [&] { sdk.start("test", "", false, false); });
+    const auto deadline = Clock::now() + std::chrono::seconds(5);
+    while (!rtc->joins && Clock::now() < deadline)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    const bool joining = rtc->joins != 0;
+    if (!joining) {
+        rtc->block_join = false;
+        startup.get();
+        CHECK(joining);
+    }
+
+    std::promise<void> submitted;
+    auto volume = std::async(std::launch::async, [&] {
+        submitted.set_value();
+        sdk.volume(.75f);
+        return sdk.volume();
+    });
+    submitted.get_future().wait();
+    const auto pending = volume.wait_for(std::chrono::seconds(1));
+    rtc->block_join = false;
+    startup.get();
+    const auto retained = volume.get();
+
+    CHECK(pending == std::future_status::ready && retained == .75f);
+    CHECK(sdk.volume() == .75f && rtc->remote_volume == .75f);
+    CHECK(sdk.state_snapshot().state == XMAX_GENERATING);
+    xmax_event event{};
+    while (sdk.poll(event))
+        CHECK(event.type != XMAX_EVENT_ERROR);
+    sdk.disconnect(true);
+}
+
+/**
+ * Checks that result-frame waiting does not block reading or changing playback volume.
+ */
+static void playback_volume_during_first_frame_wait() {
+    /**
+     * An adapter whose first generated frame is released explicitly by the test.
+     */
+    struct Probe : FakeRtc {
+        /**
+         * Whether result-frame delivery remains suspended.
+         */
+        std::atomic<bool> held{true};
+
+        /**
+         * Whether generation has reached the result-frame wait.
+         */
+        std::atomic<bool> waiting{false};
+
+        /**
+         * Waits for explicit release while preserving cancellation and keepalive behavior.
+         *
+         * @param[in] cancel The operation cancellation predicate.
+         * @param[in] keepalive The room and server maintenance callback.
+         */
+        void wait_remote(
+            const Cancel& cancel,
+            const std::function<void()>& keepalive
+        ) override {
+            waiting = true;
+            while (held && !cancel()) {
+                keepalive();
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+            FakeRtc::wait_remote(cancel, keepalive);
+        }
+    };
+    auto http = std::make_shared<FakeHttp>();
+    auto rtc = std::make_shared<Probe>();
+    Config config;
+    config.key = "test";
+    XmaxRealtimeManager sdk(std::make_shared<ApiService>(config, http), [rtc] { return rtc; });
+    sdk.prepare({1920, 1024, 30});
+    auto startup = std::async(std::launch::async, [&] { sdk.start("test", "", false, false); });
+    const auto deadline = Clock::now() + std::chrono::seconds(5);
+    while (!rtc->waiting && Clock::now() < deadline)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    const bool waiting = rtc->waiting;
+    auto volume = std::async(std::launch::async, [&] {
+        sdk.volume(.4f);
+        return sdk.volume();
+    });
+    const auto completed = volume.wait_for(std::chrono::seconds(1));
+    rtc->held = false;
+    startup.get();
+    const auto retained = volume.get();
+
+    CHECK(waiting && completed == std::future_status::ready && retained == .4f);
+    CHECK(rtc->remote_volume == .4f);
+    CHECK(sdk.state_snapshot().state == XMAX_GENERATING);
+    sdk.disconnect(true);
+}
+
+/**
+ * Checks that callback draining detaches playback updates and that the next adapter receives the latest value.
+ */
+static void playback_volume_during_room_release() {
+    /**
+     * An adapter whose callback drain is released explicitly by the test.
+     */
+    struct Probe : FakeRtc {
+        /**
+         * Whether room shutdown has entered callback draining.
+         */
+        std::atomic<bool> draining{false};
+
+        /**
+         * Whether callback draining remains suspended.
+         */
+        std::atomic<bool> held{true};
+
+        /**
+         * The number of volume configurations received by this adapter.
+         */
+        std::atomic<int> volume_calls{0};
+
+        /**
+         * Records a playback configuration.
+         *
+         * @param[in] value The normalized playback volume.
+         */
+        void volume(
+            float value
+        ) override {
+            ++volume_calls;
+            FakeRtc::volume(value);
+        }
+
+        /**
+         * Blocks callback draining until explicitly released.
+         */
+        void leave() noexcept override {
+            draining = true;
+            while (held)
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            FakeRtc::leave();
+        }
+    };
+    auto first = std::make_shared<Probe>();
+    auto second = std::make_shared<FakeRtc>();
+    int allocations = 0;
+    StreamController stream([&]() -> std::shared_ptr<Rtc> { return allocations++ == 0 ? first : second; });
+    stream.volume(.25f);
+    stream.allocate();
+    stream.join({"a", "r", "u", "t", "b"}, {1920, 1024, 30}, false, {}, [] { return false; });
+    const auto previous_calls = first->volume_calls.load();
+    auto stop = std::async(std::launch::async, [&] { stream.stop(); });
+    const auto deadline = Clock::now() + std::chrono::seconds(5);
+    while (!first->draining && Clock::now() < deadline)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    const bool draining = first->draining;
+    auto volume = std::async(std::launch::async, [&] {
+        stream.volume(.55f);
+        return stream.volume();
+    });
+    const auto completed = volume.wait_for(std::chrono::seconds(1));
+    first->held = false;
+    stop.get();
+    const auto retained = volume.get();
+
+    CHECK(draining && completed == std::future_status::ready && retained == .55f);
+    CHECK(first->volume_calls == previous_calls && first->remote_volume == .25f);
+    stream.allocate();
+    stream.join({"a", "r", "u", "t", "b"}, {1920, 1024, 30}, false, {}, [] { return false; });
+    CHECK(second->remote_volume == .55f);
+    stream.volume(.8f);
+    CHECK(second->remote_volume == .8f && first->volume_calls == previous_calls);
+    stream.stop();
+}
+
+/**
+ * Checks volume validation and native failures without replacing the active generation or last value.
+ */
+static void playback_volume_failure_preserves_generation() {
+    /**
+     * A native playback adapter that can reject volume updates.
+     */
+    struct Probe : FakeRtc {
+        /**
+         * Whether native volume updates should fail.
+         */
+        bool reject = false;
+
+        /**
+         * Applies playback volume unless the native adapter is configured to reject it.
+         *
+         * @param[in] value The normalized playback volume.
+         */
+        void volume(
+            float value
+        ) override {
+            require(!reject, XMAX_RTC_ERROR, "Native volume update rejected");
+            FakeRtc::volume(value);
+        }
+    };
+    auto http = std::make_shared<FakeHttp>();
+    auto rtc = std::make_shared<Probe>();
+    Config config;
+    config.key = "test";
+    XmaxRealtimeManager sdk(std::make_shared<ApiService>(config, http), [rtc] { return rtc; });
+    sdk.prepare({1920, 1024, 30});
+    sdk.start("test", "", false, false);
+    sdk.volume(.25f);
+
+    for (const auto invalid : {-.1f, 1.1f, std::numeric_limits<float>::quiet_NaN()})
+        expect_error(XMAX_INVALID_ARGUMENT, [&] { sdk.volume(invalid); });
+    rtc->reject = true;
+    expect_error(XMAX_RTC_ERROR, [&] { sdk.volume(.75f); });
+    CHECK(sdk.volume() == .25f && rtc->remote_volume == .25f);
+    CHECK(sdk.state_snapshot().state == XMAX_GENERATING);
+
+    rtc->reject = false;
+    sdk.volume(0);
+    CHECK(rtc->remote_volume == 0);
+    sdk.volume(1);
+    CHECK(rtc->remote_volume == 1);
+    sdk.disconnect(true);
+}
 static void long_signaling_keepalive() {
     auto http = std::make_shared<FakeHttp>();
     auto rtc = std::make_shared<FakeRtc>();
@@ -301,7 +535,11 @@ int main() {
              {"async exception containment", async_exception_boundary},
              {"actual publication timing and stale callback isolation", publication_timing},
              {"dual keepalive during long signaling", long_signaling_keepalive},
-             {"playback policy applied before subscription", playback_policy_before_join}}) {
+             {"playback policy applied before subscription", playback_policy_before_join},
+             {"playback volume independent of startup", playback_volume_during_startup},
+             {"playback volume independent of result-frame waits", playback_volume_during_first_frame_wait},
+             {"playback volume independent of RTC callback draining", playback_volume_during_room_release},
+             {"playback volume failure preserves generation", playback_volume_failure_preserves_generation}}) {
         try {
             test.second();
             std::cout << "PASS " << test.first << '\n';

@@ -28,6 +28,13 @@ StreamController::~StreamController() {
  */
 void StreamController::allocate() {
     room_.allocate();
+
+    auto rtc = room_.retained_backend();
+    {
+        std::lock_guard<std::mutex> lock(playback_mutex_);
+        rtc->volume(volume_);
+        playback_rtc_.swap(rtc);
+    }
 }
 
 /**
@@ -74,13 +81,11 @@ void StreamController::join(
         }
     }
     quality_.reset_samples();
-    // Set playback policy before joining so result-user subscription starts at the correct volume.
     require(
         room_.backend() != nullptr,
         XMAX_INVALID_STATE,
         "Allocate an RTC backend before joining"
     );
-    room_.backend()->volume(volume_);
     room_.backend()->external_audio(external_audio_);
     room_.join(
         connection,
@@ -243,6 +248,13 @@ void StreamController::stop_generation(
  * Disconnects media-thread RTC access, leaves the room, and clears signaling state.
  */
 void StreamController::stop() noexcept {
+    std::shared_ptr<Rtc> retired_playback;
+    {
+        std::lock_guard<std::mutex> lock(playback_mutex_);
+        retired_playback = std::move(playback_rtc_);
+    }
+    retired_playback.reset();
+
     if (room_.joined() && !room_.task.empty()) {
         try {
             room_.send(
@@ -285,8 +297,9 @@ void StreamController::volume(
         XMAX_INVALID_ARGUMENT,
         "Volume must be between 0 and 1"
     );
-    if (room_.backend())
-        room_.backend()->volume(value);
+    std::lock_guard<std::mutex> lock(playback_mutex_);
+    if (playback_rtc_)
+        playback_rtc_->volume(value);
     volume_ = value;
 }
 

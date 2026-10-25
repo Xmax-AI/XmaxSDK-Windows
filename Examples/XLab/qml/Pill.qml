@@ -8,6 +8,7 @@ Button {
     property bool accent: false
     property bool primary: false
     property bool recordingStyle: false
+    property bool secondaryForeground: false
     property bool showsShadow: true
     property string glyph: ""
     property bool trailingGlyph: false
@@ -67,7 +68,7 @@ Button {
             font.family: control.font.family
             font.pixelSize: control.labelSize
             font.weight: control.primary || control.destructive || control.recordingStyle ? Font.DemiBold : Font.Normal
-            color: control.primary ? "white" : control.destructive ? "#dc2626" : control.accent ? "#2f46e2" : control.recordingStyle ? (control.hovered && control.enabled ? "#111318" : "#8b919d") : control.passive ? "#6b7380" : "#111318"
+            color: control.primary ? "white" : control.destructive ? "#dc2626" : control.accent ? "#2f46e2" : control.recordingStyle || control.secondaryForeground ? (control.hovered && control.enabled ? "#111318" : "#8b919d") : control.passive ? "#6b7380" : "#111318"
         }
       }
     }

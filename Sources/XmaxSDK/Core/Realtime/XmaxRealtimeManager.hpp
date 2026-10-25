@@ -288,6 +288,8 @@ class XmaxRealtimeManager {
      * Sets and retains the remote playback volume for the current or next connection.
      *
      * @param[in] value A finite volume in [0, 1]; 0 mutes playback.
+     *
+     * @note Retains playback configuration independently of connection and generation operations.
      */
     void volume(
         float value

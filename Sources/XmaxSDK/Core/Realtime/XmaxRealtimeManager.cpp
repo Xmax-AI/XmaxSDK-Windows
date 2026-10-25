@@ -883,9 +883,7 @@ xmax_video_format XmaxRealtimeManager::format() {
  * @return The playback volume in [0, 1], initially 0.
  */
 float XmaxRealtimeManager::volume() {
-    float result = 0;
-    lifecycle_.sync([this, &result] { result = stream_.volume(); });
-    return result;
+    return stream_.volume();
 }
 
 /**
@@ -1140,14 +1138,13 @@ void XmaxRealtimeManager::keepalive(
  * Sets and retains the remote playback volume for the current or next connection.
  *
  * @param[in] value A finite volume in [0, 1]; 0 mutes playback.
+ *
+ * @note Retains playback configuration independently of connection and generation operations.
  */
 void XmaxRealtimeManager::volume(
     float value
 ) {
-    lifecycle_.run(
-        OperationKind::Configuration,
-        [this, value](const Lifecycle::Token&) { stream_.volume(value); }
-    );
+    stream_.volume(value);
 }
 
 /**

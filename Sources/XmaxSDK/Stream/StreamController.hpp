@@ -14,12 +14,13 @@
 #include "Stream/Room/RoomEvent.hpp"
 #include "Stream/Room/RoomController.hpp"
 #include "Stream/Encoding/EncodingController.hpp"
+#include <mutex>
 
 namespace xmax::detail {
 
 /**
  * Manages RTC publication, generation signaling, and directional quality; lifecycle work is serialized and
- * frames may arrive on media threads.
+ * frames may arrive on media threads. Playback volume is synchronized independently of lifecycle work.
  */
 class StreamController {
 
@@ -163,6 +164,9 @@ class StreamController {
      * Sets and retains the remote playback volume for the current or next connection.
      *
      * @param[in] value A finite volume in [0, 1]; 0 mutes playback.
+     *
+     * @note Safe during connection, generation, and disconnect. Native adapters retain the value until
+     * result-user audio becomes available.
      */
     void volume(
         float value
@@ -174,6 +178,7 @@ class StreamController {
      * @return The playback volume in [0, 1], initially 0.
      */
     float volume() const {
+        std::lock_guard<std::mutex> lock(playback_mutex_);
         return volume_;
     }
 
@@ -335,6 +340,16 @@ class StreamController {
      * The remote playback volume in [0, 1] for the current or next connection.
      */
     float volume_ = 0;
+
+    /**
+     * Protects playback configuration and its adapter binding independently of lifecycle waits.
+     */
+    mutable std::mutex playback_mutex_;
+
+    /**
+     * The allocated playback adapter, detached before room leave starts draining native callbacks.
+     */
+    std::shared_ptr<Rtc> playback_rtc_;
 
     /**
      * The uplink and downlink quality policies and adaptation setting.

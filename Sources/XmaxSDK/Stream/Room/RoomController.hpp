@@ -137,6 +137,16 @@ class RoomController {
     }
 
     /**
+     * Retains the allocated adapter for independently synchronized playback configuration.
+     * Call on the lifecycle thread; the retained adapter must protect its native resources during leave.
+     *
+     * @return A shared adapter snapshot, or an empty reference before allocation or after leave.
+     */
+    std::shared_ptr<Rtc> retained_backend() const {
+        return rtc_;
+    }
+
+    /**
      * Publishes frames through an atomic room snapshot from a media thread.
      *
      * @param[in] frame The video frame, valid throughout the call.

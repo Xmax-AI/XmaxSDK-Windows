@@ -14,6 +14,7 @@
 #include <IAgoraMediaEngine.h>
 #include <IAgoraRtcEngine.h>
 #include <algorithm>
+#include <cmath>
 #include <condition_variable>
 #include <cstring>
 #include <mutex>
@@ -135,7 +136,7 @@ class AgoraRtc final : public Rtc,
     bool first_frame_ = false;
 
     /**
-     * The remote playback volume in [0, 1] for the current or next connection.
+     * The result-user playback volume in [0, 1], protected by the native engine mutex.
      */
     float volume_ = 0;
 
@@ -394,7 +395,7 @@ class AgoraRtc final : public Rtc,
             "setVideoEncoderConfiguration"
         );
         check_rtc(
-            engine_->adjustPlaybackSignalVolume(int(volume_ * 100)),
+            engine_->adjustPlaybackSignalVolume(100),
             "adjustPlaybackSignalVolume"
         );
 
@@ -598,7 +599,7 @@ class AgoraRtc final : public Rtc,
     }
 
     /**
-     * Updates remote volume for the current engine and future user joins.
+     * Retains result-user volume and updates playback when its remote account is available.
      *
      * @param[in] volume A finite volume in [0, 1]; 0 mutes playback.
      */
@@ -606,10 +607,11 @@ class AgoraRtc final : public Rtc,
         float volume
     ) override {
         std::lock_guard<std::mutex> lock(engine_mutex_);
-        if (engine_ && !stopping_)
+        const auto uid = bot_uid_.load();
+        if (uid && !stopping_ && engine_)
             check_rtc(
-                engine_->adjustPlaybackSignalVolume(int(volume * 100)),
-                "adjustPlaybackSignalVolume"
+                engine_->adjustUserPlaybackSignalVolume(uid, int(std::lround(volume * 100))),
+                "adjustUserPlaybackSignalVolume"
             );
         volume_ = volume;
     }
@@ -817,7 +819,12 @@ class AgoraRtc final : public Rtc,
     ) override {
         if (stopping_ || uid != bot_uid_)
             return;
-        bot_uid_ = 0;
+        {
+            std::lock_guard<std::mutex> lock(engine_mutex_);
+            if (uid != bot_uid_)
+                return;
+            bot_uid_ = 0;
+        }
         if (callbacks_.statistics) {
             xmax_video_statistics value{};
             value.struct_size = sizeof(value);
@@ -827,7 +834,7 @@ class AgoraRtc final : public Rtc,
     }
 
     /**
-     * Resolves the service result account to a UID for frame and statistics filtering.
+     * Resolves the result account, applies its retained volume, and enables its audio subscription.
      *
      * @param[in] uid The native numeric RTC user identifier used to identify and filter the result stream.
      * @param[in] info The native RTC user information linking an account to its UID.
@@ -839,15 +846,23 @@ class AgoraRtc final : public Rtc,
         if (stopping_ || bot_ != info.userAccount)
             return;
 
-        bot_uid_ = uid;
+        try {
+            std::lock_guard<std::mutex> lock(engine_mutex_);
+            if (!engine_ || stopping_)
+                return;
 
-        std::lock_guard<std::mutex> lock(engine_mutex_);
-
-        if (engine_ && !stopping_)
-            engine_->muteRemoteAudioStream(
-                uid,
-                false
+            check_rtc(
+                engine_->adjustUserPlaybackSignalVolume(uid, int(std::lround(volume_ * 100))),
+                "adjustUserPlaybackSignalVolume"
             );
+            bot_uid_ = uid;
+            check_rtc(
+                engine_->muteRemoteAudioStream(uid, false),
+                "muteRemoteAudioStream"
+            );
+        } catch (const Error& error) {
+            failure(error.what(), error.code);
+        }
     }
 
     /**

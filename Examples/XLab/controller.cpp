@@ -278,6 +278,8 @@ void XLabController::start() {
         return;
     }
     handles_ = handles;
+    volume_updating_ = false;
+    volume_ready_ = false;
     ++lifecycle_;
     ++intent_;
     busy = true;
@@ -307,6 +309,7 @@ void XLabController::start() {
                 stop();
                 return;
             }
+            volume_ready_ = true;
             beginGeneration();
         });
 }
@@ -315,6 +318,11 @@ void XLabController::beginGeneration() {
     const auto handles = handles_;
     const auto reference = presets_.first().toMap();
     const bool mic = microphone;
+    error = sdkError(xmax_realtime_set_remote_volume(handles->realtime, volume_));
+    if (!error.isEmpty()) {
+        stop();
+        return;
+    }
     selected = reference["id"].toString();
     async(
         [handles, reference, mic] {
@@ -343,6 +351,8 @@ void XLabController::stop() {
         return;
     }
     ++lifecycle_;
+    volume_updating_ = false;
+    volume_ready_ = false;
     ++intent_;
     active = false;
     remoteReady = false;
@@ -584,19 +594,29 @@ void XLabController::setVolume(float value) {
         return;
     volume_ = value;
     emit changed();
-    if (handles_) {
-        const auto h = handles_;
-        const auto epoch = lifecycle_;
-        async([h, value] { return sdkError(xmax_realtime_set_remote_volume(h->realtime, value)); },
-              [this, epoch](QString message) {
-                  if (epoch != lifecycle_)
-                      return;
-                  if (!message.isEmpty()) {
-                      error = message;
-                      emit changed();
-                  }
-              });
-    }
+    applyVolume();
+}
+void XLabController::applyVolume() {
+    if (!handles_ || !volume_ready_ || closing || volume_updating_)
+        return;
+    volume_updating_ = true;
+    const auto handles = handles_;
+    const auto epoch = lifecycle_;
+    const auto value = volume_;
+    async([handles, value] { return sdkError(xmax_realtime_set_remote_volume(handles->realtime, value)); },
+          [this, epoch, value](QString message) {
+              if (epoch != lifecycle_)
+                  return;
+              volume_updating_ = false;
+              if (value != volume_) {
+                  applyVolume();
+                  return;
+              }
+              if (!message.isEmpty()) {
+                  error = message;
+                  emit changed();
+              }
+          });
 }
 void XLabController::tick() {
     if (!handles_)

@@ -375,6 +375,10 @@ class realtime : public detail::owner<xmax_realtime, xmax_realtime_destroy> {
      *
      * @param[in] value A finite volume in [0, 1]; 0 mutes playback.
      *
+     * @note Independent of connection and generation operations. The setting is retained before
+     * result-user audio is available and applied before audio subscription starts. Set after preparing the
+     * local stream to override its initial playback volume.
+     *
      * @see xmax_realtime_set_remote_volume
      */
     void volume(

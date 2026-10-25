@@ -2279,7 +2279,7 @@ XMAX_API xmax_result XMAX_CALL xmax_realtime_get_format(
  *
  * @return XMAX_OK on success, or a negative error code on failure. Use xmax_last_error for details.
  *
- * @note The initial volume is 0. This query may wait for the serialized lifecycle queue.
+ * @note The initial volume is 0. This query does not wait for connection or generation operations.
  */
 XMAX_API xmax_result XMAX_CALL xmax_realtime_get_remote_volume(
     xmax_realtime realtime,
@@ -2495,6 +2495,10 @@ xmax_realtime_push_video_frame(
  * @param[in] volume A finite value in [0, 1]; 0 mutes playback.
  *
  * @return XMAX_OK on success, or a negative error code on failure. Use xmax_last_error for details.
+ *
+ * @note Independent of connection and generation operations. The setting is retained before result-user
+ * audio is available and applied before audio subscription starts. Set after preparing the local stream
+ * to override its initial playback volume.
  */
 XMAX_API xmax_result XMAX_CALL xmax_realtime_set_remote_volume(
     xmax_realtime realtime,

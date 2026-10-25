@@ -147,6 +147,7 @@ class XLabController final : public QObject {
   private:
 #ifdef XLAB_TEST_SUPPORT
     friend class RecordingTests;
+    friend class BehaviorTests;
 #endif
     std::shared_ptr<RealtimeMediaRecorder> recording_, completed_recording_;
     QFuture<QString> recording_registration_;
@@ -157,6 +158,7 @@ class XLabController final : public QObject {
     void checkCloseReady();
     QString key_, model_ = "x2.1", mode_ = "charx";
     float volume_ = 0;
+    bool volume_updating_ = false, volume_ready_ = false;
     QVariantList presets_, uploads_;
     QVariantList cameras_;
     QString camera_id_;
@@ -173,6 +175,7 @@ class XLabController final : public QObject {
     void tick();
     void beginGeneration();
     void applyPending();
+    void applyVolume();
     QFuture<QString> async(std::function<QString()> work, std::function<void(QString)> done);
     void patchUpload(const QString&, const QVariantMap&);
     void upload(const QString& id, const QUrl&, const QString& mode, quint64 intent);
