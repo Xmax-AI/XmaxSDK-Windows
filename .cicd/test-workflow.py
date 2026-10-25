@@ -4,6 +4,7 @@ import io
 import json
 import os
 from pathlib import Path
+import runpy
 import struct
 import subprocess
 import tempfile
@@ -12,6 +13,27 @@ from unittest.mock import patch
 import zipfile
 import artifacts
 import workflow
+
+class SourceContractTests(unittest.TestCase):
+    def test_implementation_references_public_contract(self):
+        checks = runpy.run_path(str(Path(__file__).with_name('check-source.py')))
+        with tempfile.TemporaryDirectory(prefix='xmax-comment-tests-') as directory:
+            root = Path(directory)
+            header = root/'include/xmax/xmax.h'
+            implementation = root/'Sources/XmaxSDK/CAPI/xmax_c_api.cpp'
+            header.parent.mkdir(parents=True)
+            implementation.parent.mkdir(parents=True)
+            header.write_text('/**\n * Returns the version.\n *\n * @return Static UTF-8 text.\n */\n'
+                              'XMAX_API const char* XMAX_CALL xmax_version(void);\n')
+            implementation.write_text('/**\n * Returns the version.\n *\n * @see xmax_version\n */\n'
+                                      'const char* XMAX_CALL xmax_version(void) { return "0.2.0"; }\n')
+            checks['check_c_api_comments'](root)
+
+            # Copying the declaration contract into the definition must fail the CI gate.
+            implementation.write_text(header.read_text().replace('XMAX_API ', '').replace(
+                'xmax_version(void);', 'xmax_version(void) { return "0.2.0"; }'))
+            with self.assertRaisesRegex(AssertionError, 'xmax_version'):
+                checks['check_c_api_comments'](root)
 
 class Fixture:
     def __init__(self):
@@ -56,9 +78,10 @@ class GitFlowTests(unittest.TestCase):
     def test_prepare_rejects_dirty_source(self):
         (self.f.root/'untracked').write_text('x')
         with self.assertRaisesRegex(RuntimeError,'clean'): workflow.prepare('0.3.0',self.f.root)
-    def test_prepare_rejects_main(self):
+    def test_prepare_allows_main(self):
         self.f.git('switch','main')
-        with self.assertRaisesRegex(RuntimeError,'feature'): workflow.prepare('0.3.0',self.f.root)
+        workflow.prepare('0.3.0',self.f.root)
+        self.assertEqual((self.f.root/'VERSION').read_text(),'0.3.0\n')
     def test_prepare_rejects_existing_local_tag(self):
         self.f.git('tag','0.3.0')
         with self.assertRaisesRegex(RuntimeError,'exists'): workflow.prepare('0.3.0',self.f.root)
@@ -95,6 +118,16 @@ class GitFlowTests(unittest.TestCase):
         with patch.object(workflow,'ROOT',self.f.root),patch.object(workflow,'verify',side_effect=RuntimeError('validation failed')):
             with self.assertRaisesRegex(RuntimeError,'validation failed'):workflow.merge(self.f.root)
         self.assertEqual(old,self.f.git('ls-remote','origin','refs/heads/main'))
+    def test_merge_uses_local_validation_without_github_checks(self):
+        with patch.object(workflow,'ROOT',self.f.root), patch.object(workflow,'verify') as validation, \
+                patch.object(workflow.subprocess,'check_output',side_effect=AssertionError('Unexpected remote API call')):
+            workflow.merge(self.f.root)
+        validation.assert_called_once_with(self.f.root/'.build/integration')
+        self.assertEqual(self.f.git('rev-parse','main'),self.f.head)
+    def test_local_release_preflight_needs_no_remote_or_tag(self):
+        with patch.object(workflow,'gh_json',side_effect=AssertionError('Remote API must not run')), \
+                patch.object(workflow,'origin',side_effect=AssertionError('Remote is unnecessary')):
+            self.assertEqual(workflow.release_preflight('0.2.0',self.f.root)[0],self.f.head)
     def release_context(self, *, existing=False, network=False, tag_mismatch=False):
         self.f.git('switch','main');self.f.git('tag','0.2.0')
         head=self.f.git('rev-parse','HEAD')
@@ -112,19 +145,19 @@ class GitFlowTests(unittest.TestCase):
         return context,head
     def test_release_preflight_success(self):
         context,head=self.release_context()
-        with context:self.assertEqual(workflow.release_preflight('0.2.0',self.f.root)[0],head)
+        with context:self.assertEqual(workflow.release_preflight('0.2.0',self.f.root,remote=True)[0],head)
     def test_release_rejects_existing_release(self):
         context,_=self.release_context(existing=True)
         with context:
-            with self.assertRaisesRegex(RuntimeError,'already exists'):workflow.release_preflight('0.2.0',self.f.root)
+            with self.assertRaisesRegex(RuntimeError,'already exists'):workflow.release_preflight('0.2.0',self.f.root,remote=True)
     def test_release_network_error_is_not_treated_as_missing_release(self):
         context,_=self.release_context(network=True)
         with context:
-            with self.assertRaisesRegex(RuntimeError,'Unable to check'):workflow.release_preflight('0.2.0',self.f.root)
+            with self.assertRaisesRegex(RuntimeError,'Unable to check'):workflow.release_preflight('0.2.0',self.f.root,remote=True)
     def test_release_rejects_tag_mismatch(self):
         context,_=self.release_context(tag_mismatch=True)
         with context:
-            with self.assertRaisesRegex(RuntimeError,'tag differs'):workflow.release_preflight('0.2.0',self.f.root)
+            with self.assertRaisesRegex(RuntimeError,'tag differs'):workflow.release_preflight('0.2.0',self.f.root,remote=True)
     def test_release_rejects_incomplete_notes(self):
         context,_=self.release_context()
         with context:
@@ -132,20 +165,20 @@ class GitFlowTests(unittest.TestCase):
             self.f.git('add','.');self.f.git('commit','-m','incomplete notes')
             with patch.object(workflow,'gh_json',return_value={'object':{'type':'commit','sha':self.f.git('rev-parse','HEAD')}}):
                 self.f.git('tag','-f','0.2.0')
-                with self.assertRaisesRegex(RuntimeError,'Notes'):workflow.release_preflight('0.2.0',self.f.root)
+                with self.assertRaisesRegex(RuntimeError,'Notes'):workflow.release_preflight('0.2.0',self.f.root,remote=True)
     def test_release_requires_main(self):
         with patch.object(workflow,'origin'):
-            with self.assertRaisesRegex(RuntimeError,'main'):workflow.release_preflight('0.2.0',self.f.root)
+            with self.assertRaisesRegex(RuntimeError,'main'):workflow.release_preflight('0.2.0',self.f.root,remote=True)
     def test_release_requires_correct_origin(self):
         with self.assertRaisesRegex(RuntimeError,'origin'): workflow.origin(self.f.root)
     def test_release_rejects_version_mismatch(self):
         self.f.git('switch','main')
         with patch.object(workflow,'origin'):
-            with self.assertRaisesRegex(RuntimeError,'VERSION'):workflow.release_preflight('0.3.0',self.f.root)
+            with self.assertRaisesRegex(RuntimeError,'VERSION'):workflow.release_preflight('0.3.0',self.f.root,remote=True)
     def test_release_rejects_stale_main(self):
         self.f.git('switch','main')
         with patch.object(workflow,'origin'),patch.object(workflow,'gh_json',return_value={'object':{'sha':'other'}}):
-            with self.assertRaisesRegex(RuntimeError,'remote main'):workflow.release_preflight('0.2.0',self.f.root)
+            with self.assertRaisesRegex(RuntimeError,'remote main'):workflow.release_preflight('0.2.0',self.f.root,remote=True)
 
 class ArtifactTests(unittest.TestCase):
     def setUp(self):
@@ -180,11 +213,76 @@ class ArtifactTests(unittest.TestCase):
             artifacts.write_manifest(stage,{'version':'0.2.0','commit':'abc','with_agora':True})
             archive=self.root/(stage.name+'.zip');artifacts.archive(stage,archive)
             report[kind+'_archive']=archive.name;report[kind+'_sha256']=artifacts.sha256(archive)
-        (self.root/'validation.json').write_text(json.dumps(report))
-        (self.root/'SHA256SUMS.txt').write_text(''.join(report[k+'_sha256']+'  '+report[k+'_archive']+'\n' for k in ['sdk','demo']))
+        report['managed_validated']=True
+        report['managed_assets']={}
+        for name in artifacts.managed_asset_names('0.2.0'):
+            path=self.root/name
+            with zipfile.ZipFile(path,'w') as archive:
+                if path.suffix=='.nupkg':
+                    package_id=name.removesuffix('.0.2.0.nupkg')
+                    archive.writestr(package_id+'.nuspec',f'<package><metadata><id>{package_id}</id><version>0.2.0</version></metadata></package>')
+                    archive.writestr(f'lib/net10.0/{package_id}.xml',f'<doc><assembly><name>{package_id}</name></assembly><members><member name="T:{package_id}.Fixture"><summary>Public API fixture.</summary></member></members></doc>')
+                if name=='Xmax.SDK.0.2.0.nupkg' or path.suffix=='.zip':
+                    archive.writestr('XmaxSDK.dll',(sdk/'bin/XmaxSDK.dll').read_bytes())
+                    archive.writestr('licenses/native/agora/NOTICE.txt','Dependency notice fixture')
+            report['managed_assets'][name]=artifacts.sha256(path)
+        self.save_report(report)
         return report
+    def save_report(self,report):
+        (self.root/'validation.json').write_text(json.dumps(report))
+        checksums={report[k+'_archive']:report[k+'_sha256'] for k in ['sdk','demo']}
+        checksums.update(report.get('managed_assets',{}))
+        (self.root/'SHA256SUMS.txt').write_text(''.join(digest+'  '+name+'\n' for name,digest in checksums.items()))
     def test_complete_release_assets(self):
-        self.assets();self.assertEqual(len(workflow.validate_release_assets(self.root,'0.2.0','abc')),4)
+        self.assets();self.assertEqual(len(workflow.validate_release_assets(self.root,'0.2.0','abc')),9)
+    def test_release_requires_managed_validation(self):
+        report=self.assets();report.pop('managed_validated');self.save_report(report)
+        with self.assertRaisesRegex(RuntimeError,'C#/WPF/WinUI'):workflow.validate_release_assets(self.root,'0.2.0','abc')
+    def test_release_rejects_missing_managed_asset(self):
+        report=self.assets();report['managed_assets'].pop('Xmax.SDK.WinUI.0.2.0.nupkg');self.save_report(report)
+        with self.assertRaisesRegex(RuntimeError,'incomplete'):workflow.validate_release_assets(self.root,'0.2.0','abc')
+    def test_release_rejects_modified_managed_archive(self):
+        report=self.assets();name='Xmax.SDK.0.2.0.nupkg'
+        with (self.root/name).open('ab') as output:output.write(b'changed')
+        with self.assertRaisesRegex(RuntimeError,'Managed archive changed'):workflow.validate_release_assets(self.root,'0.2.0','abc')
+    def test_release_rejects_managed_dll_from_another_build(self):
+        report=self.assets();name='XLabWinUI-0.2.0-win-x64.zip'
+        with zipfile.ZipFile(self.root/name,'w') as archive:
+            archive.writestr('XmaxSDK.dll',b'wrong native build')
+        report['managed_assets'][name]=artifacts.sha256(self.root/name);self.save_report(report)
+        with self.assertRaisesRegex(ValueError,'native DLL differs'):workflow.validate_release_assets(self.root,'0.2.0','abc')
+    def test_release_rejects_nuget_version_mismatch(self):
+        report=self.assets();name='Xmax.SDK.WinUI.0.2.0.nupkg'
+        with zipfile.ZipFile(self.root/name,'w') as archive:
+            archive.writestr('Xmax.SDK.WinUI.nuspec','<package><metadata><id>Xmax.SDK.WinUI</id><version>0.1.0</version></metadata></package>')
+        report['managed_assets'][name]=artifacts.sha256(self.root/name);self.save_report(report)
+        with self.assertRaisesRegex(ValueError,'NuGet identity'):workflow.validate_release_assets(self.root,'0.2.0','abc')
+    def test_release_rejects_missing_native_notices(self):
+        report=self.assets();name='XLabWpf-0.2.0-win-x64.zip'
+        with zipfile.ZipFile(self.root/name,'w') as archive:
+            archive.writestr('XmaxSDK.dll',(self.root/'XmaxSDK-0.2.0-windows-x64/bin/XmaxSDK.dll').read_bytes())
+        report['managed_assets'][name]=artifacts.sha256(self.root/name);self.save_report(report)
+        with self.assertRaisesRegex(ValueError,'dependency notices'):workflow.validate_release_assets(self.root,'0.2.0','abc')
+    def test_release_rejects_missing_xml_documentation(self):
+        report=self.assets();name='Xmax.SDK.WinUI.0.2.0.nupkg'
+        with zipfile.ZipFile(self.root/name,'w') as archive:
+            archive.writestr('Xmax.SDK.WinUI.nuspec','<package><metadata><id>Xmax.SDK.WinUI</id><version>0.2.0</version></metadata></package>')
+        report['managed_assets'][name]=artifacts.sha256(self.root/name);self.save_report(report)
+        with self.assertRaisesRegex(ValueError,'missing its XML'):workflow.validate_release_assets(self.root,'0.2.0','abc')
+    def test_release_rejects_empty_xml_documentation(self):
+        report=self.assets();name='Xmax.SDK.WinUI.0.2.0.nupkg'
+        with zipfile.ZipFile(self.root/name,'w') as archive:
+            archive.writestr('Xmax.SDK.WinUI.nuspec','<package><metadata><id>Xmax.SDK.WinUI</id><version>0.2.0</version></metadata></package>')
+            archive.writestr('lib/net10.0/Xmax.SDK.WinUI.xml','<doc><assembly><name>Xmax.SDK.WinUI</name></assembly><members/></doc>')
+        report['managed_assets'][name]=artifacts.sha256(self.root/name);self.save_report(report)
+        with self.assertRaisesRegex(ValueError,'empty or belongs'):workflow.validate_release_assets(self.root,'0.2.0','abc')
+    def test_release_rejects_xml_for_another_assembly(self):
+        report=self.assets();name='Xmax.SDK.WinUI.0.2.0.nupkg'
+        with zipfile.ZipFile(self.root/name,'w') as archive:
+            archive.writestr('Xmax.SDK.WinUI.nuspec','<package><metadata><id>Xmax.SDK.WinUI</id><version>0.2.0</version></metadata></package>')
+            archive.writestr('lib/net10.0/Xmax.SDK.WinUI.xml','<doc><assembly><name>Another.SDK</name></assembly><members><member name="T:Another.SDK"/></members></doc>')
+        report['managed_assets'][name]=artifacts.sha256(self.root/name);self.save_report(report)
+        with self.assertRaisesRegex(ValueError,'empty or belongs'):workflow.validate_release_assets(self.root,'0.2.0','abc')
     def test_release_rejects_modified_archive(self):
         report=self.assets()
         with (self.root/report['sdk_archive']).open('ab') as f:f.write(b'tampered')

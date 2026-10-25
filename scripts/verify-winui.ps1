@@ -27,7 +27,8 @@ try {
         Remove-Item $report -ErrorAction SilentlyContinue
         $process=Start-Process $app -ArgumentList $Mode -PassThru
         if (!$process.WaitForExit(150000)) { Stop-Process -Id $process.Id -Force; throw "$Mode timed out." }
-        if (!(Test-Path $report)) { throw "$Mode did not write a report; inspect $env:XMAX_SMOKE_OUTPUT." }
+        if (!(Test-Path $report)) { throw "$Mode exited with code $($process.ExitCode) before writing a report; inspect $env:XMAX_SMOKE_OUTPUT." }
+        if ($process.ExitCode -ne 0) { throw "$Mode exited with code $($process.ExitCode)." }
         $result=Get-Content $report -Raw | ConvertFrom-Json
         if (!$result.passed) { throw "$Mode failed: $($result.error)" }
         Write-Output "PASS WinUI $Mode"

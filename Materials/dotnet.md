@@ -8,7 +8,7 @@
 
 ## 构建与测试
 
-先按 installation.md 构建原生 SDK，再从仓库根目录执行：
+先按[安装说明](installation.md)构建原生 SDK，再从仓库根目录执行：
 
 ```powershell
 ./scripts/verify-dotnet.ps1 -NativeDirectory .build/windows/Sources/XmaxSDK/Release
@@ -50,6 +50,8 @@ await realtime.DisconnectAsync(); // 保留本地媒体和生成条件
 await realtime.CloseAsync();      // 释放本地媒体并清除条件；句柄仍可再次 prepare
 ```
 
+三个 SDK NuGet 包均附带与程序集配套的 XML API 文档；Visual Studio 可据此显示类型、参数和方法提示。公开接口注释及参数名称由 SDK 编译检查，包验证会检查 XML 文件是否存在且属于对应程序集。
+
 摄像头目标尺寸从 `GetModelInfo()` 查询，不应在界面硬编码。当前模型是 x2.1。缺少 RTC 的构建仍可预览和处理外部帧；开始生成会明确报告不支持。
 
 ## 线程、取消与所有权
@@ -69,6 +71,22 @@ await realtime.CloseAsync();      // 释放本地媒体并清除条件；句柄�
 
 `XmaxLogger.Configure` 配置进程级日志，`TryRead` 轮询脱敏后的记录。默认不启用日志。API Key 不应写入示例配置、测试输出或异常附加信息。
 
+## .NET XLab 共同操作
+
+WPF 与 WinUI 3 共用 `Examples/XLabShared` 的会话、预设、参考图上传、凭据和相机偏好，各自提供 UI 调度、计时器与缩略图适配。
+
+首页先选择摄像头并输入 API Key，再点击 Start Camera。多个设备且没有历史选择时须明确选择；保存的设备离线后不会自动切换。模型与摄像头目标尺寸遵循 SDK 的模型能力。界面的自拍显示镜像与上行发布分别设置，具体含义见[镜像说明](usage.md#镜像)。
+
+启动中首页显示 `Starting…`，收到连接或生成状态后进入会话页并开始计时；等待结果首帧时显示 `Generating…`。失败时显示错误，停止会话或关闭窗口会取消进行中的工作并异步释放资源。页面使用淡入与向上移动的过渡；系统关闭动画时直接呈现最终状态。
+
+会话页有 Character Swap、Virtual Try-On、Style Transfer 和 Free Prompt 四种模式。切换模式本身不触发生成，选择参考图或提交提示词才更新条件；快速选择会合并待处理的更新。各模式可上传本地参考图，Free Prompt 可移除参考图；上传中禁用提示词提交，失败可重试。缩略图缓存在本机。顶部提供统计、远端播放音量、计时和停止会话；录制能力见各框架指南。
+
+API Key 保存在当前 Windows 用户的凭据管理器中，重启恢复，清空输入后删除。`XMAX_API_KEY` 可临时覆盖保存值，不改写凭据。顶部按钮使用固定星号表示已设置，展开的编辑框显示完整内容。获取入口为 [Xmax Open Platform](https://platform.xmaxsi.com/api-keys)。两套 Demo 共用凭据与相机偏好，生成和上传使用国内服务。
+
+`-Preview` / `-PreviewSession` 仅检查界面，有明确预览标记，不打开摄像头或连接生成服务；参考图仍从 CDN 加载。启动脚本见 [WPF](wpf.md) 和 [WinUI 3](winui.md) 指南。
+
+验证脚本默认检查托管接口、布局与像素交付、页面交互，以及独立凭据条目的保存、恢复、修改和清空，不改写用户的真实凭据。`-Camera` 和 `-Live` 的含义见本文构建与测试部分；多设备时可通过 `XMAX_SMOKE_CAMERA` 指定设备名称片段。构建报告记录实际通过的检查，不在文档中固定测试数量。
+
 ## 维护与打包
 
 Interop 由公开头文件生成：
@@ -80,6 +98,4 @@ python .cicd/generate-dotnet-interop.py --check
 
 不要手工编辑 `.g.cs` 和 `native_abi_probe.c`。生成器覆盖所有 C ABI 导出及公共结构体；高层 C# API 维护在普通 `.cs` 文件。
 
-`verify-dotnet.ps1 -Package` 生成 `Xmax.SDK`、`Xmax.SDK.Wpf` NuGet 包和 WPF Demo ZIP，并在独立目录安装 NuGet 包验证原生库加载。版本来自根目录 VERSION。发布时使用 Release/RelWithDebInfo 原生 DLL 和匹配的 Agora 运行库，保留所有依赖许可证；该脚本只生成本地产物，不发布到 NuGet 或 GitHub。
-
-使用已解压的原生发布包的 `bin/` 作为 NativeDirectory 时，会自动把相邻的 `licenses/` 纳入托管包和 Demo。使用其他开发目录打包时，可用 `-DependencyNoticesDirectory` 指定原生依赖的许可证目录。
+托管包、Demo ZIP 的构建命令、候选包内容和发布渠道统一见 [CI/CD 的托管打包说明](../.cicd/README.md#托管打包)。这些工具生成本地产物，不会自动发布到 NuGet 或 GitHub。

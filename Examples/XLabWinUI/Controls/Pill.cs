@@ -16,7 +16,7 @@ internal sealed class Pill : Button
     private readonly StackPanel body = new() { Orientation = Orientation.Horizontal, Spacing = 8 };
     private readonly Glyph icon = new() { Width = 16, Height = 16, VerticalAlignment = VerticalAlignment.Center };
     private readonly TextBlock label = Theme.Text();
-    private readonly ProgressRing progress = new() { Width = 14, Height = 14, MinWidth = 14, MinHeight = 14, Visibility = Visibility.Collapsed };
+    private readonly LoadingIndicator progress = new();
     internal bool IsLoading { get; set; }
     internal double? IconSize { get; set; }
     private readonly Glyph chevron = new() { Kind = "chevron", Width = 12, Height = 12, VerticalAlignment = VerticalAlignment.Center, Visibility = Visibility.Collapsed };

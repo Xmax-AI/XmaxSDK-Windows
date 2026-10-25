@@ -7,6 +7,8 @@ param(
 )
 $ErrorActionPreference='Stop'
 $repo=Split-Path -Parent $PSScriptRoot
+$NativeDirectory=[IO.Path]::GetFullPath($NativeDirectory)
+if (!(Test-Path (Join-Path $NativeDirectory 'XmaxSDK.dll'))) { throw 'Missing native SDK.' }
 $version=(Get-Content "$repo/VERSION" -Raw).Trim()
 $output=Join-Path $BuildRoot 'packages'
 $properties=@('-p:Platform=x64',"-p:XmaxDotNetBuildRoot=$($BuildRoot.Replace('\','/'))/","-p:XmaxNativeDir=$NativeDirectory")
@@ -14,7 +16,14 @@ if (!$DependencyNoticesDirectory) {
     $candidate=Join-Path (Split-Path $NativeDirectory) 'licenses'
     if (Test-Path $candidate) { $DependencyNoticesDirectory=$candidate }
 }
-if ($DependencyNoticesDirectory) { $properties+="-p:XmaxNativeNoticesDir=$DependencyNoticesDirectory" }
+if ((Test-Path (Join-Path $NativeDirectory 'agora_rtc_sdk.dll')) -and !$DependencyNoticesDirectory) {
+    throw 'Agora dependency notices are required. Use an extracted SDK package or provide -DependencyNoticesDirectory.'
+}
+if ($DependencyNoticesDirectory) {
+    $DependencyNoticesDirectory=[IO.Path]::GetFullPath($DependencyNoticesDirectory)
+    if (!(Test-Path $DependencyNoticesDirectory -PathType Container)) { throw 'Dependency notices directory does not exist.' }
+    $properties+="-p:XmaxNativeNoticesDir=$DependencyNoticesDirectory"
+}
 function Invoke-Checked([string[]]$Arguments) { & $DotNet @Arguments; if ($LASTEXITCODE -ne 0) { throw 'WinUI packaging command failed.' } }
 New-Item -ItemType Directory -Force $output | Out-Null
 Invoke-Checked (@('pack',"$repo/Sources/XmaxSDK.Net",'-c','Release','-o',$output)+$properties)

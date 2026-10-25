@@ -19,7 +19,9 @@ auto storage = client.create_storage();
 
 `XMAX_CAP_RTC` 表示构建包含 RTC 后端；`XMAX_CAP_CAMERA` 表示提供原生采集实现，不保证设备存在或权限已授予；`XMAX_CAP_NATIVE_WINDOW` 表示 Windows HWND 显示实现；`XMAX_CAP_TRAJECTORY` 表示提供坐标映射、任务轨迹信令和效果数据查询。客户端可以在子对象创建后销毁，Realtime / Storage 仍拥有所需配置和传输对象。
 
-模型由实时配置选择，服务环境由全局配置选择；当前仅支持 `xmax::RealtimeModel::x2_1`，服务端模型标识为 `x2.1`。`x2.1` 支持五组分辨率，模型能力可通过 `xmax::client::model_info(xmax::RealtimeModel::x2_1)` 查询。新入口中，海外通用 API 使用 `api.xmax.cloud`，实时会话使用 `api.xmax.ai`。字符串配置和 C ABI 入口均仅接受 `x2.1`；国内外服务通过环境配置选择。
+模型由实时配置选择，服务环境由全局配置选择；当前仅支持 `xmax::RealtimeModel::x2_1`，服务端模型标识为 `x2.1`。模型能力可通过 `xmax::client::model_info(xmax::RealtimeModel::x2_1)` 查询。新入口中，海外通用 API 使用 `api.xmax.cloud`，实时会话使用 `api.xmax.ai`。字符串配置和 C ABI 入口均仅接受 `x2.1`；国内外服务通过环境配置选择。
+
+SDK 当前采用 CPU 帧路径；Windows 原生窗口使用 GDI 呈现，不提供 D3D11 纹理零拷贝。媒体输入以摄像头和宿主提交的帧为主，不内置图片或视频文件解码，也不提供远端插帧。上传文件与实时媒体输入是不同接口。
 
 ## SDK 摄像头输入
 
@@ -31,11 +33,15 @@ realtime.prepare_camera("", {1920, 1080, 30}, false);
 
 Windows 使用 Media Foundation；Mac 开发构建使用 AVFoundation。SDK 保留设备实际采集帧的尺寸与像素格式，不对采集帧进行 CPU 缩放、裁剪或补黑边；RTC 根据编码配置处理比例、分辨率和编码。`prepare_camera` 等到第一张真实帧后进入 `ready`，不创建云端 Session。宿主负责其应用的系统权限声明；Mac 应用需要 `NSCameraUsageDescription`，使用麦克风时还需要对应权限声明。
 
-Qt Demo 对齐 macOS XmaxCamera，在启动页右上角提供带摄像头图标、设备名和下拉箭头的胶囊按钮。弹出列表显示当前设备勾选，底部提供 `Refresh Cameras`。多个设备且没有保存的选择时，必须明确选择后才能启动；选择按设备 ID 保存，设备失效时会阻止启动，不会自动改用其他设备。本地视频标签显示当前设备名。修改选择前先停止会话。
-
 在 Parallels 中，宿主 Mac 的虚拟摄像头也可能作为 Windows 摄像头被共享。需要拍摄真人时请选择实际相机（例如 `MacBook Pro的相机`）；`Xmax Virtual Camera` 输出的是虚拟摄像头程序提供的画面。SDK 的空设备 ID 仍沿用默认设备，应用应通过 `cameras()` 枚举并传入选定设备 ID。
 
-摄像头编码预设支持 `1920x1080`、`1080x1920`、`1408x1408`、`1152x1536`、`1536x1152`，帧率为 `1...60 fps`。`x2.1` 模型的摄像头默认使用 `1080x1920@30` 编码目标；设备可能输出其他原生尺寸，本地帧视图报告实际尺寸。`format()` 返回编码目标，不表示相机硬件必定输出该尺寸。旧的 `1920x1024` / `1024x1920` 摄像头配置分别按 `1920x1080` / `1080x1920` 编码，外部输入仍兼容旧尺寸。
+摄像头编码目标如下，帧率支持 1 至 60 fps。应通过 `model_info()` 查询模型能力，避免将规格写死在应用中。
+
+| 模型 | 支持的编码目标 | SDK 默认目标 |
+| --- | --- | --- |
+| `x2.1` | `1024×1920`、`1920×1024` | `1024×1920 @ 30 fps` |
+
+兼容预设 `1080×1920` 映射为 `1024×1920`，`1920×1080` 映射为 `1920×1024`。枚举中保留的其他尺寸不表示当前模型支持它们。`format()` 返回编码目标，不表示相机硬件必定输出该尺寸；本地帧视图报告设备的实际输出尺寸。
 
 生成画布由模型预设中比例最接近的一组尺寸决定，独立于采集尺寸、RTC 上行档位和下行回传尺寸。麦克风由 RTC 后端在连接时启动；摄像头准备阶段只采集视频。准备摄像头后远端音量初始为零。
 
@@ -51,7 +57,7 @@ realtime.stop_media(); // 仅允许在 idle / ready 状态；停止本地媒体
 
 ```cpp
 realtime.update_camera_format(xmax::RealtimeCameraPreset::resolution1080x1920);
-realtime.update_camera_format(xmax_video_format{1408, 1408, 24});
+realtime.update_camera_format(xmax_video_format{1920, 1024, 24});
 auto format = realtime.camera_format();
 auto preset = realtime.camera_preset();
 ```
@@ -81,6 +87,26 @@ realtime.push(frame);
 外部输入宽高不必匹配摄像头预设：支持 4 至 8192 的偶数尺寸，总像素不超过 2100000，帧率为 1 至 60。提交帧宽高必须匹配绑定规格；每个平面提供以字节为单位的 stride 和可访问大小。时间戳是每次绑定内严格递增的单调微秒时间。SDK 在 push 返回前复制像素，宿主随后可复用缓冲区。绑定 SDK 摄像头时不允许外部 push。
 
 `requesting_frames()` 表示 RTC 是否需要外部输入，摄像头模式始终返回 false。未连接时也可以提交有效外部帧以获得 SDK 本地预览。开始生成阻塞等待结果首帧，须由另一线程持续供帧；需求标志不承担宿主帧率控制。
+
+## 宿主外部音频输入
+
+需要同时提交音频时，使用 `bind_external_media()` 声明带音频的外部源，再通过返回的接收器提交视频和 PCM：
+
+```cpp
+xmax_external_media_config config{};
+config.struct_size = sizeof(config);
+config.video_format = {1920, 1080, 30};
+config.has_audio = 1;
+auto sink = realtime.bind_external_media(config);
+
+// 持续供帧；音频和视频的时间戳使用同一单调时钟。
+sink.push(frame);
+sink.push_audio(audioFrame);
+```
+
+`audioFrame` 为 `xmax_external_audio_frame`，包含交错 PCM16 或 float32 数据；格式、可访问字节数和时间戳要求见公开头文件。SDK 在提交返回前复制数据，转换为 RTC 所需的 48 kHz 单声道 PCM16，不进行本地播放，也不缓存音频供未来连接补发。声明外部音频后，该源不再使用 RTC 麦克风采集。
+
+同一源的音频提交应串行执行。源替换或关闭后，旧接收器忽略输入，不影响新源；宿主仍负责停止采集并在释放接收器前等待在途提交。`sink.requesting()` 表示绑定是否仍有效，断开连接但保留本地媒体时仍可为 true，与 `requesting_frames()` 的 RTC 需求标记不同。
 
 ## 连接、生成与条件复用
 
@@ -117,6 +143,28 @@ if (remote) {
 两条 Render 管线都保留最新未消费帧，旧连接的回调不会覆盖新连接。无新帧时 C API 返回 `XMAX_NO_EVENT`，C++ 包装返回空 frame。已获取的帧独立持有像素，Realtime 关闭或销毁后仍可读取。
 
 Qt 用 QImage / QVideoFrame 显示 SDK 帧；其他宿主可自行显示 CPU 帧。Windows 还提供 `xmax_frame_render_window(frame, hwnd, XMAX_CONTENT_FIT)`，应由 HWND 所属线程在重绘时调用。支持 FIT / FILL，当前为 GDI CPU 绘制，不提供 D3D11 纹理或自动重绘。C# 接入使用 [Xmax.SDK](dotnet.md)，WPF 可直接使用 [Xmax.SDK.Wpf 与 XLabWpf](wpf.md) 显示最新帧。[最小 .NET 消费端](../Examples/DotNetSmoke/Program.cs) 仍保留为直接调用 C ABI 的验证示例。
+
+## 远端音视频回调
+
+显示最新画面可以使用取帧邮箱；需要录制或按媒体时间处理结果时，注册统一的音视频监听器：
+
+```cpp
+void handle_remote_media(
+    xmax::media_frame packet
+) {
+    auto view = packet.view();
+    // 根据 view.type 消费 PCM16 音频或视频，并按 presentation_time 排期。
+    // 异步消费时将 packet 移交给工作队列；不可仅保存 view 中的借用指针。
+}
+
+// 在后台线程注册或解除监听：
+realtime.remote_media_listener(handle_remote_media);
+realtime.remote_media_listener({});
+```
+
+C++ 回调的 `media_frame` 拥有独立句柄；C 回调接收的是借用句柄，异步使用前必须调用 `xmax_media_frame_retain()`，消费后释放。C 的监听上下文仅在注册成功后转移给 SDK，最后一个在途回调完成后调用 `release_user_data`。
+
+音视频使用共享呈现时间线；串行交付顺序不等于跨轨道呈现顺序。处理格式或时钟变化时应检查不连续标记。注册监听器不改变播放音量或订阅；替换或解除后仍可能有在途回调。回调运行在独立后台线程，应尽快转交数据，避免有界队列丢弃后续输出。完整的所有权和队列约束见 `xmax_realtime_set_remote_media_frame_listener`；C# 所有权约定见 [C# SDK](dotnet.md)。
 
 ## 镜像
 
@@ -209,7 +257,7 @@ storage.cancel();
 
 ## XmaxLogger 日志与诊断
 
-日志行为参考 macOS XmaxLogger：默认关闭；`XMAX_LOG_BUSINESS` 输出业务日志，`XMAX_LOG_PERFORMANCE` 输出 RTC 指标、网络质量与设备性能告警，`XMAX_LOG_ALL` 同时开启两类。分类包括 Realtime、RTC、Media、API、Storage、Room、Stream、Render、Interaction 和 Permission；每行使用 `[Xmax][分类]` 前缀，记录 debug / info / warning / error 级别。尚未实现的交互功能不会生成虚构日志。
+XmaxLogger 默认关闭；`XMAX_LOG_BUSINESS` 输出业务日志，`XMAX_LOG_PERFORMANCE` 输出 RTC 指标、网络质量与设备性能告警，`XMAX_LOG_ALL` 同时开启两类。分类包括 Realtime、RTC、Media、API、Storage、Room、Stream、Render、Interaction 和 Permission；每行使用 `[Xmax][分类]` 前缀，记录 debug / info / warning / error 级别。
 
 摄像头性能日志每两秒汇总一次实际输出帧率、输入尺寸、帧转换平均/最大耗时，以及同步媒体交付平均/最大耗时；后者包含 RTC 推帧与本地预览投递。结合 RTC 的采集、编码、发送帧率，可以区分帧转换阻塞与编码/发送瓶颈。关闭性能日志时不采样这些耗时，不逐帧输出日志。
 
@@ -229,7 +277,7 @@ xmax::logger::configure(XMAX_LOG_NONE); // 关闭并清空待取日志。
 
 C 接口为 `xmax_logger_configure(options, language)`、`xmax_logger_get_config(&options, &language)` 和 `xmax_logger_poll(&record)`；C 调用者须先填写 `record.struct_size = sizeof(record)`。空队列返回 `XMAX_NO_EVENT`。新接口不改变原有 Client/Event 等结构的布局，ABI 版本仍为 1；新增日志记录结构为 pack 8、4160 字节。
 
-配置是进程级的，作用于所有 Client、Realtime 和 Storage；创建/销毁 Client 不会重置显式配置，最后一次成功的 configure 生效。语言由调用者明确选择；XLab 按当前模型选择中文或英文，并像 macOS 示例一样主动开启全部日志。每次重新配置都会清空队列，防止旧配置的内容继续被读取。
+配置是进程级的，作用于所有 Client、Realtime 和 Storage；创建/销毁 Client 不会重置显式配置，最后一次成功的 configure 生效。语言由调用者明确选择；使用 Client 配置设置日志时，语言随服务环境选择。每次重新配置都会清空队列，防止旧配置的内容继续被读取。
 
 Windows 同时通过 `OutputDebugStringW` 输出到调试器；Mac 开发构建使用 OSLog。宿主无需注册跨 DLL 回调。轮询队列最多保留最新 256 条、每条最多 4095 字节的 UTF-8 文本；未及时读取会丢弃旧记录，可通过 sequence 的间隔发现缺失。多个线程可安全调用，但宿主应指定一个消费者读取进程级队列。日志是尽力而为的，不作为业务状态来源，业务状态仍读取事件与状态接口。没有额外的 SDK 文件日志组件。
 
@@ -240,31 +288,9 @@ RTC 诊断包含采集/编码/发送或解码/渲染帧率、码率、丢包率�
 ## C ABI、线程与所有权
 
 - C ABI 使用 `__cdecl`、UTF-8 字符串、固定宽度整数和 opaque handle，结构采用 pack 8。`struct_size` 必须初始化；本次新增入口保留 ABI 版本 1 和原有结构布局。Windows 当前构建目标为 x64，`size_t` 与指针均为 64 位。
-- 生命周期、存储和摄像头操作会阻塞，放在工作线程；状态/规格/音量/画质查询也可能等待生命周期队列。`poll_event`、本地/远端 acquire 是非阻塞邮箱操作，存储 progress / cancel 可以与传输并行。
-- SDK 不直接调用宿主应用回调。C 函数返回负错误码，调用线程上的 `xmax_last_error()` 提供详情；C++ 包装转换为 `xmax::error`。
+- 生命周期、存储和摄像头操作会阻塞，放在工作线程；状态、规格和画质查询也可能等待生命周期队列；音量设置与查询使用独立控制路径，不等待连接或生成操作。`poll_event`、本地/远端 acquire 是非阻塞邮箱操作，存储 progress / cancel 可以与传输并行。
+- 除显式注册的远端音视频监听器外，业务事件通过轮询读取。C 函数返回负错误码，调用线程上的 `xmax_last_error()` 提供详情；C++ 包装转换为 `xmax::error`。
 - 跨 DLL 资源由对应 SDK release / destroy 释放。摄像头字符串归列表所有；上传信息字符串归 uploaded_file 所有；帧像素归 frame 所有。C++ RAII 对这些对象采用不可复制、可移动的所有权。
 - `disconnect` / `close` 可从另一线程取消正在启动的连接或采集。销毁句柄前必须停止并等待所有使用该句柄的宿主线程；销毁不是并发取消操作。
 
 Windows 实机的设备、权限、RTC、上传与生成联调仍需单独验收，Mac 的自动测试使用可控替身覆盖协议和生命周期。
-
-## 源码排版与接口注释
-
-SDK 的 C/C++ 接口文档使用多行 `/** ... */` Doxygen 注释，新增和修订的源码注释统一使用英文，重点说明实际行为、调用约束和资源所有权。Visual Studio 支持此格式的提示与注释补全。格式参考见 [Visual Studio 官方说明](https://devblogs.microsoft.com/cppblog/doxygen-and-xml-doc-comment-support/) 和 [Doxygen 文档](https://www.doxygen.nl/manual/docblocks.html)。
-
-- 方法、函数之间保留一个空行；短方法也展开函数体，不把多个方法挤在一起。根目录 `.clang-format` 的 `AllowShortFunctionsOnASingleLine: None` 和 `SeparateDefinitionBlocks: Always` 固定此规则。
-- 每个 SDK 方法声明都写用途说明 `@brief`，包括构造、析构、重载及私有方法。契约以头文件为准；对应实现无需重复整段说明，局部辅助函数和平台回调在定义处注明职责。
-- 公共接口逐项说明 `@param[in]` / `@param[out]` / `@param[in,out]`；有返回值时写 `@return`，特殊状态可用 `@retval`。C++ 异常用 `@throws`；C ABI 以错误码和 `xmax_last_error()` 报错，不向外抛异常。
-- 涉及阻塞、并发、取消、指针借用、资源所有权和释放时机时，必须写明；补充约定用 `@note`，必须遵守的生命周期限制用 `@warning`。C++ 包装使用 `@see` 关联底层 C 接口。
-- 实现内的普通 `//` 注释解释设计原因、边界和平台限制，避免逐行复述代码。接口行为改变时同步更新注释。
-
-```cpp
-/// @brief Consume the oldest process-wide log record without waiting.
-/// @param[out] record Receives a record; struct_size is initialized automatically.
-/// @return True if copied, false if the queue is empty.
-/// @see xmax_logger_poll
-static bool poll(xmax_log_record& record);
-
-/// @brief Read the process-wide logger options and language.
-/// @return A pair containing the option mask and language.
-static std::pair<uint32_t, xmax_log_language> configuration();
-```

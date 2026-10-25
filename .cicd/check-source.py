@@ -9,8 +9,20 @@ from artifacts import ROOT, public_exports
 from workflow import version
 from structure import validate as validate_structure
 
+def c_api_contracts(source: str) -> dict[str, str]:
+    """Collect Doxygen contracts immediately preceding C ABI declarations or definitions."""
+    pattern = r'(/\*\*(?:(?!/\*\*).)*?\*/)\s*(?:XMAX_API\s+)?[\w *]+\bXMAX_CALL\s+(xmax_\w+)\s*\('
+    return {match[2]: match[1] for match in re.finditer(pattern, source, re.S)}
+
+def check_c_api_comments(root: Path) -> None:
+    public = c_api_contracts((root/'include/xmax/xmax.h').read_text(encoding='utf-8'))
+    implementation = c_api_contracts((root/'Sources/XmaxSDK/CAPI/xmax_c_api.cpp').read_text(encoding='utf-8'))
+    duplicates = [name for name, comment in implementation.items() if public.get(name) == comment]
+    assert not duplicates, 'Keep C API contracts in xmax.h; implementation comments repeat: '+', '.join(duplicates)
+
 def main() -> None:
     validate_structure(ROOT)
+    check_c_api_comments(ROOT)
     subprocess.run([sys.executable, str(ROOT/'.cicd/generate-dotnet-interop.py'), '--check'], check=True)
     current = version((ROOT/'VERSION').read_text().strip())
     for name in ['README.md','Materials/usage.md']:
@@ -31,8 +43,10 @@ def main() -> None:
             assert hashlib.sha256((notices/module/name).read_bytes()).hexdigest() == source['sha256']
     expected = '9bea4c8066ef4a1c206b2be5a36302f8926f7fdc6087af5d20b417d0cf103ea6'
     assert hashlib.sha256((ROOT/'third_party/nlohmann/json.hpp').read_bytes()).hexdigest() == expected
-    for path in [ROOT/'README.md',*(ROOT/'Materials').glob('*.md')]:
-        for link in re.findall(r'\]\(([^)]+)\)',path.read_text(encoding='utf-8')):
+    for path in [ROOT/'README.md',*(ROOT/'Materials').glob('*.md'),*(ROOT/'.cicd').rglob('*.md')]:
+        text = re.sub(r'^(`{3,}|~{3,})[^\n]*\n.*?^\1[ \t]*$', '',
+                      path.read_text(encoding='utf-8'), flags=re.M | re.S)
+        for link in re.findall(r'\]\(([^)]+)\)',text):
             if re.match(r'https?:|#',link): continue
             assert (path.parent/link.split('#')[0]).exists(), f'Broken documentation link in {path}: {link}'
     attributes = subprocess.check_output(['git','check-attr','eol','--','third_party/nlohmann/json.hpp'],cwd=ROOT,text=True)

@@ -12,6 +12,11 @@ public sealed partial class MainWindow
     private async Task VerifyRecordingAsync()
     {
         Check(!recordButton.IsEnabled && !Model.CanRecord, "UI preview must not enable live recording.");
+        // Exercise a full layout with the finishing indicator visible, even when
+        // the synthetic encoder finishes before the next UI frame.
+        recordButton.IsLoading = true; recordButton.Refresh();
+        await Task.Delay(250); await SaveScreenshotAsync("recording-finishing", header);
+        recordButton.IsLoading = false; recordButton.Refresh();
         // Use an idle native handle and synthetic packets: no camera, API key, RTC join, or cloud task.
         // Disconnect automatic picker presentation so save-failure/retry can be exercised deterministically.
         Model.PropertyChanged -= ModelChanged;

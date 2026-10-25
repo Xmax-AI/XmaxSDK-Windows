@@ -1,6 +1,6 @@
 # WinUI 3 XLab
 
-`Sources/XmaxSDK.WinUI` 提供 `Xmax.SDK.WinUI` 视频控件；`Examples/XLabWinUI` 是独立 WinUI 3 Demo。它们直接使用通用 `Xmax.SDK`，不加载 WPF 或 Qt。当前使用稳定版 Windows App SDK 2.5.1，面向 Windows x64、.NET 10，最低 Windows 10 2004（19041）。编译目标 Windows SDK 为 26100。
+`Sources/XmaxSDK.WinUI` 提供 `Xmax.SDK.WinUI` 视频控件；`Examples/XLabWinUI` 是独立 WinUI 3 Demo。它们直接使用通用 `Xmax.SDK`，不加载 WPF 或 Qt。面向 Windows x64、.NET 10，最低 Windows 10 2004（19041）。Windows App SDK 版本和编译目标由[项目文件](../Sources/XmaxSDK.WinUI/XmaxSDK.WinUI.csproj)维护。
 
 ## 启动
 
@@ -17,17 +17,17 @@ Parallels 共享源码环境可在 macOS 仓库目录执行 `bash scripts/run-wi
 
 Demo 为 unpackaged 桌面应用，直接运行 `XLabWinUI.exe`。发布包包含匹配的 Windows App SDK 运行文件，仍需安装 .NET 10 Runtime 和原生 SDK 依赖的 Visual C++ 运行库。
 
-## UI 与共享逻辑
+## 操作与录制
 
-首页、双视频页、圆形参考图、四种模式、顶部统计与音量、API Key 输入、弹层和白色配色对齐 WPF / Qt XLab，共用 Logo、DM Sans 和预设 JSON。首页启动区遵循 580–940 DIP 宽度限制与 1920:1024 比例；顶部按钮到视频的可见间距为 20 DIP。窗口 API 的物理像素与界面的 DIP 分开换算，适配系统缩放。
+通用界面操作、API Key 显示与存储、摄像头选择、页面状态和参考图更新统一见 [C# SDK 的共同操作说明](dotnet.md#net-xlab-共同操作)。WinUI 按系统缩放区分窗口物理像素与界面 DIP。
 
-页面切换沿用 450 ms、从下方 14 DIP 入场的淡入与 ease-out 动画，返回首页时底部链接同步过渡；系统关闭动画时直接显示最终状态。三类参考图各自保留滚动位置，点击后更新蓝色选择状态和生成条件。Free Prompt 支持输入、提交、上传和移除参考图。Record 位置与当前 WPF Demo 一致，尚未接入录制，保持禁用并显示说明。
+会话结果就绪后可点击 Record，录制远端结果的视频和音频。再次点击停止录制，完成编码后选择 MP4 保存位置。录制使用原始结果媒体时间线，显示镜像和播放音量不改变保存内容；结果不含音轨时可保存纯视频。
 
-点击 Start Camera 后首页显示 `Starting…`，收到 SDK 的 `Connected` 或 `Generating` 状态后才切到会话页并开始计时，连接失败留在首页；等待结果首帧时显示 `Generating…`。顶部 Key 按钮以居中的星号显示已保存状态，展开后使用明文输入框编辑完整 Key。
-
-`Examples/XLabShared` 保存两套 .NET Demo 的会话生命周期、串行条件更新、参考图上传、预设和凭据逻辑。各框架只提供 UI 调度器、计时器和缩略图解码适配。API Key 与相机选择沿用 WPF 的现有存储位置，因此已保存的选择可以直接使用；输入后自动记忆，清空输入则删除。环境变量 `XMAX_API_KEY` 为临时覆盖，不改写保存的 Key。生成和上传固定使用国内服务，Key 输入下提供平台获取入口。
+录制进行中显示计时，结束时显示收尾状态。取消保存对话框会丢弃本次录制；保存失败时可选择其他位置重试，或丢弃录制。停止会话和关闭窗口时也会处理进行中的录制及待保存内容。
 
 ## 控件接入
+
+旧版 `XmaxVideoView` 已更名为 `XmaxRealtimeVideoView`，迁移时替换 XAML 标签和 C# 类型引用。包名、命名空间和绑定属性保持一致，旧类型名不再提供；详见 [0.2.0 变更说明](../.cicd/release-notes/0.2.0.md#api-changes)。
 
 在 WinUI 项目中引用 `Xmax.SDK.WinUI`，并保持项目的 `UseWinUI` 配置：
 
@@ -50,6 +50,6 @@ Demo 为 unpackaged 桌面应用，直接运行 `XLabWinUI.exe`。发布包包�
 ./scripts/pack-winui.ps1 -NativeDirectory <native-dll-directory>
 ```
 
-默认验证实际 BGRA 像素、镜像、快速帧替换、卸载重载、页面截图与动画、参考图按钮，以及 API Key 的四次独立进程保存/恢复/修改/清空。测试使用独立凭据条目，其他冒烟模式不会改写用户保存的 Key。`-Live` 从首页直接启动摄像头和生成，再实际点击 Alien Kitty 并提交自由提示词更新。`XMAX_SMOKE_CAMERA` 可指定摄像头名称片段；报告和截图保存到构建目录的 `winui-screenshots/`。
+通用验收行为与环境变量见 [C# SDK](dotnet.md)。WinUI 另外验证控件卸载重载、结果录制、编码收尾和保存流程；报告与截图保存到构建目录的 `winui-screenshots/`。
 
-打包输出为 `Xmax.SDK.WinUI.<version>.nupkg` 与 `XLabWinUI-<version>-win-x64.zip`，并更新 `SHA256SUMS`。发布包保留字体、原生依赖和托管依赖许可证。构建与打包均不发布到 NuGet 或 GitHub。
+包内容、依赖许可证和发布渠道见 [CI/CD 的本地验证与打包说明](../.cicd/README.md#本地验证与打包)。

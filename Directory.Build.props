@@ -10,4 +10,8 @@
     <Version>$([System.IO.File]::ReadAllText('$(MSBuildThisFileDirectory)VERSION').Trim())</Version>
     <Deterministic>true</Deterministic>
   </PropertyGroup>
+  <PropertyGroup Condition="'$(MSBuildProjectName)' == 'XmaxSDK.Net' or '$(MSBuildProjectName)' == 'XmaxSDK.Wpf' or '$(MSBuildProjectName)' == 'XmaxSDK.WinUI'">
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <WarningsAsErrors>$(WarningsAsErrors);CS1591;CS1570;CS1571;CS1572;CS1573;CS1574;CS1580;CS1581;CS1584;CS1587;CS1711;CS1712</WarningsAsErrors>
+  </PropertyGroup>
 </Project>

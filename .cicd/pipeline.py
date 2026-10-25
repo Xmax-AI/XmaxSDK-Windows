@@ -9,7 +9,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from artifacts import ROOT, archive, audit, extract, sha256, stage_documents, verify_manifest, write_manifest
+from artifacts import ROOT, archive, audit, extract, sha256, stage_documents, verify_manifest, write_manifest, managed_asset_names, check_managed_archive
 
 
 def run(command: list[str | Path], *, cwd: Path = ROOT, env: dict | None = None) -> None:
@@ -60,7 +60,7 @@ def verify(build: Path, qt_prefix: Path | None = None, sanitizers: bool = False)
 
 
 def build_windows(build: Path, output: Path, qt_prefix: Path | None, agora_root: Path | None,
-                  with_rtc: bool = True) -> None:
+                  with_rtc: bool = True, with_managed: bool = True) -> None:
     if os.name != 'nt': raise RuntimeError('Release packaging requires a real Windows MSVC host')
     output.mkdir(parents=True, exist_ok=True)
     (output/'validation.json').unlink(missing_ok=True)
@@ -69,8 +69,9 @@ def build_windows(build: Path, output: Path, qt_prefix: Path | None, agora_root:
     if subprocess.check_output(['git', 'status', '--porcelain'], cwd=ROOT, text=True).strip():
         raise RuntimeError('Release packaging requires a clean committed source tree')
     cmake = tool('cmake')
+    powershell = shutil.which('pwsh') or tool('powershell')
     if with_rtc and not agora_root:
-        run(['pwsh', '-NoProfile', '-File', ROOT/'scripts/get-agora.ps1'])
+        run([powershell, '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ROOT/'scripts/get-agora.ps1'])
         agora_root = ROOT/'.build/vendor/agora/Agora_Native_SDK_for_Windows_FULL/sdk'
     command = [cmake, '-S', str(ROOT), '-B', str(build), '-G', 'Visual Studio 17 2022', '-A', 'x64',
                '-DBUILD_TESTING=ON', f'-DXMAX_WITH_AGORA={"ON" if with_rtc else "OFF"}',
@@ -160,12 +161,25 @@ def build_windows(build: Path, output: Path, qt_prefix: Path | None, agora_root:
             test_environment['QT_PLUGIN_PATH'] = str(qt_prefix/'plugins')
             test_environment['QML_IMPORT_PATH'] = str(qt_prefix/'qml')
         run([tool('ctest'), '--test-dir', build, '-C', 'Release', '--output-on-failure'], env=test_environment)
+        if with_managed:
+            managed_build = build/'dotnet'
+            for script in ['verify-dotnet.ps1', 'verify-winui.ps1']:
+                run([powershell, '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ROOT/'scripts'/script,
+                     '-NativeDirectory', unpacked/'bin', '-BuildRoot', managed_build, '-Package'])
+            managed = {}
+            for name in managed_asset_names(version):
+                package = managed_build/'packages'/name
+                check_managed_archive(package, version, report['sha256'])
+                shutil.copy2(package, output/name)
+                managed[name] = sha256(output/name)
+            validation.update(managed_validated=True, managed_assets=managed)
         # Validation is written only after *every* check succeeds, and only for unchanged committed inputs.
         if subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip() != revision or subprocess.check_output(['git', 'status', '--porcelain'], cwd=ROOT, text=True).strip():
             raise RuntimeError('Source tree changed during release packaging')
         report_path.write_text(json.dumps(validation, indent=2)+'\n')
     assets = [sdk_zip]
     if qt_prefix: assets.append(output/validation['demo_archive'])
+    assets.extend(output/name for name in validation.get('managed_assets', {}))
     (output/'SHA256SUMS.txt').write_text(''.join(f'{sha256(path)}  {path.name}\n' for path in assets), encoding='utf-8')
     print(f'Validated artifacts: {output}', flush=True)
 
@@ -179,10 +193,11 @@ def main() -> None:
     parser.add_argument('--agora-root', type=Path)
     parser.add_argument('--sanitizers', action='store_true')
     parser.add_argument('--without-rtc', action='store_true')
+    parser.add_argument('--native-only', action='store_true', help='Skip managed SDK/Demo packaging; not a complete release')
     args = parser.parse_args()
     build = (args.build_dir or ROOT/'.build'/('windows-release' if args.command=='build-windows' else 'ci')).resolve()
     if args.command == 'verify': verify(build, args.qt_prefix, args.sanitizers)
-    else: build_windows(build, args.output_dir.resolve(), args.qt_prefix, args.agora_root, not args.without_rtc)
+    else: build_windows(build, args.output_dir.resolve(), args.qt_prefix, args.agora_root, not args.without_rtc, not args.native_only)
 
 if __name__ == '__main__':
     try: main()

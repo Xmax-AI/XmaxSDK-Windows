@@ -4,7 +4,7 @@
 
 ## 接入 Windows 二进制包
 
-候选包由 GitHub Actions 的 Windows 构建生成；正式 Release 通过验收后再发布。
+本地打包和 GitHub Release 下载说明见[发布流程](../.cicd/README.md)。
 SDK 包包含 `bin/XmaxSDK.dll`、Agora DLL、`lib/XmaxSDK.lib`、`include/xmax`、CMake package、符号与消费样例。
 Qt 仅在独立 XLab 包中，SDK 包不需要 Qt。
 
@@ -18,9 +18,20 @@ Qt 仅在独立 XLab 包中，SDK 包不需要 Qt。
 cmake -S samples/consumer -B consumer-build -G "Visual Studio 17 2022" -A x64 "-DCMAKE_PREFIX_PATH=$PWD"
 cmake --build consumer-build --config Release
 ctest --test-dir consumer-build -C Release --output-on-failure
-# .NET 8 SDK：
+# .NET 10 SDK：
 dotnet run --project samples/DotNetSmoke --configuration Release "-p:XmaxNativeDir=$PWD/bin"
 ```
+
+CMake 消费端：
+
+```cmake
+find_package(XmaxSDK CONFIG REQUIRED)
+add_executable(MyApp main.cpp)
+target_compile_features(MyApp PRIVATE cxx_std_17)
+target_link_libraries(MyApp PRIVATE Xmax::SDK)
+```
+
+配置消费端时，将安装前缀传入 `CMAKE_PREFIX_PATH`。运行时确保 SDK 与 Agora DLL 位于应用可加载的位置。C API 使用 `include/xmax/xmax.h`；C++ RAII 包装使用 `include/xmax/xmax.hpp`。直接使用 C API 的宿主无需 Qt。
 
 ## 构建 SDK
 
@@ -59,11 +70,11 @@ cmake --build --preset windows
 & .build/windows/Examples/XLab/Release/XLab.exe
 ```
 
-下载脚本固定 Agora Windows 4.6.2，并校验 SHA-256。构建复制 SDK 与 Agora DLL；Qt 运行库、QML、多媒体和图片插件由 `windeployqt` 部署。发布时保留 [依赖许可证及说明](../THIRD_PARTY.md)。
+下载脚本根据 [依赖锁定文件](../.cicd/dependencies.json)选择 Agora 版本并校验 SHA-256。构建复制 SDK 与 Agora DLL；Qt 运行库、QML、多媒体和图片插件由 `windeployqt` 部署。发布时保留 [依赖许可证及说明](../THIRD_PARTY.md)。
 
 ## Mac 与 Parallels Windows 共用源码
 
-本地协作采用一份工作区：Mac 保存 Git 仓库，Parallels 仅共享该工程目录为 `XmaxSDK`，Windows 通过 `\\Mac\XmaxSDK` 直接读写。开发脚本复用 Parallels 的现有盘符映射（当前为 `S:`），没有映射时选择空闲盘符，兼容 Qt 构建命令对当前目录的要求。任一侧保存的源码改动都会在另一侧可见，不需要复制、提交或推送后才能测试。Git 提交、切分支和推送统一在 Mac 执行。
+本地协作采用一份工作区：Mac 保存 Git 仓库，Parallels 仅共享该工程目录为 `XmaxSDK`，Windows 通过 `\\Mac\XmaxSDK` 直接读写。开发脚本复用 Parallels 的现有盘符映射（示例使用 `S:`），没有映射时选择空闲盘符，兼容 Qt 构建命令对当前目录的要求。任一侧保存的源码改动都会在另一侧可见，不需要复制、提交或推送后才能测试。Git 提交、切分支和推送统一在 Mac 执行。
 
 构建目录和依赖放在 Windows 本地磁盘，避免混用两个平台的缓存：
 
@@ -93,30 +104,15 @@ cmake --build --preset windows
 
 脚本使用已安装的 Qt MSVC x64。`QT_ROOT_DIR` / `XMAX_AGORA_ROOT` 可指定依赖位置，也可传入 `-QtRoot` / `-AgoraRoot`；`-BuildRoot` 必须指向 Windows 本地目录。需要固定盘符时，可通过 `-SourceDrive` 指定空闲盘符，脚本不会覆盖已有的其他映射。Mac 侧可通过 `XMAX_WINDOWS_VM` 和 `XMAX_WINDOWS_SOURCE` 覆盖虚拟机名称与共享路径。重新编译前关闭正在运行的对应 Demo，以释放 DLL 文件。
 
-媒体性能可单独测量，不依赖 API Key 或云端服务。在 Windows 构建完成后执行：
+媒体性能可单独测量，不依赖 API Key 或云端服务。在 Windows 构建完成后，显式指定采样秒数与唯一匹配的摄像头名称片段：
 
 ```powershell
-& 'C:\dev\XmaxSDK-build\Sources\XmaxSDK\RelWithDebInfo\xmax_media_benchmark.exe' 60
-# 显式指定摄像头名称片段，另测原始采集和 SDK 归一化持续帧率：
-& 'C:\dev\XmaxSDK-build\Sources\XmaxSDK\RelWithDebInfo\xmax_media_benchmark.exe' 60 --camera 'MacBook Pro'
+& 'C:\dev\XmaxSDK-build\Sources\XmaxSDK\RelWithDebInfo\xmax_media_benchmark.exe' 5 --camera 'MacBook Pro'
 ```
 
-基准输出实际缩放耗时分位数和处理能力；摄像头测量都等待真实首帧就绪后分别采样 5 秒，排除设备启动耗时。设备名片段必须唯一匹配，未传 `--camera` 时不会打开摄像头。此基准不作为 CTest 的速度门槛。
+基准分别测量原始采集和 SDK 直通链路的实际尺寸、帧数与帧率；采样前等待首帧，排除设备启动耗时。采样时长为 1 至 30 秒；未指定 `--camera` 时仅显示用法，不打开设备。结果不代表公网发送帧率或云端生成帧率，也不作为 CTest 的速度门槛。
 
-Windows 的 `C:\dev\XmaxSDK` 旧源码副本保留作备份，新的共享开发入口使用 `C:\dev\XmaxSDK-build`；后续在共享源码中修改，避免继续编辑旧副本。源码共享不能代替 Git 版本管理，不同分支需要各自独立的构建目录。
-
-## 接入安装包
-
-安装目录包含 `include/xmax`、Windows `bin/XmaxSDK.dll` 与 `lib/XmaxSDK.lib`；启用 Agora 时还会安装其 DLL。CMake 消费端：
-
-```cmake
-find_package(XmaxSDK CONFIG REQUIRED)
-add_executable(MyApp main.cpp)
-target_compile_features(MyApp PRIVATE cxx_std_17)
-target_link_libraries(MyApp PRIVATE Xmax::SDK)
-```
-
-配置消费端时，将安装前缀传入 `CMAKE_PREFIX_PATH`。运行时确保 SDK 与 Agora DLL 位于应用可加载的位置。C API 使用 `include/xmax/xmax.h`；C++ RAII 包装使用 `include/xmax/xmax.hpp`。直接使用 C API 的宿主无需 Qt。
+源码共享不能代替 Git 版本管理。不同分支和平台应使用独立的构建目录。
 
 ## Mac 示例预览
 
@@ -131,19 +127,13 @@ bash scripts/run-xlab.sh --preview
 bash scripts/run-xlab.sh --preview-session
 ```
 
-当前工作区复用已安装的本地工具和 Qt，也可运行 `bash scripts/verify.sh --example`。这些依赖缓存位于忽略的 `.build`，源码分发不包含缓存。
+配置好本机工具和 Qt 后，也可运行 `bash scripts/verify.sh --example`。构建缓存位于忽略的 `.build`，源码分发不包含缓存。
 
 Mac 构建提供 AVFoundation 摄像头实现，可开发公共 C++ 逻辑和 Qt UI；当前没有集成 macOS Agora C++ 后端。默认测试使用采集和传输替身，不打开设备或使用真实凭证。
 
 `--preview` / `--preview-session` 的标题、启动按钮与视频面板均标注 UI Preview。预览不会输出摄像头画面或生成结果。
 在线预设缩略图支持本地缓存，加载失败显示警告，可悬停查看原因并点击重试；图片域名无法访问时不能显示实际缩略图。
 
-已在 Parallels Windows 11 ARM 虚拟机中使用 MSVC 的 ARM64 主机工具编译 x64 SDK/Demo。RelWithDebInfo 构建通过 14 项 SDK/Qt 测试及 68 个 C 接口的运行时审计。测试覆盖模型与环境配置、五组摄像头尺寸、外部输入比例、原始帧尺寸与像素格式保留、规格切换回滚、双向手动调档、结构化错误，以及轨迹映射、任务隔离与非阻塞采样。
+平台能力和输入限制见 [使用说明](usage.md)。真实摄像头、音频、云端生成及持续性能需要在目标 Windows 环境验收；UI 预览不替代实时会话验收。
 
-通过虚拟机共享的 `MacBook Pro的相机` 测量本地输入性能：5 秒窗口内原生采集为 `1920×1080`、约 `30.1 fps`；经过 SDK 直通链路约 `29.9 fps`。SDK 不再对摄像头帧做 CPU 缩放、裁剪或黑边填充，由 RTC 按编码目标处理。另通过 SDK 接口在 1080×1920、1408×1408、1920×1080 三组目标规格间切换，各规格在 2 秒内均收到约 60 张本地预览帧。采集帧率与编码目标帧率独立。数据仅代表该虚拟机的本地输入性能，不代表公网 RTC 发送帧率或云端生成帧率。
-
-这些检查不创建云端 Session。WinHTTP 云端请求、Agora 连接和生成，以及原生 x64 Windows 的设备与性能验收仍需单独完成。此前的 Windows GNU 交叉构建可用于额外的编译检查。
-
-继续阅读 [使用说明](usage.md)。
-
-发版准备、Windows 验包与不发布的 CD 演练见 [CI/CD 说明](../.cicd/README.md)。
+包的内容与本地发布步骤见[发布流程](../.cicd/README.md)。

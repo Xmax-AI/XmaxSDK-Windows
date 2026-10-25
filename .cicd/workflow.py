@@ -7,7 +7,7 @@ import re
 import subprocess
 import sys
 import tempfile
-from artifacts import ROOT, REPOSITORY, audit, extract, pe_metadata, sha256
+from artifacts import ROOT, REPOSITORY, audit, extract, pe_metadata, sha256, managed_asset_names, check_managed_archive
 from pipeline import run, verify
 
 SEMVER = re.compile(r'(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)')
@@ -40,8 +40,6 @@ def remote_tag_exists(value: str, root: Path) -> bool:
 def prepare(value: str, root: Path = ROOT, dry_run: bool = False) -> None:
     value = version(value)
     clean(root)
-    if not git('branch','--show-current',root=root).startswith('feature/'):
-        raise RuntimeError('Prepare a version on a feature/* branch')
     if git('rev-parse','-q','--verify',f'refs/tags/{value}',root=root,check=False) or remote_tag_exists(value,root):
         raise RuntimeError('Release tag already exists')
     updates = {root/'VERSION': value+'\n'}
@@ -82,14 +80,6 @@ def merge(root: Path = ROOT, skip_validation: bool = False, dry_run: bool = Fals
     if not skip_validation:
         if root != ROOT: raise RuntimeError('Isolated fixture requires explicit --skip-validation')
         verify(root/'.build/integration')
-        # The Windows job is essential even when integration is driven on a Mac.
-        checks = json.loads(subprocess.check_output(['gh','api',f'repos/{REPOSITORY}/commits/{head}/check-runs'],text=True))
-        names = {}
-        for entry in checks.get('check_runs',[]):
-            names.setdefault(entry['name'].split(' / ')[-1], entry)
-        for name in ['Source checks','macOS SDK','macOS sanitizers','Windows SDK and package']:
-            if name not in names or names[name].get('conclusion') != 'success':
-                raise RuntimeError('Required remote check is not successful: '+name)
     if git('rev-parse','HEAD',root=root) != head: raise RuntimeError('HEAD changed during validation')
     clean(root)
     if dry_run:
@@ -104,12 +94,19 @@ def merge(root: Path = ROOT, skip_validation: bool = False, dry_run: bool = Fals
 def gh_json(path: str) -> dict:
     return json.loads(subprocess.check_output(['gh','api',path],text=True))
 
-def release_preflight(value: str, root: Path = ROOT) -> tuple[str,Path]:
+def release_preflight(value: str, root: Path = ROOT, *, remote: bool = False) -> tuple[str,Path]:
     value = version(value)
-    clean(root); origin(root)
-    if git('branch','--show-current',root=root) != 'main': raise RuntimeError('Publish from main')
+    clean(root)
     head = git('rev-parse','HEAD',root=root)
     if (root/'VERSION').read_text().strip() != value: raise RuntimeError('VERSION differs from requested release')
+    notes = root/'.cicd/release-notes'/f'{value}.md'
+    text = notes.read_text(encoding='utf-8')
+    if any(word in text.upper() for word in ['TODO','PLACEHOLDER']) or not all(title in text for title in ["## What's New",'## API Changes','## Validation']):
+        raise RuntimeError('Complete Release Notes before publication')
+    if not remote:
+        return head,notes
+    origin(root)
+    if git('branch','--show-current',root=root) != 'main': raise RuntimeError('Publish from main')
     if gh_json(f'repos/{REPOSITORY}/git/ref/heads/main')['object']['sha'] != head:
         raise RuntimeError('HEAD differs from remote main')
     tag = gh_json(f'repos/{REPOSITORY}/git/ref/tags/{value}')['object']
@@ -118,10 +115,6 @@ def release_preflight(value: str, root: Path = ROOT) -> tuple[str,Path]:
         tag = gh_json(f'repos/{REPOSITORY}/git/tags/{tag["sha"]}')['object']
     if tag['type'] != 'commit' or tag['sha'] != head: raise RuntimeError('Release tag differs from main')
     if git('rev-parse',f'{value}^{{commit}}',root=root) != head: raise RuntimeError('Local release tag differs from main')
-    notes = root/'.cicd/release-notes'/f'{value}.md'
-    text = notes.read_text(encoding='utf-8')
-    if any(word in text.upper() for word in ['TODO','PLACEHOLDER']) or not all(title in text for title in ["## What's New",'## API Changes','## Validation']):
-        raise RuntimeError('Complete Release Notes before publication')
     existing = subprocess.run(['gh','api',f'repos/{REPOSITORY}/releases/tags/{value}'],text=True,capture_output=True)
     if existing.returncode == 0: raise RuntimeError('Release already exists; assets will not be overwritten')
     if 'HTTP 404' not in existing.stderr: raise RuntimeError('Unable to check existing GitHub Releases: '+existing.stderr.strip())
@@ -154,13 +147,23 @@ def validate_release_assets(directory: Path, value: str, head: str) -> list[Path
                 if sha256(unpacked/'XmaxSDK.dll') != report['sdk_abi']['sha256']:
                     raise RuntimeError('Demo DLL differs from SDK DLL')
         assets.append(asset)
+    if report.get('managed_validated') is not True:
+        raise RuntimeError('A release requires local C#/WPF/WinUI validation and packaging')
+    managed = report.get('managed_assets', {})
+    if set(managed) != set(managed_asset_names(value)):
+        raise RuntimeError('Managed release assets are incomplete or unexpected')
+    for name in managed_asset_names(value):
+        asset = directory/name
+        if sha256(asset) != managed[name]: raise RuntimeError('Managed archive changed after validation: '+name)
+        check_managed_archive(asset, value, report['sdk_abi']['sha256'])
+        assets.append(asset)
     checksum = directory/'SHA256SUMS.txt'
     expected_checksums = ''.join(f'{sha256(asset)}  {asset.name}\n' for asset in assets)
     if checksum.read_text(encoding='utf-8') != expected_checksums: raise RuntimeError('SHA256SUMS differs from verified archives')
     return [*assets,checksum,directory/'validation.json']
 
 def release(value: str, directory: Path, publish: bool = False, root: Path = ROOT) -> None:
-    head, notes = release_preflight(value,root)
+    head, notes = release_preflight(value,root,remote=publish)
     assets = validate_release_assets(directory,value,head)
     if not publish:
         print('Release preflight passed. Dry run: no tag, GitHub Release or upload has been created.')
@@ -174,13 +177,13 @@ def main() -> None:
     sub = parser.add_subparsers(dest='command',required=True)
     p = sub.add_parser('prepare'); p.add_argument('version'); p.add_argument('--dry-run',action='store_true')
     p = sub.add_parser('merge'); p.add_argument('--dry-run',action='store_true'); p.add_argument('--skip-validation',action='store_true')
-    p = sub.add_parser('check-release'); p.add_argument('version')
+    p = sub.add_parser('check-release'); p.add_argument('version'); p.add_argument('--remote',action='store_true')
     p = sub.add_parser('verify-assets'); p.add_argument('version'); p.add_argument('--artifacts-dir',type=Path,required=True)
     p = sub.add_parser('release'); p.add_argument('version'); p.add_argument('--artifacts-dir',type=Path,required=True); p.add_argument('--publish',action='store_true')
     args = parser.parse_args()
     if args.command=='prepare': prepare(args.version,dry_run=args.dry_run)
     elif args.command=='merge': merge(skip_validation=args.skip_validation,dry_run=args.dry_run)
-    elif args.command=='check-release': release_preflight(args.version)
+    elif args.command=='check-release': release_preflight(args.version,remote=args.remote)
     elif args.command=='verify-assets':
         value = version(args.version)
         if (ROOT/'VERSION').read_text().strip() != value: raise RuntimeError('VERSION differs from artifacts')

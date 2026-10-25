@@ -317,10 +317,7 @@ extern "C" {
 /**
  * Returns the model's supported formats, pixel limits, and defaults.
  *
- * @param[in] model The model identifier; NULL selects x2.1.
- * @param[in,out] info The destination structure, with struct_size initialized.
- *
- * @return XMAX_OK on success, or a negative error code on failure.
+ * @see xmax_model_get_info in xmax.h for the public contract.
  */
 xmax_result XMAX_CALL xmax_model_get_info(
     const char* model,
@@ -338,10 +335,7 @@ xmax_result XMAX_CALL xmax_model_get_info(
 /**
  * Copies the global configuration and creates a client without starting capture or a cloud session.
  *
- * @param[in] options The global configuration, including the ABI version and service environment.
- * @param[out] out_client Receives the client, or NULL on failure. Release it with xmax_client_destroy.
- *
- * @return XMAX_OK on success, or a negative error code on failure.
+ * @see xmax_client_create_with_options in xmax.h for the public contract.
  */
 xmax_result XMAX_CALL xmax_client_create_with_options(
     const xmax_client_options* options,
@@ -377,12 +371,7 @@ xmax_result XMAX_CALL xmax_client_create_with_options(
 /**
  * Creates a realtime controller with its own model configuration.
  *
- * @param[in] client A non-null client handle.
- * @param[in] config The realtime configuration, copied during creation.
- * @param[out] out_realtime Receives the realtime handle, or NULL on failure. Release it with
- * xmax_realtime_destroy.
- *
- * @return XMAX_OK on success, or a negative error code on failure.
+ * @see xmax_realtime_create_with_config in xmax.h for the public contract.
  */
 xmax_result XMAX_CALL xmax_realtime_create_with_config(
     xmax_client client,
@@ -446,9 +435,7 @@ xmax_result XMAX_CALL xmax_realtime_create_with_options(
 /**
  * Returns the calling thread's most recent structured error without clearing it.
  *
- * @param[in,out] info The destination structure, with struct_size initialized.
- *
- * @return XMAX_OK on success, or a negative error code on failure.
+ * @see xmax_last_error_info in xmax.h for the public contract.
  */
 xmax_result XMAX_CALL xmax_last_error_info(
     xmax_error_info* info
@@ -463,10 +450,7 @@ xmax_result XMAX_CALL xmax_last_error_info(
 /**
  * Returns the current state, state reason, and associated error.
  *
- * @param[in] realtime The realtime handle.
- * @param[in,out] info The destination structure, with struct_size initialized.
- *
- * @return XMAX_OK on success, or a negative error code on failure.
+ * @see xmax_realtime_get_state_info in xmax.h for the public contract.
  */
 xmax_result XMAX_CALL xmax_realtime_get_state_info(
     xmax_realtime realtime,
@@ -485,13 +469,7 @@ xmax_result XMAX_CALL xmax_realtime_get_state_info(
 /**
  * Consumes the oldest event with its state reason and error details without blocking.
  *
- * @param[in] realtime The realtime handle.
- * @param[in,out] info The destination structure, with struct_size initialized.
- *
- * @return XMAX_OK on success, or a negative error code on failure.
- *
- * @note An empty queue returns XMAX_NO_EVENT. This shares the xmax_realtime_poll_event queue; use one
- * consumer interface.
+ * @see xmax_realtime_poll_event_info in xmax.h for the public contract.
  */
 xmax_result XMAX_CALL xmax_realtime_poll_event_info(
     xmax_realtime realtime,
@@ -512,10 +490,7 @@ xmax_result XMAX_CALL xmax_realtime_poll_event_info(
 /**
  * Disconnects for the specified reason while retaining local media preview.
  *
- * @param[in] realtime The realtime handle.
- * @param[in] reason Normal termination or orientation change; the SDK reports failure reasons.
- *
- * @return XMAX_OK on success, or a negative error code on failure.
+ * @see xmax_realtime_disconnect_with_reason in xmax.h for the public contract.
  */
 xmax_result XMAX_CALL xmax_realtime_disconnect_with_reason(
     xmax_realtime realtime,
@@ -533,12 +508,7 @@ xmax_result XMAX_CALL xmax_realtime_disconnect_with_reason(
 /**
  * Updates a ready, disconnected camera's encoding format while retaining preview and device selection.
  *
- * @param[in] realtime The realtime handle.
- * @param[in] format The new model-supported format; existing bitrate and encoding preferences are retained.
- *
- * @return XMAX_OK on success, or a negative error code on failure.
- *
- * @note This call blocks; use a worker thread. Preparation failure attempts to restore the previous format.
+ * @see xmax_realtime_update_camera_format in xmax.h for the public contract.
  */
 xmax_result XMAX_CALL xmax_realtime_update_camera_format(
     xmax_realtime realtime,
@@ -557,10 +527,7 @@ xmax_result XMAX_CALL xmax_realtime_update_camera_format(
 /**
  * Changes a ready camera's resolution while retaining its frame rate and encoding configuration.
  *
- * @param[in] realtime The realtime handle.
- * @param[in] preset The target resolution preset; NONE is not permitted.
- *
- * @return XMAX_OK on success, or a negative error code on failure.
+ * @see xmax_realtime_update_camera_preset in xmax.h for the public contract.
  */
 xmax_result XMAX_CALL xmax_realtime_update_camera_preset(
     xmax_realtime realtime,
@@ -584,11 +551,7 @@ xmax_result XMAX_CALL xmax_realtime_update_camera_preset(
 /**
  * Returns the camera's encoding format and preset, independent of network quality changes.
  *
- * @param[in] realtime The realtime handle.
- * @param[out] format Receives the format; cleared when no camera stream exists.
- * @param[out] preset Receives the preset; NONE when no camera stream exists.
- *
- * @return XMAX_OK on success, or a negative error code on failure.
+ * @see xmax_realtime_get_camera_format in xmax.h for the public contract.
  */
 xmax_result XMAX_CALL xmax_realtime_get_camera_format(
     xmax_realtime realtime,
@@ -610,12 +573,7 @@ xmax_result XMAX_CALL xmax_realtime_get_camera_format(
 /**
  * Sets the uplink level during generation without disabling subsequent network adaptation.
  *
- * @param[in] realtime The realtime handle.
- * @param[in] level The target level, in [1, 5]; 1 provides the highest quality.
- *
- * @return XMAX_OK on success, or a negative error code on failure.
- *
- * @note This call blocks and preserves the previous level on failure.
+ * @see xmax_realtime_set_uplink_quality_level in xmax.h for the public contract.
  */
 xmax_result XMAX_CALL xmax_realtime_set_uplink_quality_level(
     xmax_realtime realtime,
@@ -636,12 +594,7 @@ xmax_result XMAX_CALL xmax_realtime_set_uplink_quality_level(
 /**
  * Sets the downlink level during generation without disabling subsequent network adaptation.
  *
- * @param[in] realtime The realtime handle.
- * @param[in] level The target level, in [1, 5]; 1 provides the highest quality.
- *
- * @return XMAX_OK on success, or a negative error code on failure.
- *
- * @note This call blocks and preserves the previous level on failure.
+ * @see xmax_realtime_set_downlink_quality_level in xmax.h for the public contract.
  */
 xmax_result XMAX_CALL xmax_realtime_set_downlink_quality_level(
     xmax_realtime realtime,
@@ -662,13 +615,7 @@ xmax_result XMAX_CALL xmax_realtime_set_downlink_quality_level(
 /**
  * Maps trajectory samples to video coordinates and asynchronously sends tracks for the current task.
  *
- * @param[in] realtime The realtime handle with an active generation task.
- * @param[in] frame The viewport trajectory samples, copied during this call.
- *
- * @return XMAX_OK on success, or a negative error code on failure.
- *
- * @note Pending samples are coalesced to the latest values; aspect-fit margins are ignored. Success
- * acknowledges submission, not server processing.
+ * @see xmax_realtime_submit_interaction in xmax.h for the public contract.
  */
 xmax_result XMAX_CALL xmax_realtime_submit_interaction(
     xmax_realtime realtime,
@@ -687,12 +634,7 @@ xmax_result XMAX_CALL xmax_realtime_submit_interaction(
 /**
  * Copies unexpired normalized trajectory points for custom effect rendering.
  *
- * @param[in] realtime The realtime handle.
- * @param[out] points The destination point array; may be NULL when capacity is 0.
- * @param[in] capacity The array capacity; at most 256 elements are needed.
- * @param[out] count Receives the required point count; insufficient capacity returns XMAX_BUFFER_TOO_SMALL.
- *
- * @return XMAX_OK on success, or a negative error code on failure.
+ * @see xmax_realtime_get_trajectory in xmax.h for the public contract.
  */
 xmax_result XMAX_CALL xmax_realtime_get_trajectory(
     xmax_realtime realtime,
@@ -727,16 +669,7 @@ xmax_result XMAX_CALL xmax_realtime_get_trajectory(
 /**
  * Renders a result frame and the default trajectory effect in an HWND.
  *
- * @param[in] realtime The realtime handle; the trajectory belongs to the sampled task.
- * @param[in] frame The frame to display, valid for this call.
- * @param[in] window A Windows HWND owned by the calling thread.
- * @param[in] content_mode The aspect-fit or aspect-fill mode, matching the trajectory sampling
- * configuration.
- *
- * @return XMAX_OK on success, or a negative error code on failure.
- *
- * @note Call on the HWND owner thread. Other UI frameworks can query trajectory points and draw their own
- * effects.
+ * @see xmax_realtime_render_window in xmax.h for the public contract.
  */
 xmax_result XMAX_CALL xmax_realtime_render_window(
     xmax_realtime realtime,
@@ -761,7 +694,7 @@ xmax_result XMAX_CALL xmax_realtime_render_window(
 /**
  * Returns the SDK's semantic version.
  *
- * @return A static UTF-8 version string; do not modify or release it.
+ * @see xmax_version in xmax.h for the public contract.
  */
 const char* XMAX_CALL xmax_version(
     void
@@ -772,9 +705,7 @@ const char* XMAX_CALL xmax_version(
 /**
  * Returns the calling thread's most recent SDK diagnostic message.
  *
- * @return A borrowed NUL-terminated UTF-8 string; do not release it. Copy immediately to retain it.
- *
- * @note Valid until the next SDK operation on this thread. Diagnostics are isolated between threads.
+ * @see xmax_last_error in xmax.h for the public contract.
  */
 const char* XMAX_CALL xmax_last_error(
     void
@@ -785,13 +716,7 @@ const char* XMAX_CALL xmax_last_error(
 /**
  * Configures process-wide logging options and language shared by all clients.
  *
- * @param[in] options A bitmask combining XMAX_LOG_BUSINESS and XMAX_LOG_PERFORMANCE; XMAX_LOG_NONE disables
- * logging.
- * @param[in] language The Chinese or English language for subsequent records.
- *
- * @return XMAX_OK on success, or a negative error code on failure. Use xmax_last_error for details.
- *
- * @note Thread-safe. Logging is disabled by default; changing the configuration clears pending records.
+ * @see xmax_logger_configure in xmax.h for the public contract.
  */
 xmax_result XMAX_CALL xmax_logger_configure(
     uint32_t options,
@@ -809,12 +734,7 @@ xmax_result XMAX_CALL xmax_logger_configure(
 /**
  * Returns the process-wide logging configuration.
  *
- * @param[out] options A non-null destination for the enabled logging bitmask.
- * @param[out] language A non-null destination for the output language.
- *
- * @return XMAX_OK on success, or a negative error code on failure. Use xmax_last_error for details.
- *
- * @note Thread-safe. Creating a client does not reset this configuration.
+ * @see xmax_logger_get_config in xmax.h for the public contract.
  */
 xmax_result XMAX_CALL xmax_logger_get_config(
     uint32_t* options,
@@ -836,12 +756,7 @@ xmax_result XMAX_CALL xmax_logger_get_config(
 /**
  * Acquires the oldest process-wide log record without blocking.
  *
- * @param[in,out] record A non-null destination structure with struct_size initialized.
- *
- * @return XMAX_OK when data is available, XMAX_NO_EVENT when no data is pending, or a negative error code on
- * failure.
- *
- * @note Use a single consumer for the process-wide queue, which retains at most the latest 256 records.
+ * @see xmax_logger_poll in xmax.h for the public contract.
  */
 xmax_result XMAX_CALL xmax_logger_poll(
     xmax_log_record* record
@@ -899,10 +814,7 @@ xmax_result XMAX_CALL xmax_client_create(
 /**
  * Releases the client handle and its owned resources.
  *
- * @param[in] client The handle to release; may be NULL.
- *
- * @note Finish concurrent handle use before release. Existing child controllers independently retain their
- * shared configuration.
+ * @see xmax_client_destroy in xmax.h for the public contract.
  */
 void XMAX_CALL xmax_client_destroy(
     xmax_client client
@@ -987,9 +899,7 @@ xmax_result XMAX_CALL xmax_client_list_cameras(
 /**
  * Returns the number of devices in a camera enumeration snapshot.
  *
- * @param[in] list The enumeration snapshot; may be NULL.
- *
- * @return The device count, or 0 for a NULL handle.
+ * @see xmax_camera_list_count in xmax.h for the public contract.
  */
 size_t XMAX_CALL xmax_camera_list_count(
     xmax_camera_list list
@@ -1038,7 +948,7 @@ xmax_result XMAX_CALL xmax_camera_list_get(
 /**
  * Releases a camera enumeration snapshot and its device strings.
  *
- * @param[in] list The snapshot to release; may be NULL.
+ * @see xmax_camera_list_release in xmax.h for the public contract.
  */
 void XMAX_CALL xmax_camera_list_release(
     xmax_camera_list list
@@ -1076,10 +986,7 @@ xmax_result XMAX_CALL xmax_realtime_create(
 /**
  * Closes and releases the realtime controller's session, RTC, and media resources.
  *
- * @param[in] realtime The realtime handle to release; may be NULL.
- *
- * @note Finish concurrent handle use before release. This call closes native resources and waits for an
- * in-flight application media callback; destruction from that callback lets it finish normally.
+ * @see xmax_realtime_destroy in xmax.h for the public contract.
  */
 void XMAX_CALL xmax_realtime_destroy(
     xmax_realtime realtime
@@ -1376,10 +1283,7 @@ xmax_result XMAX_CALL xmax_realtime_set_video_mirror(
 /**
  * Returns the session's retained mirror configuration.
  *
- * @param[in] realtime A non-null realtime controller handle.
- * @param[in,out] config A non-null destination configuration with struct_size initialized.
- *
- * @return XMAX_OK on success, or a negative error code on failure.
+ * @see xmax_realtime_get_video_mirror in xmax.h for the public contract.
  */
 xmax_result XMAX_CALL xmax_realtime_get_video_mirror(
     xmax_realtime realtime,
@@ -2016,7 +1920,7 @@ xmax_result XMAX_CALL xmax_uploaded_file_get_info(
 /**
  * Releases an upload result and its metadata strings.
  *
- * @param[in] file The result handle to release; may be NULL.
+ * @see xmax_uploaded_file_release in xmax.h for the public contract.
  */
 void XMAX_CALL xmax_uploaded_file_release(
     xmax_uploaded_file file
@@ -2051,7 +1955,7 @@ xmax_result XMAX_CALL xmax_frame_get_view(
 /**
  * Releases the frame handle and its retained pixel storage.
  *
- * @param[in] frame The frame handle to release; may be NULL.
+ * @see xmax_frame_release in xmax.h for the public contract.
  */
 void XMAX_CALL xmax_frame_release(
     xmax_frame frame
@@ -2136,16 +2040,7 @@ void XMAX_CALL xmax_string_release(
 /**
  * Sets serialized remote PCM and video delivery without changing playback volume or subscriptions.
  *
- * @param[in] realtime A valid realtime controller.
- * @param[in] listener The listener configuration, copied on success; NULL clears it and queued output.
- *
- * @return XMAX_OK on success, or a negative error code if observation cannot be configured.
- *
- * @note This call may wait for active lifecycle work; use a worker thread. Register before generation or
- * replace while connected. Callbacks use a dedicated background worker
- * and may call SDK methods. An in-flight callback may finish after replacement or removal. Context ownership
- * transfers only on successful registration; release_user_data runs after its final in-flight callback.
- * Retaining packets in your app does not count toward the SDK's 256-packet / 32-MiB queue limit.
+ * @see xmax_realtime_set_remote_media_frame_listener in xmax.h for the public contract.
  */
 xmax_result XMAX_CALL xmax_realtime_set_remote_media_frame_listener(
     xmax_realtime realtime,
@@ -2183,12 +2078,7 @@ xmax_result XMAX_CALL xmax_realtime_set_remote_media_frame_listener(
 /**
  * Retains a callback-borrowed or owned packet without copying its media bytes.
  *
- * @param[in] frame The valid packet to retain.
- * @param[out] out_frame Receives a new owned handle; cleared to NULL on failure.
- *
- * @return XMAX_OK on success, or a negative error code on failure.
- *
- * @note Release the returned handle with xmax_media_frame_release.
+ * @see xmax_media_frame_retain in xmax.h for the public contract.
  */
 xmax_result XMAX_CALL xmax_media_frame_retain(
     xmax_media_frame frame,
@@ -2209,13 +2099,7 @@ xmax_result XMAX_CALL xmax_media_frame_retain(
 /**
  * Returns a borrowed view of one owned or callback-borrowed audio/video packet.
  *
- * @param[in] frame The packet whose media remains retained throughout view use.
- * @param[in,out] view The destination structure, with struct_size initialized.
- *
- * @return XMAX_OK on success, or a negative error code on failure.
- *
- * @note Pixel and PCM pointers remain valid only while their owning packet remains retained. Do not modify
- * them, release them separately, or infer that one packet contains a synchronized audio/video pair.
+ * @see xmax_media_frame_get_view in xmax.h for the public contract.
  */
 xmax_result XMAX_CALL xmax_media_frame_get_view(
     xmax_media_frame frame,
@@ -2234,7 +2118,7 @@ xmax_result XMAX_CALL xmax_media_frame_get_view(
 /**
  * Releases a retained packet and its media when its last owner is released.
  *
- * @param[in] frame An owned packet handle or NULL; never pass the callback-borrowed handle itself.
+ * @see xmax_media_frame_release in xmax.h for the public contract.
  */
 void XMAX_CALL xmax_media_frame_release(
     xmax_media_frame frame
@@ -2245,16 +2129,7 @@ void XMAX_CALL xmax_media_frame_release(
 /**
  * Binds external input and returns a receiver scoped to this source's lifetime.
  *
- * @param[in] realtime The controller, disconnected and either idle or media-ready.
- * @param[in] format The external input's exact dimensions and frame rate, copied during this call.
- * @param[out] out_sink Receives an owned source receiver; cleared to NULL on failure.
- *
- * @return XMAX_OK on success, or a negative error code on failure.
- *
- * @note This call blocks; use a worker thread. Binding does not wait for a frame or preview. Source capture,
- * permissions, and pacing remain your
- * app's responsibility. Supply frames while startup is waiting for its first result. Replaced bindings
- * silently discard subsequent frames and errors. Release the receiver with xmax_external_frame_sink_release.
+ * @see xmax_realtime_bind_external_video in xmax.h for the public contract.
  */
 xmax_result XMAX_CALL xmax_realtime_bind_external_video(
     xmax_realtime realtime,
@@ -2281,10 +2156,7 @@ xmax_result XMAX_CALL xmax_realtime_bind_external_video(
 /**
  * Returns the input format retained when this source receiver was created.
  *
- * @param[in] sink A valid source receiver.
- * @param[out] format Receives the required input dimensions and frame rate, even after unbinding.
- *
- * @return XMAX_OK on success, or a negative error code on failure.
+ * @see xmax_external_frame_sink_get_format in xmax.h for the public contract.
  */
 xmax_result XMAX_CALL xmax_external_frame_sink_get_format(
     xmax_external_frame_sink sink,
@@ -2330,13 +2202,7 @@ xmax_result XMAX_CALL xmax_external_frame_sink_is_requesting_frames(
 /**
  * Copies and submits a source-bound video frame without scaling, rotation, or pixel mirroring.
  *
- * @param[in] sink The receiver returned when this source was bound.
- * @param[in] frame The borrowed BGRA, NV12, or I420 pixels matching the bound format. Negative, duplicate, or
- * decreasing monotonic microsecond timestamps are ignored. Pixels can be reused after return but must
- * not be changed concurrently.
- *
- * @return XMAX_OK for submission, ignored timestamps, or a stale binding; XMAX_MEDIA_ERROR for invalid
- * current pixels, which also fails the binding and schedules connection/media cleanup.
+ * @see xmax_external_frame_sink_push_video_frame in xmax.h for the public contract.
  */
 xmax_result XMAX_CALL xmax_external_frame_sink_push_video_frame(
     xmax_external_frame_sink sink,
@@ -2359,14 +2225,7 @@ xmax_result XMAX_CALL xmax_external_frame_sink_push_video_frame(
 /**
  * Reports an unrecoverable source failure and schedules cleanup of its media and realtime connection.
  *
- * @param[in] sink The receiver whose capture or processing chain failed; stale errors are ignored.
- * @param[in] error The copied failure details with struct_size initialized and a negative code. message
- * must contain NUL-terminated UTF-8; service and HTTP codes are retained when present.
- *
- * @return XMAX_OK when the report is accepted or stale, or a negative error code for invalid arguments.
- *
- * @note This call does not wait for cleanup. Observe the failure and idle state through event polling.
- * Duplicate reports for the same binding are ignored. Your app retains ownership of its capture resources.
+ * @see xmax_external_frame_sink_report_error in xmax.h for the public contract.
  */
 xmax_result XMAX_CALL xmax_external_frame_sink_report_error(
     xmax_external_frame_sink sink,
@@ -2398,7 +2257,7 @@ xmax_result XMAX_CALL xmax_external_frame_sink_report_error(
 /**
  * Releases a source receiver without stopping caller-owned capture or unbinding the controller's source.
  *
- * @param[in] sink The receiver handle to release, or NULL.
+ * @see xmax_external_frame_sink_release in xmax.h for the public contract.
  */
 void XMAX_CALL xmax_external_frame_sink_release(
     xmax_external_frame_sink sink

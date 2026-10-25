@@ -3,6 +3,10 @@ build/
 out/
 Vendor/
 .DS_Store
+.vs/
+/Backup/
+/UpgradeLog*.htm
+/UpgradeLog*.xml
 *.user
 *.suo
 CMakeUserPresets.json

@@ -18,6 +18,9 @@ if (!$DependencyNoticesDirectory) {
     $candidate = Join-Path (Split-Path $NativeDirectory) 'licenses'
     if (Test-Path $candidate) { $DependencyNoticesDirectory = $candidate }
 }
+if ((Test-Path (Join-Path $NativeDirectory 'agora_rtc_sdk.dll')) -and !$DependencyNoticesDirectory) {
+    throw 'Agora dependency notices are required. Use an extracted SDK package or provide -DependencyNoticesDirectory.'
+}
 if ($DependencyNoticesDirectory) {
     $DependencyNoticesDirectory = [IO.Path]::GetFullPath($DependencyNoticesDirectory)
     if (!(Test-Path $DependencyNoticesDirectory -PathType Container)) { throw 'Dependency notices directory does not exist.' }

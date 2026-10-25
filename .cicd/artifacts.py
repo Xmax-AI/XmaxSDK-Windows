@@ -14,9 +14,39 @@ import struct
 import subprocess
 import sys
 import zipfile
+import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parent.parent
 REPOSITORY = 'Xmax-AI/XmaxSDK-Windows'
+
+def managed_asset_names(version: str) -> list[str]:
+    return [*(f'{package}.{version}.nupkg' for package in ['Xmax.SDK','Xmax.SDK.Wpf','Xmax.SDK.WinUI']),
+            *(f'{demo}-{version}-win-x64.zip' for demo in ['XLabWpf','XLabWinUI'])]
+
+def check_managed_archive(path: Path, version: str, native_sha256: str) -> None:
+    """Check package identity and the native runtime shared by every distributable app."""
+    with zipfile.ZipFile(path) as archive:
+        names = archive.namelist()
+        if path.suffix == '.nupkg':
+            specs = [name for name in names if name.endswith('.nuspec')]
+            if len(specs) != 1: raise ValueError('Expected one NuGet specification: '+path.name)
+            metadata = ET.fromstring(archive.read(specs[0])).find('{*}metadata')
+            package_id = path.name.removesuffix(f'.{version}.nupkg')
+            if metadata is None or metadata.findtext('{*}version') != version or metadata.findtext('{*}id') != package_id:
+                raise ValueError('NuGet identity differs from the release: '+path.name)
+            documents = [name for name in names if name.startswith('lib/') and name.endswith('/'+package_id+'.xml')]
+            if len(documents) != 1:
+                raise ValueError('NuGet package is missing its XML API documentation: '+path.name)
+            documentation = ET.fromstring(archive.read(documents[0]))
+            if documentation.findtext('assembly/name') != package_id or not documentation.findall('members/member'):
+                raise ValueError('NuGet XML API documentation is empty or belongs to another assembly: '+path.name)
+            if package_id in ['Xmax.SDK.Wpf', 'Xmax.SDK.WinUI']:
+                return # UI packages reference Xmax.SDK for the native runtime.
+        binaries = [name for name in names if name.split('/')[-1] == 'XmaxSDK.dll']
+        if len(binaries) != 1 or hashlib.sha256(archive.read(binaries[0])).hexdigest() != native_sha256:
+            raise ValueError('Managed package native DLL differs from the validated SDK: '+path.name)
+        if not any(name.startswith('licenses/native/') and not name.endswith('/') for name in names):
+            raise ValueError('Managed package is missing native dependency notices: '+path.name)
 
 def sha256(path: Path) -> str:
     digest = hashlib.sha256()
