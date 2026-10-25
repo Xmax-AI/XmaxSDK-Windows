@@ -105,10 +105,10 @@ struct CameraMetrics {
                 XMAX_LOG_DEBUG,
                 [&](auto language) {
                     return XmaxLogger::localized(
-                        language,
-                        "摄像头处理性能 (Camera Pipeline Performance)",
-                        "Camera Pipeline Performance"
-                    ) +
+                               language,
+                               "摄像头处理性能 (Camera Pipeline Performance)",
+                               "Camera Pipeline Performance"
+                           ) +
                            "\n├─ input=" + std::to_string(width) + "x" + std::to_string(height) +
                            ", output_fps=" + std::to_string(count / seconds) +
                            "\n├─ validation_avg_ms=" + std::to_string(validation_ms / count) +
@@ -131,7 +131,8 @@ struct CameraMetrics {
  * failure, or cancellation.
  *
  * @param[in] device The UTF-8 camera identifier; an empty string selects the default camera.
- * @param[in] format The requested pixel dimensions and frame rate, subject to the interface's format limits.
+ * @param[in] format The requested pixel dimensions and frame rate, subject to the interface's format
+ * limits.
  * @param[in] output The synchronous native-thread callbacks for capture frames and errors.
  * @param[in] cancel A cooperative cancellation predicate; true requests termination of the operation.
  */
@@ -147,10 +148,10 @@ void CameraController::start(
         XMAX_LOG_INFO,
         [&](auto language) {
             return XmaxLogger::localized(
-                language,
-                "准备摄像头 (Prepare Camera)",
-                "Prepare Camera"
-            ) +
+                       language,
+                       "准备摄像头 (Prepare Camera)",
+                       "Prepare Camera"
+                   ) +
                    "\n└─ " +
                    std::to_string(format.width) + " × " + std::to_string(format.height) + " @ " +
                    std::to_string(format.fps) + " fps";

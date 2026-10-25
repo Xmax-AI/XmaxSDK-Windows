@@ -9,12 +9,26 @@
 //
 
 #include "Core/Realtime/XmaxRealtimeManager.hpp"
+#include "Core/Realtime/XmaxRealtimeFactory.hpp"
 #include "Foundation/Logging/XmaxLogger.hpp"
 #include "Service/Media/MediaService.hpp"
 #include <algorithm>
 #include <cstring>
 
 namespace xmax::detail {
+
+/**
+ * The lifecycle owner shared by realtime workflow methods.
+ */
+using Lifecycle = XmaxRealtimeLifecycleManager;
+/**
+ * The operation categories used for foreground resource admission.
+ */
+using OperationKind = Lifecycle::OperationKind;
+/**
+ * The resource boundaries used for coordinated termination.
+ */
+using Scope = Lifecycle::TerminationScope;
 
 /**
  * Copies event text into a fixed-capacity buffer, preserving a trailing NUL.
@@ -58,12 +72,16 @@ XmaxRealtimeManager::XmaxRealtimeManager(
     CameraFactory camera,
     std::shared_ptr<QualityHistory> history
 )
-    : api_(std::move(api)), connection_(api_), stream_(
-        std::move(factory),
-        std::move(history)
-    ),
-      media_(std::move(camera)), heartbeat_interval_(heartbeat),
-      coordinator_(
+    : api_(std::move(api)),
+      connection_(api_),
+      stream_(
+          std::move(factory),
+          std::move(history)
+      ),
+      media_(std::move(camera)),
+      generation_(media_.interaction),
+      heartbeat_interval_(heartbeat),
+      lifecycle_(
           [this] { this->heartbeat(); },
           [this](Error error) { fail(std::move(error)); }
       ) {
@@ -76,6 +94,17 @@ XmaxRealtimeManager::XmaxRealtimeManager(
         heartbeat.count() > 0,
         XMAX_INVALID_ARGUMENT,
         "Invalid heartbeat interval"
+    );
+    XmaxRealtimeFactory::assemble(
+        lifecycle_,
+        errors_,
+        [this](Scope scope) { return cleanup(scope); },
+        [this](const RealtimeState& state) {
+            std::lock_guard<std::mutex> lock(interaction_mutex_);
+            interaction_task_ = state.connection_state == XMAX_GENERATING ? state.task_id : "";
+            if (state.connection_state != XMAX_GENERATING)
+                render_.trajectory.clear();
+        }
     );
 }
 
@@ -99,7 +128,7 @@ void XmaxRealtimeManager::shutdown() noexcept {
             } catch (...) {
             }
             render_.shutdown_output();
-            coordinator_.shutdown();
+            lifecycle_.shutdown();
         }
     );
 }
@@ -112,51 +141,29 @@ void XmaxRealtimeManager::shutdown() noexcept {
 void XmaxRealtimeManager::change_state(
     xmax_state state
 ) {
-    {
-        std::lock_guard<std::mutex> lock(interaction_mutex_);
-        interaction_task_ = state == XMAX_GENERATING ? stream_.task() : "";
-        if (state != XMAX_GENERATING)
-            render_.trajectory.clear();
-    }
-    coordinator_.state(state);
-    if (!connection_.active().id.empty())
-        last_session_id_ = connection_.active().id;
-    if (!stream_.task().empty())
-        last_task_id_ = stream_.task();
+    const auto previous = lifecycle_.snapshot();
+    lifecycle_.commit({state, connection_.active().id.empty() ? previous.event.session_id : connection_.active().id, state == XMAX_GENERATING ? stream_.task() : ""});
+}
 
-    xmax_event event{};
-    event.type = XMAX_EVENT_STATE;
-    event.state = state;
-    event.code = errors_.error() ? errors_.error()->code : XMAX_OK;
-    text_copy(
-        event.session_id,
-        sizeof(event.session_id),
-        last_session_id_
-    );
-    text_copy(
-        event.task_id,
-        sizeof(event.task_id),
-        last_task_id_
-    );
-    coordinator_.emit(
-        event,
-        errors_.reason(),
-        errors_.error()
-    );
-    XmaxLogger::write(
-        LogCategory::Realtime,
-        XMAX_LOG_INFO,
-        [&](auto language) {
-            static const char*
-                names[]{"idle", "ready", "connecting", "connected", "generating", "disconnecting", "preparing"};
-            return XmaxLogger::localized(
-                language,
-                "状态更新 (State Changed)",
-                "State Changed"
-            ) +
-                   "\n├─ " +
-                   names[state] + "\n├─ session=" + connection_.active().id + "\n└─ task=" + stream_.task();
-        }
+/**
+ * Stages final state and startup bookkeeping until the operation releases admission.
+ *
+ * @param[in] state The operation's successful phase.
+ * @param[in] token The current operation token.
+ * @param[in] completed Optional bookkeeping performed after state publication.
+ */
+void XmaxRealtimeManager::complete_state(
+    xmax_state state,
+    const Lifecycle::Token& token,
+    std::function<void()> completed
+) {
+    const auto previous = lifecycle_.snapshot();
+    lifecycle_.complete(
+        {state,
+         connection_.active().id.empty() ? previous.event.session_id : connection_.active().id,
+         state == XMAX_GENERATING ? stream_.task() : ""},
+        token,
+        std::move(completed)
     );
 }
 
@@ -164,48 +171,53 @@ void XmaxRealtimeManager::change_state(
  * Binds external video input and enters the media-ready state.
  *
  * @param[in] format The input dimensions and frame rate; see xmax_video_format for limits.
+ * @param[in] has_audio Whether the source provides PCM upload without microphone capture.
  *
  * @return The revision identifying this external source binding.
  */
 uint64_t XmaxRealtimeManager::prepare(
-    xmax_video_format format
+    xmax_video_format format,
+    bool has_audio
 ) {
     uint64_t binding = 0;
-    coordinator_.sync([this, format, &binding] {
-        require(
-            coordinator_.state() == XMAX_IDLE || coordinator_.state() == XMAX_READY,
-            XMAX_INVALID_STATE,
-            "Disconnect before replacing an external source"
-        );
-
-        const auto resolved = MediaService::input(format);
-        require(
-            resolved.width >= 4 && resolved.height >= 4,
-            XMAX_INVALID_ARGUMENT,
-            "External video dimensions must be at least 4 pixels"
-        );
-        errors_.reset();
-        change_state(XMAX_PREPARING);
-        bind_local();
-        media_.prepare_external(
-            resolved,
-            media_epoch_.load()
-        );
-        binding = media_epoch_;
-        camera_microphone_ = false;
-        change_state(XMAX_READY);
-    });
+    lifecycle_.run(
+        OperationKind::Media,
+        [this, format, has_audio, &binding](const Lifecycle::Token& token) {
+            require(
+                lifecycle_.state() == XMAX_IDLE || lifecycle_.state() == XMAX_READY,
+                XMAX_INVALID_STATE,
+                "Disconnect before replacing an external source"
+            );
+            const auto resolved = MediaService::input(format);
+            token.failure_scope(Scope::All);
+            errors_.reset();
+            change_state(XMAX_PREPARING);
+            bind_local();
+            media_.prepare_external(
+                resolved,
+                media_epoch_.load(),
+                has_audio
+            );
+            token.ensure_current();
+            binding = media_epoch_;
+            camera_microphone_ = false;
+            complete_state(
+                XMAX_READY,
+                token
+            );
+        }
+    );
     return binding;
 }
 
 /**
- * Reports whether external input requests frames without waiting for lifecycle work.
+ * Reports whether external input accepts preview and publication frames.
  *
- * @return True when external input requests frames; false for camera mode or no request.
+ * @return True for a live external binding, including while disconnected; false for camera mode or failed input.
  */
 bool XmaxRealtimeManager::requesting() const {
-    return !media_.camera_active() && input_epoch_.load() == coordinator_.epoch() &&
-           media_.external().requesting();
+    return !media_.camera_active() && failed_media_epoch_ != media_epoch_.load() &&
+           media_.external().bound();
 }
 
 /**
@@ -218,9 +230,9 @@ void XmaxRealtimeManager::bind_local() {
     render_.bind_local(token);
     media_.external().preview(
         [this, token](Frame frame) { render_.receive_local(
-            std::move(frame),
-            token
-        ); },
+                                         std::move(frame),
+                                         token
+                                     ); },
         token
     );
 }
@@ -236,29 +248,13 @@ std::function<void(Error)> XmaxRealtimeManager::media_failure(
     uint64_t token
 ) {
     return [this, token](Error error) {
-        coordinator_.enqueue([this, token, error] {
-            if (media_epoch_ != token || !media_.camera_active())
-                return;
-
-            errors_.record(error);
-            coordinator_.invalidate();
-            cleanup(true);
-
-            xmax_event event{};
-            event.type = XMAX_EVENT_ERROR;
-            event.code = error.code;
-            event.state = coordinator_.state();
-            text_copy(
-                event.message,
-                sizeof(event.message),
-                XmaxLogger::redact(error.what())
-            );
-            coordinator_.emit(
-                event,
-                XMAX_REASON_FAILURE,
-                &error
-            );
-        });
+        errors_.forward(
+            std::move(error),
+            Scope::All,
+            [this, token] {
+                return media_epoch_ == token && media_.camera_active();
+            }
+        );
     };
 }
 
@@ -285,46 +281,30 @@ void XmaxRealtimeManager::external_failure(
         if (binding == 0 || binding != media_epoch_ || failed_media_epoch_ == binding ||
             media_.camera_active() || !media_.external().bound())
             return;
-
         failed_media_epoch_ = binding;
-        ++generation_request_;
-        coordinator_.invalidate();
     }
-    coordinator_.enqueue([this, binding, error = std::move(error)] {
-        if (media_epoch_ != binding)
-            return;
-
-        errors_.record(error);
-        cleanup(true);
-
-        xmax_event event{};
-        event.type = XMAX_EVENT_ERROR;
-        event.code = error.code;
-        event.state = coordinator_.state();
-        text_copy(
-            event.message,
-            sizeof(event.message),
-            XmaxLogger::redact(error.what())
-        );
-        coordinator_.emit(
-            event,
-            XMAX_REASON_FAILURE,
-            &error
-        );
-    });
+    errors_.forward(
+        std::move(error),
+        Scope::All,
+        [this, binding] {
+            return media_epoch_ == binding && failed_media_epoch_ == binding;
+        }
+    );
 }
 
 /**
- * Reports whether a particular external source currently supplies the active connection.
+ * Reports whether a source binding accepts frames for preview and publication.
  *
  * @param[in] binding The revision returned when this source was bound.
  *
- * @return False for stale bindings, camera mode, or inactive publication.
+ * @return True for a live binding, including while disconnected; false after failure or unbinding.
  */
 bool XmaxRealtimeManager::requesting(
     uint64_t binding
 ) const {
-    return binding != 0 && media_epoch_ == binding && requesting();
+    std::lock_guard<std::mutex> lock(media_binding_mutex_);
+    return binding != 0 && media_epoch_ == binding && failed_media_epoch_ != binding &&
+           !media_.camera_active() && media_.external().bound();
 }
 
 /**
@@ -337,12 +317,36 @@ void XmaxRealtimeManager::push(
     const xmax_video_frame& frame,
     uint64_t binding
 ) {
-    if (binding == 0 || media_epoch_ != binding || media_.camera_active())
+    if (binding == 0 || media_epoch_ != binding || failed_media_epoch_ == binding || media_.camera_active())
         return;
-    media_.external().push(
-        frame,
-        binding
-    );
+    try {
+        media_.external().push(
+            frame,
+            binding
+        );
+    } catch (const Error& error) {
+        const Error source_error(
+            XMAX_MEDIA_ERROR,
+            error.what(),
+            error.api_code,
+            error.http_status
+        );
+        external_failure(
+            binding,
+            source_error
+        );
+        throw source_error;
+    } catch (...) {
+        const Error source_error(
+            XMAX_MEDIA_ERROR,
+            "Could not process external video pixels"
+        );
+        external_failure(
+            binding,
+            source_error
+        );
+        throw source_error;
+    }
 }
 
 /**
@@ -358,68 +362,60 @@ void XmaxRealtimeManager::prepare_camera(
     xmax_video_format format,
     bool microphone
 ) {
-    const auto epoch = coordinator_.epoch();
-    coordinator_.sync([this, device = std::move(device), format, microphone, epoch] {
-        require(
-            !coordinator_.cancellation(epoch)(),
-            XMAX_CANCELLED,
-            "Camera startup cancelled"
-        );
-        require(
-            coordinator_.state() == XMAX_IDLE || coordinator_.state() == XMAX_READY,
-            XMAX_INVALID_STATE,
-            "Disconnect before replacing local media"
-        );
-
-        const auto resolved = MediaService::camera_input(format);
-        errors_.reset();
-        change_state(XMAX_PREPARING);
-        bind_local();
-
-        try {
+    lifecycle_.run(
+        OperationKind::Media,
+        [this, device = std::move(device), format, microphone](const Lifecycle::Token& token) {
+            require(
+                lifecycle_.state() == XMAX_IDLE || lifecycle_.state() == XMAX_READY,
+                XMAX_INVALID_STATE,
+                "Disconnect before replacing local media"
+            );
+            const auto resolved = MediaService::camera_input(format);
+            token.failure_scope(Scope::All);
+            errors_.reset();
+            change_state(XMAX_PREPARING);
+            bind_local();
             media_.prepare_camera(
                 device,
                 resolved,
                 media_failure(media_epoch_),
-                coordinator_.cancellation(epoch)
+                token.cancellation()
             );
+            token.ensure_current();
             camera_microphone_ = microphone;
             stream_.volume(0);
-            change_state(XMAX_READY);
-        } catch (...) {
-            try {
-                throw;
-            } catch (const Error& error) {
-                errors_.record(error);
-            } catch (...) {
-                errors_.record(Error(
-                    XMAX_INTERNAL_ERROR,
-                    "Camera preparation failed"
-                ));
-            }
-            media_.close();
-            unbind_local();
-            change_state(XMAX_IDLE);
-            throw;
+            complete_state(
+                XMAX_READY,
+                token
+            );
         }
-    });
+    );
 }
 
 /**
  * Releases local capture and input bindings after disconnection.
  */
 void XmaxRealtimeManager::stop_media() {
-    coordinator_.sync([this] {
-        require(
-            coordinator_.state() == XMAX_IDLE || coordinator_.state() == XMAX_READY,
-            XMAX_INVALID_STATE,
-            "Disconnect before stopping local media"
-        );
-        media_.close();
-        unbind_local();
-        camera_microphone_ = false;
-        change_state(XMAX_IDLE);
-    });
+    lifecycle_.run(
+        OperationKind::Media,
+        [this](const Lifecycle::Token& token) {
+            require(
+                lifecycle_.state() == XMAX_IDLE || lifecycle_.state() == XMAX_READY,
+                XMAX_INVALID_STATE,
+                "Disconnect before stopping local media"
+            );
+            token.failure_scope(Scope::All);
+            media_.close();
+            unbind_local();
+            camera_microphone_ = false;
+            token.ensure_current();
+            errors_.reset();
+            complete_state(
+                XMAX_IDLE,
+                token
+            );
+        }
+    );
 }
 
 /**
@@ -443,7 +439,8 @@ void XmaxRealtimeManager::push(
  * Creates a server session and joins RTC, rolling back allocated resources on cancellation or failure.
  *
  * @param[in] cancel A cooperative cancellation predicate; true requests termination of the operation.
- * @param[in] epoch The cancellation revision captured when the operation starts, used to reject stale work.
+ * @param[in] epoch The cancellation revision captured when the operation starts, used to reject stale
+ * work.
  * @param[in] microphone Whether to start microphone capture when joining the RTC room.
  */
 void XmaxRealtimeManager::connect_impl(
@@ -457,7 +454,7 @@ void XmaxRealtimeManager::connect_impl(
         "Operation cancelled"
     );
     require(
-        coordinator_.state() == XMAX_READY,
+        lifecycle_.state() == XMAX_READY,
         XMAX_INVALID_STATE,
         "Prepare local media before connecting"
     );
@@ -467,7 +464,7 @@ void XmaxRealtimeManager::connect_impl(
         "An Xmax API Key is required"
     );
     errors_.reset();
-    timing_.begin();
+    timing_.begin_session();
     change_state(XMAX_CONNECTING);
 
     connection_.create(
@@ -479,64 +476,71 @@ void XmaxRealtimeManager::connect_impl(
 
     RtcCallbacks callbacks;
     callbacks.published = [this, epoch, publication = timing_.publication()] {
-        if (coordinator_.epoch() != epoch)
+        if (lifecycle_.epoch() != epoch)
             return;
 
         if (!RealtimeTiming::published(
-            publication,
-            Clock::now()
-        ))
+                publication,
+                Clock::now()
+            ))
             return;
 
-        coordinator_.enqueue([this, epoch, publication] {
-            if (coordinator_.epoch() == epoch && coordinator_.state() == XMAX_GENERATING &&
+        lifecycle_.enqueue([this, epoch, publication] {
+            if (lifecycle_.epoch() == epoch && lifecycle_.state() == XMAX_GENERATING &&
                 timing_.update_publication(publication))
-                coordinator_.emit(timing_.snapshot());
+                emit_timing(timing_.snapshot());
         });
     };
     callbacks.frame = [this, epoch](Frame frame) {
-        if (coordinator_.epoch() == epoch)
+        if (lifecycle_.epoch() == epoch)
             render_.receive(
                 std::move(frame),
                 epoch
             );
     };
     callbacks.audio = [this, epoch](AudioFrame frame) {
-        if (coordinator_.epoch() == epoch)
+        if (lifecycle_.epoch() == epoch)
             render_.receive_audio(
                 std::move(frame),
                 epoch
             );
     };
+    callbacks.statistics = [this, epoch](xmax_video_statistics statistics) {
+        std::lock_guard<std::mutex> lock(statistics_mutex_);
+        if (lifecycle_.epoch() == epoch && statistics.direction >= 0 && statistics.direction <= 1)
+            statistics_[statistics.direction] = statistics;
+    };
     callbacks.event = [this, epoch](xmax_event event) {
-        if (coordinator_.epoch() != epoch)
+        if (lifecycle_.epoch() != epoch)
             return;
-        coordinator_.emit(event);
+        lifecycle_.emit(event);
         if (event.type == XMAX_EVENT_STATISTICS && event.quality >= 0) {
             const double sampled = std::chrono::duration<double>(Clock::now().time_since_epoch()).count();
-            coordinator_.enqueue([this, epoch, event, sampled] {
-                if (coordinator_.epoch() != epoch || coordinator_.state() != XMAX_GENERATING)
+            lifecycle_.enqueue_adaptive([this, epoch, event, sampled](const Lifecycle::Token& token) {
+                if (lifecycle_.epoch() != epoch || lifecycle_.state() != XMAX_GENERATING)
                     return;
                 for (auto result : stream_.observe_quality(
-                    event.direction,
-                    event.quality,
-                    sampled,
-                    coordinator_.cancellation(epoch)
-                ))
-                    coordinator_.emit(result);
+                         event.direction,
+                         event.quality,
+                         sampled,
+                         token.cancellation()
+                     ))
+                    lifecycle_.emit(result);
             });
         }
     };
     callbacks.failure = [this, epoch](Error error) {
-        coordinator_.enqueue([this, epoch, error] {
-            if (coordinator_.epoch() == epoch && !connection_.active().id.empty())
-                fail(error);
-        });
+        errors_.forward(
+            std::move(error),
+            Scope::Connection,
+            [this, epoch] { return lifecycle_.epoch() == epoch; }
+        );
     };
+    stream_.external_audio(media_.external().has_audio());
     connection_.join(
         stream_,
         media_.external().format(),
-        microphone || camera_microphone_,
+        !media_.external().has_audio() && (microphone || camera_microphone_),
         std::move(callbacks),
         cancel,
         MediaService::generation(media_.external().format())
@@ -547,20 +551,24 @@ void XmaxRealtimeManager::connect_impl(
         "Operation cancelled"
     );
     render_.bind(epoch);
-    input_epoch_ = epoch;
     timing_.begin_publication();
-    media_.external().start([this, connection_cancel = coordinator_.cancellation(epoch)](const Frame& frame) {
-        if (!connection_cancel())
-            stream_.push(frame);
-    });
+    media_.external().start(
+        [this, connection_cancel = lifecycle_.cancellation(epoch)](const Frame& frame) {
+            if (!connection_cancel())
+                stream_.push(frame);
+        },
+        [this, connection_cancel = lifecycle_.cancellation(epoch)](const ExternalAudioPacket& frame) {
+            if (!connection_cancel())
+                stream_.push_audio(frame);
+        }
+    );
     require(
         !cancel(),
         XMAX_CANCELLED,
         "Operation cancelled"
     );
     timing_.finish_join();
-    change_state(XMAX_CONNECTED);
-    coordinator_.deadline(Clock::now() + heartbeat_interval_);
+    lifecycle_.deadline(Clock::now() + heartbeat_interval_);
 }
 
 /**
@@ -571,38 +579,26 @@ void XmaxRealtimeManager::connect_impl(
 void XmaxRealtimeManager::connect(
     bool microphone
 ) {
-    const auto epoch = coordinator_.epoch();
-    coordinator_.sync([this, microphone, epoch] {
-        require(
-            coordinator_.state() == XMAX_READY,
-            XMAX_INVALID_STATE,
-            "Media is not ready or a connection already exists"
-        );
-
-        try {
+    lifecycle_.run(
+        OperationKind::Connection,
+        [this, microphone](const Lifecycle::Token& token) {
+            require(
+                lifecycle_.state() == XMAX_READY,
+                XMAX_INVALID_STATE,
+                "Media is not ready or a connection already exists"
+            );
+            token.failure_scope(Scope::Connection);
             connect_impl(
-                coordinator_.cancellation(epoch),
-                epoch,
+                token.cancellation(),
+                lifecycle_.epoch(),
                 microphone
             );
-        } catch (...) {
-            auto original = std::current_exception();
-            try {
-                std::rethrow_exception(original);
-            } catch (const Error& error) {
-                errors_.record(error);
-            } catch (...) {
-                errors_.record(Error(
-                    XMAX_INTERNAL_ERROR,
-                    "Realtime operation failed"
-                ));
-            }
-
-            coordinator_.invalidate();
-            cleanup(false);
-            std::rethrow_exception(original);
+            complete_state(
+                XMAX_CONNECTED,
+                token
+            );
         }
-    });
+    );
 }
 
 /**
@@ -610,17 +606,19 @@ void XmaxRealtimeManager::connect(
  *
  * @param[in] context The prompt, reference image, and face-restoration conditions for this generation.
  * @param[in] cancel A cooperative cancellation predicate; true requests termination of the operation.
+ *
+ * @return True when a new task reached its first result; false when existing conditions were updated.
  */
-void XmaxRealtimeManager::generate_impl(
+bool XmaxRealtimeManager::generate_impl(
     const Context& context,
     const Cancel& cancel
 ) {
     const auto maintain = [this, cancel] {
-        if (Clock::now() >= coordinator_.deadline())
+        if (Clock::now() >= lifecycle_.deadline())
             keepalive(cancel);
     };
 
-    if (coordinator_.state() == XMAX_GENERATING) {
+    if (lifecycle_.state() == XMAX_GENERATING) {
         generation_.run(
             stream_,
             context,
@@ -628,11 +626,11 @@ void XmaxRealtimeManager::generate_impl(
             cancel,
             maintain
         );
-        return;
+        return false;
     }
 
     require(
-        coordinator_.state() == XMAX_CONNECTED,
+        lifecycle_.state() == XMAX_CONNECTED,
         XMAX_INVALID_STATE,
         "No realtime connection is active"
     );
@@ -646,16 +644,14 @@ void XmaxRealtimeManager::generate_impl(
         cancel,
         maintain
     );
-    coordinator_.deadline(Clock::now() + heartbeat_interval_);
+    lifecycle_.deadline(Clock::now() + heartbeat_interval_);
     require(
         !cancel(),
         XMAX_CANCELLED,
         "Operation cancelled"
     );
     timing_.finish_signal();
-    coordinator_.emit(timing_.snapshot());
-    change_state(XMAX_GENERATING);
-    coordinator_.deadline(Clock::now() + heartbeat_interval_);
+    return true;
 }
 
 /**
@@ -715,7 +711,7 @@ void XmaxRealtimeManager::update(
     bool face
 ) {
     require(
-        coordinator_.state() == XMAX_GENERATING,
+        lifecycle_.state() == XMAX_GENERATING,
         XMAX_INVALID_STATE,
         "No generation is active"
     );
@@ -735,82 +731,71 @@ void XmaxRealtimeManager::request_generation(
     std::optional<Context> context,
     bool microphone
 ) {
-    const auto request = ++generation_request_;
-    coordinator_.sync([this, incoming = std::move(context), microphone, request] {
-        require(
-            generation_request_ == request,
-            XMAX_CANCELLED,
-            "Generation request superseded or cancelled"
-        );
-        require(
-            incoming.has_value() || generation_.context.has_value(),
-            XMAX_INVALID_ARGUMENT,
-            "Initial generation conditions are required"
-        );
-        require(
-            coordinator_.state() == XMAX_READY || coordinator_.state() == XMAX_CONNECTED ||
-                coordinator_.state() == XMAX_GENERATING,
-            XMAX_INVALID_STATE,
-            "Prepare local media before generation"
-        );
-
-        const auto value = incoming ? *incoming : *generation_.context;
-        const auto previous_context = generation_.context;
-        const auto epoch = coordinator_.epoch();
-        const auto cancel = [this, epoch, request] {
-            return coordinator_.epoch() != epoch || generation_request_ != request;
-        };
-        const auto retain_connection = coordinator_.state() != XMAX_READY;
-        try {
-            if (!retain_connection)
-                connect_impl(
-                    cancel,
-                    epoch,
-                    microphone
-                );
-            generate_impl(
-                value,
-                cancel
+    lifecycle_.run(
+        OperationKind::Generation,
+        [this, incoming = std::move(context), microphone](const Lifecycle::Token& token) {
+            require(
+                incoming.has_value() || generation_.context.has_value(),
+                XMAX_INVALID_ARGUMENT,
+                "Initial generation conditions are required"
             );
             require(
-                !cancel(),
-                XMAX_CANCELLED,
-                "Generation request superseded or cancelled"
+                lifecycle_.state() == XMAX_READY || lifecycle_.state() == XMAX_CONNECTED || lifecycle_.state() == XMAX_GENERATING,
+                XMAX_INVALID_STATE,
+                "Prepare local media before generation"
             );
-        } catch (...) {
-            generation_.context = previous_context;
-            const auto original = std::current_exception();
-            const bool replaced = generation_request_ != request && coordinator_.epoch() == epoch;
-            if (replaced && retain_connection) {
-                try {
-                    stream_.stop_generation(coordinator_.cancellation(epoch));
-                    generation_.reset(false);
-                    render_.trajectory.clear();
-                    errors_.reset();
+            const auto value = incoming ? *incoming : *generation_.context;
+            const auto previous_context = generation_.context;
+            const auto cancel = token.cancellation();
+            const auto retain_connection = lifecycle_.state() != XMAX_READY;
+            const auto measures_startup = lifecycle_.state() != XMAX_GENERATING;
+            token.failure_scope(Scope::Connection);
+            if (measures_startup)
+                timing_.begin();
+            try {
+                if (!retain_connection) {
+                    connect_impl(
+                        cancel,
+                        lifecycle_.epoch(),
+                        microphone
+                    );
                     change_state(XMAX_CONNECTED);
-                    coordinator_.deadline(Clock::now() + heartbeat_interval_);
-                } catch (...) {
-                    coordinator_.invalidate();
-                    cleanup(false);
                 }
-            } else {
-                try {
-                    std::rethrow_exception(original);
-                } catch (const Error& error) {
-                    if (error.code != XMAX_CANCELLED)
-                        errors_.record(error);
-                } catch (...) {
-                    errors_.record(Error(
-                        XMAX_INTERNAL_ERROR,
-                        "Realtime operation failed"
-                    ));
+                const auto started = generate_impl(
+                    value,
+                    cancel
+                );
+                token.ensure_current();
+                complete_state(
+                    XMAX_GENERATING,
+                    token,
+                    [this, started] {
+                        if (started) {
+                            timing_.finish();
+                            emit_timing(timing_.snapshot());
+                        }
+                    }
+                );
+            } catch (...) {
+                generation_.context = previous_context;
+                if (measures_startup) {
+                    try {
+                        throw;
+                    } catch (const Error& error) {
+                        if (const auto timing = timing_.failure(error))
+                            emit_timing(*timing);
+                    } catch (...) {
+                        if (const auto timing = timing_.failure(Error(
+                                XMAX_INTERNAL_ERROR,
+                                "Generation startup failed"
+                            )))
+                            emit_timing(*timing);
+                    }
                 }
-                coordinator_.invalidate();
-                cleanup(false);
+                throw;
             }
-            std::rethrow_exception(original);
         }
-    });
+    );
 }
 
 /**
@@ -821,26 +806,23 @@ void XmaxRealtimeManager::request_generation(
 void XmaxRealtimeManager::switch_camera(
     std::string device
 ) {
-    const auto epoch = coordinator_.epoch();
-    coordinator_.sync([this, device = std::move(device), epoch] {
-        const auto state = coordinator_.state();
-        require(
-            media_.camera_active() &&
-                (state == XMAX_READY || state == XMAX_CONNECTED || state == XMAX_GENERATING),
-            XMAX_INVALID_STATE,
-            "No switchable camera stream is active"
-        );
-
-        const auto cancel = coordinator_.cancellation(epoch);
-
-        try {
+    lifecycle_.run(
+        OperationKind::CameraSwitch,
+        [this, device = std::move(device)](const Lifecycle::Token& token) {
+            const auto state = lifecycle_.state();
+            require(
+                media_.camera_active() && (state == XMAX_READY || state == XMAX_CONNECTED || state == XMAX_GENERATING),
+                XMAX_INVALID_STATE,
+                "No switchable camera stream is active"
+            );
+            token.failure_scope(Scope::All);
+            const auto cancel = token.cancellation();
+            const auto epoch = lifecycle_.epoch();
             media_.stop();
-
             if (state == XMAX_GENERATING) {
                 stream_.stop_generation(cancel);
                 change_state(XMAX_CONNECTED);
             }
-
             render_.unbind(epoch);
             bind_local();
             media_.switch_camera(
@@ -848,59 +830,42 @@ void XmaxRealtimeManager::switch_camera(
                 media_failure(media_epoch_),
                 cancel
             );
-
+            token.ensure_current();
             if (state != XMAX_READY) {
-                media_.external().start([this, cancel](const Frame& frame) {
-                    if (!cancel())
+                media_.external().start([this, connection_cancel = lifecycle_.cancellation(epoch)](const Frame& frame) {
+                    if (!connection_cancel())
                         stream_.push(frame);
                 });
                 render_.bind(epoch);
-                if (state == XMAX_GENERATING)
+                if (state == XMAX_GENERATING) {
+                    timing_.begin();
                     generate_impl(
                         *generation_.context,
                         cancel
                     );
+                }
             }
-        } catch (...) {
-            auto original = std::current_exception();
-            try {
-                std::rethrow_exception(original);
-            } catch (const Error& error) {
-                errors_.record(error);
-            } catch (...) {
-                errors_.record(Error(
-                    XMAX_INTERNAL_ERROR,
-                    "Realtime operation failed"
-                ));
-            }
-            coordinator_.invalidate();
-            cleanup(true);
-            std::rethrow_exception(original);
+            complete_state(
+                state,
+                token,
+                [this, state] {
+                    if (state == XMAX_GENERATING) {
+                        timing_.finish();
+                        emit_timing(timing_.snapshot());
+                    }
+                }
+            );
         }
-    });
+    );
 }
 
 /**
  * Returns the session state, session identifier, and task identifier.
  */
 xmax_event XmaxRealtimeManager::state_snapshot() {
-    xmax_event event{};
-    coordinator_.sync([this, &event] {
-        event.struct_size = sizeof(event);
-        event.type = XMAX_EVENT_STATE;
-        event.state = coordinator_.state();
-        text_copy(
-            event.session_id,
-            sizeof(event.session_id),
-            last_session_id_
-        );
-        text_copy(
-            event.task_id,
-            sizeof(event.task_id),
-            last_task_id_
-        );
-    });
-    return event;
+    xmax_event result{};
+    lifecycle_.sync([this, &result] { result = lifecycle_.snapshot().event; });
+    return result;
 }
 
 /**
@@ -908,7 +873,7 @@ xmax_event XmaxRealtimeManager::state_snapshot() {
  */
 xmax_video_format XmaxRealtimeManager::format() {
     xmax_video_format result{};
-    coordinator_.sync([this, &result] { result = media_.external().format(); });
+    lifecycle_.sync([this, &result] { result = media_.external().format(); });
     return result;
 }
 
@@ -919,7 +884,7 @@ xmax_video_format XmaxRealtimeManager::format() {
  */
 float XmaxRealtimeManager::volume() {
     float result = 0;
-    coordinator_.sync([this, &result] { result = stream_.volume(); });
+    lifecycle_.sync([this, &result] { result = stream_.volume(); });
     return result;
 }
 
@@ -941,13 +906,16 @@ void XmaxRealtimeManager::interpolation(
 /**
  * Validates and applies uplink bitrate limits and degradation preference.
  *
- * @param[in] value The uplink bitrate limits and degradation preference; see xmax_encoding_config for units
- * and special values.
+ * @param[in] value The uplink bitrate limits and degradation preference; see xmax_encoding_config for
+ * units and special values.
  */
 void XmaxRealtimeManager::encoding(
     xmax_encoding_config value
 ) {
-    coordinator_.sync([this, value] { stream_.encoding(value); });
+    lifecycle_.run(
+        OperationKind::Configuration,
+        [this, value](const Lifecycle::Token&) { stream_.encoding(value); }
+    );
 }
 
 /**
@@ -966,15 +934,18 @@ void XmaxRealtimeManager::video_mirror(
         XMAX_INVALID_ARGUMENT,
         "Mirror settings must be 0 or 1"
     );
-    coordinator_.sync([this, value] {
-        stream_.mirror(value.published_video != 0);
-        render_.mirror(
-            value.local_preview != 0,
-            value.remote_view != 0
-        );
-        mirror_ = value;
-        mirror_.struct_size = sizeof(mirror_);
-    });
+    lifecycle_.run(
+        OperationKind::Configuration,
+        [this, value](const Lifecycle::Token&) {
+            stream_.mirror(value.published_video != 0);
+            render_.mirror(
+                value.local_preview != 0,
+                value.remote_view != 0
+            );
+            mirror_ = value;
+            mirror_.struct_size = sizeof(mirror_);
+        }
+    );
 }
 
 /**
@@ -982,7 +953,7 @@ void XmaxRealtimeManager::video_mirror(
  */
 xmax_video_mirror_config XmaxRealtimeManager::video_mirror() {
     xmax_video_mirror_config value{};
-    coordinator_.sync([this, &value] { value = mirror_; });
+    lifecycle_.sync([this, &value] { value = mirror_; });
     return value;
 }
 
@@ -994,12 +965,15 @@ xmax_video_mirror_config XmaxRealtimeManager::video_mirror() {
 void XmaxRealtimeManager::adaptive(
     bool enabled
 ) {
-    coordinator_.sync([this, enabled] { stream_.adaptive(enabled); });
+    lifecycle_.run(
+        OperationKind::Configuration,
+        [this, enabled](const Lifecycle::Token&) { stream_.adaptive(enabled); }
+    );
 }
 
 /**
- * Replaces the serialized remote audio/video listener, preserving playback and the current listener if
- * native audio observation cannot be enabled.
+ * Replaces the serialized remote audio/video listener, preserving playback and the current listener
+ * if native audio observation cannot be enabled.
  *
  * @param[in] listener The owned-packet callback, or an empty function to discard queued output and stop
  * observation. An in-flight callback may finish after this method returns.
@@ -1008,7 +982,7 @@ void XmaxRealtimeManager::media_listener(
     RemoteMediaListener listener
 ) {
     RemoteMediaListener previous;
-    coordinator_.sync([this, &previous, listener = std::move(listener)]() mutable {
+    lifecycle_.sync([this, &previous, listener = std::move(listener)]() mutable {
         if (listener) {
             stream_.observe_remote_media(true);
             previous = render_.media_listener(std::move(listener));
@@ -1026,28 +1000,38 @@ void XmaxRealtimeManager::media_listener(
  */
 xmax_quality_status XmaxRealtimeManager::quality() {
     xmax_quality_status value{};
-    coordinator_.sync([this, &value] { value = stream_.quality(); });
+    lifecycle_.sync([this, &value] { value = stream_.quality(); });
     return value;
 }
 
 /**
- * Cleans up RTC and the server session, optionally releasing media and generation conditions.
+ * Releases the resource scope selected by lifecycle termination without owning state transitions.
  *
- * @param[in] close Whether to also release local media and cached generation conditions.
+ * @param[in] scope The generation, connection, or full media cleanup scope.
  *
- * @return True if the server session closed; false if closing failed, with an error event delivered.
+ * @return The remaining local-media availability, session identifier, and release outcome.
  */
-bool XmaxRealtimeManager::cleanup(
-    bool close
+Lifecycle::CleanupResult XmaxRealtimeManager::cleanup(
+    Scope scope
 ) {
+    if (scope == Scope::Generation) {
+        stream_.stop_generation([] { return false; });
+        generation_.reset(false);
+        render_.trajectory.clear();
+        lifecycle_.deadline(Clock::now() + heartbeat_interval_);
+        return {connection_.active().id, media_.external().bound(), true};
+    }
+    const bool close = scope == Scope::All;
+
     generation_.reset(false);
     render_.trajectory.clear();
     media_.stop();
-    render_.unbind(coordinator_.epoch());
-    coordinator_.deadline(Clock::time_point::max());
-
-    if (!connection_.active().id.empty())
-        change_state(XMAX_DISCONNECTING);
+    {
+        std::lock_guard<std::mutex> lock(statistics_mutex_);
+        statistics_[0] = statistics_[1] = {};
+    }
+    render_.unbind(lifecycle_.epoch());
+    lifecycle_.deadline(Clock::time_point::max());
 
     timing_.reset_publication();
 
@@ -1071,24 +1055,6 @@ bool XmaxRealtimeManager::cleanup(
         if (errors_.reason() != XMAX_REASON_FAILURE) {
             errors_.record(error);
         }
-        xmax_event event{};
-        event.type = XMAX_EVENT_ERROR;
-        event.code = error.code;
-        text_copy(
-            event.session_id,
-            sizeof(event.session_id),
-            session_id
-        );
-        text_copy(
-            event.message,
-            sizeof(event.message),
-            XmaxLogger::redact(error.what())
-        );
-        coordinator_.emit(
-            event,
-            XMAX_REASON_FAILURE,
-            &error
-        );
     }
 
     if (close) {
@@ -1098,9 +1064,7 @@ bool XmaxRealtimeManager::cleanup(
         generation_.context.reset();
     }
 
-    change_state(media_.external().bound() ? XMAX_READY : XMAX_IDLE);
-
-    return server_closed;
+    return {session_id, media_.external().bound(), server_closed};
 }
 
 /**
@@ -1111,20 +1075,16 @@ bool XmaxRealtimeManager::cleanup(
 void XmaxRealtimeManager::disconnect(
     bool close
 ) {
-    ++generation_request_;
-    const auto epoch = coordinator_.invalidate();
-    media_.stop();
-    render_.unbind(epoch);
-    coordinator_.sync([this, close] {
-        errors_.reset();
-        if (!cleanup(close))
-            throw Error(
-                XMAX_API_ERROR,
-                "Server session close failed; inspect the session ID in the error event",
-                errors_.error() ? errors_.error()->api_code : 0,
-                errors_.error() ? errors_.error()->http_status : 0
-            );
-    });
+    const auto closed = lifecycle_.terminate(close ? Scope::All : Scope::Connection);
+    if (!closed) {
+        const auto failure = lifecycle_.snapshot().error;
+        throw Error(
+            XMAX_API_ERROR,
+            "Server session close failed; inspect the session ID in the error event",
+            failure.api_code,
+            failure.http_status
+        );
+    }
 }
 
 /**
@@ -1135,24 +1095,9 @@ void XmaxRealtimeManager::disconnect(
 void XmaxRealtimeManager::fail(
     Error error
 ) {
-    ++generation_request_;
-    coordinator_.invalidate();
-    errors_.record(error);
-    cleanup(false);
-
-    xmax_event event{};
-    event.type = XMAX_EVENT_ERROR;
-    event.code = error.code;
-    event.state = coordinator_.state();
-    text_copy(
-        event.message,
-        sizeof(event.message),
-        XmaxLogger::redact(error.what())
-    );
-    coordinator_.emit(
-        event,
-        XMAX_REASON_FAILURE,
-        &error
+    errors_.forward(
+        std::move(error),
+        Scope::Connection
     );
 }
 
@@ -1160,14 +1105,14 @@ void XmaxRealtimeManager::fail(
  * Runs due server-session and RTC room keepalives for an active connection.
  */
 void XmaxRealtimeManager::heartbeat() {
-    const auto cancel = coordinator_.cancellation(coordinator_.epoch());
+    const auto cancel = lifecycle_.cancellation(lifecycle_.epoch());
     try {
         keepalive(cancel);
     } catch (const Error& error) {
         if (error.code != XMAX_CANCELLED)
             fail(error);
         else
-            coordinator_.deadline(Clock::time_point::max());
+            lifecycle_.deadline(Clock::time_point::max());
     } catch (const std::exception&) {
         fail(Error(
             XMAX_API_ERROR,
@@ -1188,7 +1133,7 @@ void XmaxRealtimeManager::keepalive(
         stream_,
         cancel
     );
-    coordinator_.deadline(Clock::now() + heartbeat_interval_);
+    lifecycle_.deadline(Clock::now() + heartbeat_interval_);
 }
 
 /**
@@ -1199,7 +1144,10 @@ void XmaxRealtimeManager::keepalive(
 void XmaxRealtimeManager::volume(
     float value
 ) {
-    coordinator_.sync([this, value] { stream_.volume(value); });
+    lifecycle_.run(
+        OperationKind::Configuration,
+        [this, value](const Lifecycle::Token&) { stream_.volume(value); }
+    );
 }
 
 /**
@@ -1211,31 +1159,37 @@ void XmaxRealtimeManager::volume(
 void XmaxRealtimeManager::update_camera_format(
     xmax_video_format format
 ) {
-    const auto epoch = coordinator_.epoch();
-    coordinator_.sync([this, format, epoch] {
-        require(
-            coordinator_.state() == XMAX_READY && media_.camera_active(),
-            XMAX_INVALID_STATE,
-            "Camera format can only be updated before connection"
-        );
-
-        const auto resolved = MediaService::camera_input(format);
-        errors_.reset();
-        change_state(XMAX_PREPARING);
-
-        try {
-            media_.update_camera_format(
-                resolved,
-                media_failure(media_epoch_),
-                coordinator_.cancellation(epoch)
+    lifecycle_.run(
+        OperationKind::Media,
+        [this, format](const Lifecycle::Token& token) {
+            require(
+                lifecycle_.state() == XMAX_READY && media_.camera_active(),
+                XMAX_INVALID_STATE,
+                "Camera format can only be updated before connection"
             );
-            change_state(XMAX_READY);
-        } catch (const Error& error) {
-            errors_.record(error);
-            change_state(media_.camera_active() ? XMAX_READY : XMAX_IDLE);
-            throw;
+
+            const auto resolved = MediaService::camera_input(format);
+            errors_.reset();
+            change_state(XMAX_PREPARING);
+
+            try {
+                media_.update_camera_format(
+                    resolved,
+                    media_failure(media_epoch_),
+                    token.cancellation()
+                );
+                token.ensure_current();
+                complete_state(
+                    XMAX_READY,
+                    token
+                );
+            } catch (const Error& error) {
+                errors_.record(error);
+                change_state(media_.camera_active() ? XMAX_READY : XMAX_IDLE);
+                throw;
+            }
         }
-    });
+    );
 }
 
 /**
@@ -1243,7 +1197,7 @@ void XmaxRealtimeManager::update_camera_format(
  */
 xmax_video_format XmaxRealtimeManager::camera_format() {
     xmax_video_format result{};
-    coordinator_.sync([this, &result] {
+    lifecycle_.sync([this, &result] {
         if (media_.camera_active())
             result = media_.external().format();
     });
@@ -1260,51 +1214,35 @@ void XmaxRealtimeManager::quality_level(
     int direction,
     int level
 ) {
-    const auto epoch = coordinator_.epoch();
-    coordinator_.sync([this, direction, level, epoch] {
-        require(
-            coordinator_.state() == XMAX_GENERATING,
-            XMAX_INVALID_STATE,
-            "Quality levels can only be changed during generation"
-        );
-        const auto cancel = coordinator_.cancellation(epoch);
-        coordinator_.emit(stream_.set_quality(
-            direction,
-            level,
-            cancel,
-            [this, cancel] {
-                if (Clock::now() >= coordinator_.deadline())
-                    keepalive(cancel);
-            }
-        ));
-    });
+    lifecycle_.run(
+        OperationKind::Configuration,
+        [this, direction, level](const Lifecycle::Token& token) {
+            require(
+                lifecycle_.state() == XMAX_GENERATING,
+                XMAX_INVALID_STATE,
+                "Quality levels can only be changed during generation"
+            );
+            const auto cancel = token.cancellation();
+            lifecycle_.emit(stream_.set_quality(
+                direction,
+                level,
+                cancel,
+                [this, cancel] {
+                    if (Clock::now() >= lifecycle_.deadline())
+                        keepalive(cancel);
+                }
+            ));
+        }
+    );
 }
 
 /**
  * Returns the current state snapshot with its reason and error.
  */
 xmax_event_info XmaxRealtimeManager::state_info() {
-    xmax_event_info info{};
-    coordinator_.sync([this, &info] {
-        info.struct_size = sizeof(info);
-        info.event.struct_size = sizeof(info.event);
-        info.event.type = XMAX_EVENT_STATE;
-        info.event.state = coordinator_.state();
-        info.event.code = errors_.error() ? errors_.error()->code : XMAX_OK;
-        text_copy(
-            info.event.session_id,
-            sizeof(info.event.session_id),
-            last_session_id_
-        );
-        text_copy(
-            info.event.task_id,
-            sizeof(info.event.task_id),
-            last_task_id_
-        );
-        info.reason = errors_.reason();
-        info.error = errors_.details();
-    });
-    return info;
+    xmax_event_info result{};
+    lifecycle_.sync([this, &result] { result = lifecycle_.snapshot(); });
+    return result;
 }
 
 /**
@@ -1320,25 +1258,24 @@ void XmaxRealtimeManager::disconnect_reason(
         XMAX_INVALID_ARGUMENT,
         "Failure reasons are reported by the SDK"
     );
-    ++generation_request_;
-    const auto epoch = coordinator_.invalidate();
-    media_.stop();
-    render_.unbind(epoch);
-    coordinator_.sync([this, reason] {
-        errors_.reset(reason);
-        if (!cleanup(false))
-            throw Error(
-                XMAX_API_ERROR,
-                "Server session close failed",
-                errors_.error() ? errors_.error()->api_code : 0,
-                errors_.error() ? errors_.error()->http_status : 0
-            );
-    });
+    const auto closed = lifecycle_.terminate(
+        Scope::Connection,
+        reason
+    );
+    if (!closed) {
+        const auto failure = lifecycle_.snapshot().error;
+        throw Error(
+            XMAX_API_ERROR,
+            "Server session close failed; inspect the session ID in the error event",
+            failure.api_code,
+            failure.http_status
+        );
+    }
 }
 
 /**
- * Copies viewport trajectory samples and schedules asynchronous delivery, retaining only the latest pending
- * sample.
+ * Copies viewport trajectory samples and schedules asynchronous delivery, retaining only the latest
+ * pending sample.
  *
  * @param[in] frame The sampled points and actual video layout.
  */
@@ -1348,37 +1285,37 @@ void XmaxRealtimeManager::submit_interaction(
     auto points = InteractionCoordinateMapper::map(frame);
     if (points.empty())
         return;
-    const auto epoch = coordinator_.epoch();
+    const auto epoch = lifecycle_.epoch();
     std::lock_guard<std::mutex> lock(interaction_mutex_);
     require(
-        !interaction_task_.empty() && coordinator_.state() == XMAX_GENERATING,
+        !interaction_task_.empty() && lifecycle_.state() == XMAX_GENERATING,
         XMAX_INVALID_STATE,
         "No generation is active"
     );
     render_.trajectory.update(points);
-    if (generation_.interaction.submit({epoch, interaction_task_, std::move(points)}))
-        coordinator_.enqueue([this] { drain_interaction(); });
+    if (media_.interaction.submit({epoch, interaction_task_, std::move(points)}))
+        lifecycle_.enqueue([this] { drain_interaction(); });
 }
 
 /**
  * Schedules one trajectory sample fairly so continuous input cannot monopolize lifecycle execution.
  */
 void XmaxRealtimeManager::drain_interaction() {
-    auto sample = generation_.interaction.take();
+    auto sample = media_.interaction.take();
     if (!sample)
         return;
 
-    const auto epoch = coordinator_.epoch();
-    const auto cancel = coordinator_.cancellation(epoch);
+    const auto epoch = lifecycle_.epoch();
+    const auto cancel = lifecycle_.cancellation(epoch);
     try {
-        if (coordinator_.state() == XMAX_GENERATING)
+        if (lifecycle_.state() == XMAX_GENERATING)
             generation_.send_interaction(
                 stream_,
                 *sample,
                 epoch,
                 cancel,
                 [this, cancel] {
-                    if (Clock::now() >= coordinator_.deadline())
+                    if (Clock::now() >= lifecycle_.deadline())
                         keepalive(cancel);
                 }
             );
@@ -1387,13 +1324,13 @@ void XmaxRealtimeManager::drain_interaction() {
             xmax_event event{};
             event.type = XMAX_EVENT_ERROR;
             event.code = error.code;
-            event.state = coordinator_.state();
+            event.state = lifecycle_.state();
             text_copy(
                 event.message,
                 sizeof(event.message),
                 XmaxLogger::redact(error.what())
             );
-            coordinator_.emit(
+            lifecycle_.emit(
                 event,
                 XMAX_REASON_FAILURE,
                 &error
@@ -1401,6 +1338,93 @@ void XmaxRealtimeManager::drain_interaction() {
         }
     }
 
-    coordinator_.enqueue([this] { drain_interaction(); });
+    lifecycle_.enqueue([this] { drain_interaction(); });
+}
+
+/**
+ * Converts and submits source-bound PCM; stale or disconnected audio is discarded.
+ *
+ * @param[in] frame The borrowed PCM data on the source video timeline.
+ * @param[in] binding The source revision returned at binding.
+ *
+ * @throws Error If current PCM input is invalid; the binding is also failed and cleaned up.
+ */
+void XmaxRealtimeManager::push_audio(
+    const xmax_external_audio_frame& frame,
+    uint64_t binding
+) {
+    if (binding == 0 || media_epoch_ != binding || failed_media_epoch_ == binding || media_.camera_active())
+        return;
+    try {
+        media_.external().push_audio(
+            frame,
+            binding
+        );
+    } catch (const Error& error) {
+        external_failure(
+            binding,
+            error
+        );
+        throw;
+    } catch (...) {
+        const Error error(
+            XMAX_MEDIA_ERROR,
+            "Could not process external PCM samples"
+        );
+        external_failure(
+            binding,
+            error
+        );
+        throw error;
+    }
+}
+
+/**
+ * Returns the latest directional video statistics without consuming events.
+ *
+ * @param[in] direction Zero for uplink and one for downlink.
+ *
+ * @return A current snapshot, or available = 0 with unavailable metrics set to -1.
+ */
+xmax_video_statistics XmaxRealtimeManager::video_statistics(
+    int direction
+) const {
+    require(
+        direction == 0 || direction == 1,
+        XMAX_INVALID_ARGUMENT,
+        "Invalid statistics direction"
+    );
+    std::lock_guard<std::mutex> lock(statistics_mutex_);
+    auto result = statistics_[direction];
+    result.struct_size = sizeof(result);
+    result.direction = direction;
+    if (!result.available) {
+        result.width = result.height = result.capture_fps = result.encode_fps = result.send_fps =
+            result.decode_fps = result.render_fps = result.bitrate_kbps = result.packet_loss_percent =
+                result.e2e_ms = -1;
+    }
+    return result;
+}
+
+/**
+ * Publishes a timing snapshot with the current lifecycle state and session/task identities.
+ *
+ * @param[in] event The completed or failed startup timing snapshot.
+ */
+void XmaxRealtimeManager::emit_timing(
+    xmax_event event
+) {
+    event.state = lifecycle_.state();
+    copy_utf8(
+        event.session_id,
+        sizeof(event.session_id),
+        lifecycle_.snapshot().event.session_id
+    );
+    copy_utf8(
+        event.task_id,
+        sizeof(event.task_id),
+        stream_.task()
+    );
+    lifecycle_.emit(event);
 }
 } // namespace xmax::detail

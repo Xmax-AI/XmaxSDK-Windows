@@ -10,6 +10,7 @@
 
 #include "Media/External/ExternalVideoController.hpp"
 #include "Foundation/Logging/XmaxLogger.hpp"
+#include "Service/Media/MediaService.hpp"
 
 namespace xmax::detail {
 
@@ -18,12 +19,14 @@ namespace xmax::detail {
  *
  * @param[in] format The input dimensions and frame rate; see xmax_video_format for limits.
  * @param[in] binding The source revision; zero reserves the channel for unversioned camera delivery.
+ * @param[in] has_audio Whether this external source supplies PCM instead of microphone input.
  */
 void ExternalVideoController::prepare(
     xmax_video_format format,
-    uint64_t binding
+    uint64_t binding,
+    bool has_audio
 ) {
-    validate_format(format);
+    MediaService::input(format);
     require(
         format.width >= 4 && format.height >= 4,
         XMAX_INVALID_ARGUMENT,
@@ -38,16 +41,18 @@ void ExternalVideoController::prepare(
     );
     format_ = format;
     binding_ = binding;
+    has_audio_ = has_audio;
+    audio_converter_ = {};
     last_timestamp_ = -1;
     XmaxLogger::write(
         LogCategory::Media,
         XMAX_LOG_INFO,
         [&](auto language) {
             return XmaxLogger::localized(
-                language,
-                "外部视频已绑定 (External Video Bound)",
-                "External Video Bound"
-            ) +
+                       language,
+                       "外部视频已绑定 (External Video Bound)",
+                       "External Video Bound"
+                   ) +
                    "\n└─ " + std::to_string(format.width) + " × " + std::to_string(format.height) + " @ " +
                    std::to_string(format.fps) + " fps";
         }
@@ -58,9 +63,11 @@ void ExternalVideoController::prepare(
  * Installs a publication receiver and starts requesting input frames.
  *
  * @param[in] sink The synchronous frame receiver, invoked on the submitting media thread.
+ * @param[in] audio The synchronous receiver for converted audio packets.
  */
 void ExternalVideoController::start(
-    VideoFrameSink sink
+    VideoFrameSink sink,
+    ExternalAudioConverter::Receiver audio
 ) {
     std::lock_guard<std::mutex> lock(mutex_);
     require(
@@ -74,6 +81,8 @@ void ExternalVideoController::start(
         "An external frame sink is required"
     );
     sink_ = std::move(sink);
+    audio_ = std::move(audio);
+    audio_converter_.reset();
     requesting_ = true;
 }
 
@@ -84,6 +93,8 @@ void ExternalVideoController::stop() {
     std::lock_guard<std::mutex> lock(mutex_);
     requesting_ = false;
     sink_ = {};
+    audio_ = {};
+    audio_converter_.reset();
 }
 
 /**
@@ -94,6 +105,9 @@ void ExternalVideoController::close() {
     requesting_ = false;
     sink_ = {};
     format_ = {};
+    audio_ = {};
+    has_audio_ = false;
+    audio_converter_ = {};
     binding_ = 0;
     last_timestamp_ = -1;
 }
@@ -137,6 +151,13 @@ void ExternalVideoController::push(
         XMAX_INVALID_STATE,
         "No external input is bound"
     );
+    require(
+        source.struct_size >= sizeof(source),
+        XMAX_INVALID_ARGUMENT,
+        "External video frame structure is too small"
+    );
+    if (binding != 0 && (source.timestamp_us < 0 || source.timestamp_us <= last_timestamp_))
+        return;
     require(
         source.width == format_.width && source.height == format_.height,
         XMAX_INVALID_ARGUMENT,
@@ -202,5 +223,40 @@ void ExternalVideoController::push_owned(
 
     if (preview_)
         preview_(std::move(frame));
+}
+
+/**
+ * Reports whether this source declares external PCM upload.
+ */
+bool ExternalVideoController::has_audio() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return has_audio_;
+}
+
+/**
+ * Converts source-bound PCM only while publication is active, without queuing for reconnection.
+ *
+ * @param[in] frame The borrowed interleaved PCM samples and source timestamp.
+ * @param[in] binding The source revision; stale or audio-disabled bindings ignore input.
+ */
+void ExternalVideoController::push_audio(
+    const xmax_external_audio_frame& frame,
+    uint64_t binding
+) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (binding_ != binding || !has_audio_)
+        return;
+    if (requesting_ && audio_) {
+        audio_converter_.append(
+            frame,
+            audio_
+        );
+    } else {
+        audio_converter_.append(
+            frame,
+            [](const ExternalAudioPacket&) {}
+        );
+        audio_converter_.reset();
+    }
 }
 } // namespace xmax::detail

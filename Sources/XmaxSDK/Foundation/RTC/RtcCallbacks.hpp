@@ -43,5 +43,10 @@ struct RtcCallbacks {
      * The copied result-user PCM callback, invoked before remote-user mixing on the native media thread.
      */
     std::function<void(AudioFrame)> audio;
+
+    /**
+     * The full directional video statistics, including each native processing-stage frame rate.
+     */
+    std::function<void(xmax_video_statistics)> statistics;
 };
 } // namespace xmax::detail

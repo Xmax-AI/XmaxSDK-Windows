@@ -11,7 +11,7 @@
 #pragma once
 #include "Service/Network/Config.hpp"
 #include "Foundation/Json.hpp"
-#include "Foundation/Models/RealtimeModelDefinition.hpp"
+#include "Service/Realtime/RealtimeModel.hpp"
 #include "Foundation/Logging/XmaxLogger.hpp"
 #include "Foundation/Network/HttpTransport.hpp"
 

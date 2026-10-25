@@ -9,6 +9,7 @@
 //
 
 #include "Stream/Quality/QualityController.hpp"
+#include "Service/Realtime/RealtimeModel.hpp"
 #include <algorithm>
 #include <cmath>
 #include <numeric>
@@ -27,29 +28,34 @@ xmax_video_format quality_format(
     int level,
     bool downlink
 ) {
-    static const double scales[]{1, .8, .65, .5, .5};
+    static const double scales[]{1, .9, .75, .6, .5};
     static const uint32_t rates[]{30, 24, 24, 20, 16};
     const auto index = std::clamp(level, 1, 5) - 1;
     const auto short_side = std::min(baseline.width, baseline.height);
     const auto scale = std::max(scales[index], double(std::min(short_side, 240u)) / short_side);
-    const auto alignment = downlink ? 4u : 2u;
+    // Final signaled downlink targets and uplink encoding dimensions both require four-pixel alignment.
+    const auto alignment = 4u;
     const auto divisor = std::gcd(
         baseline.width,
         baseline.height
     );
+    const double pixels = double(baseline.width) * baseline.height;
+    const double minimum = downlink ? 0 : RealtimeModelDefinition::capabilities.minimum_input_pixels;
+    const double minimum_scale = std::sqrt(std::min(minimum, pixels) / pixels);
+    const auto minimum_units = uint32_t(std::ceil(divisor * minimum_scale / alignment)) * alignment;
     const auto units = uint32_t(std::floor(divisor * scale + 1e-7)) / alignment * alignment;
+    const auto resolved = std::max(units, minimum_units);
     xmax_video_format result{};
 
-    if (units >= alignment) {
-        result.width = baseline.width / divisor * units;
-        result.height = baseline.height / divisor * units;
+    if (units >= alignment && resolved <= divisor) {
+        result.width = baseline.width / divisor * resolved;
+        result.height = baseline.height / divisor * resolved;
     } else {
-        result.width =
-            std::max(alignment, uint32_t(std::floor(baseline.width * scale / alignment)) * alignment);
-        result.height =
-            std::max(alignment, uint32_t(std::floor(baseline.height * scale / alignment)) * alignment);
+        result.width = std::max(alignment, std::max(uint32_t(std::floor(baseline.width * scale / alignment)) * alignment, uint32_t(std::ceil(baseline.width * minimum_scale / alignment)) * alignment));
+        result.height = std::max(alignment, std::max(uint32_t(std::floor(baseline.height * scale / alignment)) * alignment, uint32_t(std::ceil(baseline.height * minimum_scale / alignment)) * alignment));
     }
-
+    result.width = std::min(result.width, baseline.width / alignment * alignment);
+    result.height = std::min(result.height, baseline.height / alignment * alignment);
     result.fps = downlink ? 24 : std::min(baseline.fps, rates[index]);
 
     return result;
@@ -67,9 +73,11 @@ void QualityDirection::reset_samples() {
  * Observes timestamped network samples and recommends levels after stability and cooldown checks.
  *
  * @param[in] quality The native network-quality value for this direction.
- * @param[in] sampled_at The sample's monotonic time in seconds; expired or duplicate samples are ignored.
+ * @param[in] sampled_at The sample's monotonic time in seconds; expired or duplicate samples are
+ * ignored.
  * @param[in] now The current monotonic time in seconds, used for cooldowns, stable windows, and sample
  * expiry.
+ * @param[in] accepts Optional validation rejecting unchanged or unsupported candidate formats.
  *
  * @return A proposed level satisfying stability, freshness, and cooldown requirements; otherwise
  * std::nullopt.
@@ -77,7 +85,8 @@ void QualityDirection::reset_samples() {
 std::optional<int> QualityDirection::observe(
     int quality,
     double sampled_at,
-    double now
+    double now,
+    const std::function<bool(int)>& accepts
 ) {
     if (!std::isfinite(sampled_at) || !std::isfinite(now) || sampled_at > now ||
         (last_ >= 0 && sampled_at <= last_))
@@ -95,12 +104,16 @@ std::optional<int> QualityDirection::observe(
 
     if (quality == 4 || quality == 5) {
         good_ = 0;
-        if (++poor_ >= 3 && level < 5)
-            return level + 1;
+        if (++poor_ >= 3)
+            for (int candidate = level + 1; candidate <= 5; ++candidate)
+                if (!accepts || accepts(candidate))
+                    return candidate;
     } else if (quality == 1 || quality == 2) {
         poor_ = 0;
-        if (++good_ >= 5 && now >= upgrade_after_ && level > 1)
-            return level - 1;
+        if (++good_ >= 5 && now >= upgrade_after_)
+            for (int candidate = level - 1; candidate >= 1; --candidate)
+                if (!accepts || accepts(candidate))
+                    return candidate;
     } else
         good_ = poor_ = 0;
 

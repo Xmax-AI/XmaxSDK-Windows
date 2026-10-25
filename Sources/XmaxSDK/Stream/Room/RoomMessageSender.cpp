@@ -22,7 +22,8 @@ namespace xmax::detail {
  * @param[in] rtc A borrowed connected RTC adapter that can send signaling fragments.
  * @param[in] message The room JSON message to serialize, fragment, and send.
  * @param[in] cancelled A cooperative cancellation predicate; true requests termination of the operation.
- * @param[in] maintain The maintenance callback invoked while waiting or throttled; empty omits maintenance.
+ * @param[in] maintain The maintenance callback invoked while waiting or throttled; empty omits
+ * maintenance.
  */
 void RoomMessageSender::send(
     Rtc& rtc,
@@ -40,10 +41,10 @@ void RoomMessageSender::send(
         [&](auto language) {
             // Exclude generation conditions, prompts, reference URLs, credentials, and raw fragments from logs.
             return XmaxLogger::localized(
-                language,
-                "发送房间信令 (Send Room Signal)",
-                "Send Room Signal"
-            ) +
+                       language,
+                       "发送房间信令 (Send Room Signal)",
+                       "Send Room Signal"
+                   ) +
                    "\n└─ packets=" + std::to_string(packets.size());
         }
     );

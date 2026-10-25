@@ -138,6 +138,28 @@ class StreamController {
     );
 
     /**
+     * Sets external PCM publication for the next room join.
+     *
+     * @param[in] enabled Whether this binding supplies audio instead of using the microphone.
+     */
+    void external_audio(
+        bool enabled
+    ) {
+        external_audio_ = enabled;
+    }
+
+    /**
+     * Publishes converted external PCM through the active room snapshot.
+     *
+     * @param[in] frame The 10 ms PCM packet on the source video timeline.
+     */
+    void push_audio(
+        const ExternalAudioPacket& frame
+    ) {
+        room_.push_audio(frame);
+    }
+
+    /**
      * Sets and retains the remote playback volume for the current or next connection.
      *
      * @param[in] value A finite volume in [0, 1]; 0 mutes playback.
@@ -338,6 +360,11 @@ class StreamController {
      * Whether this controller's output listener requires native result-user PCM observation.
      */
     bool remote_media_enabled_ = false;
+
+    /**
+     * Whether the next room publishes custom PCM without microphone capture.
+     */
+    bool external_audio_ = false;
 
     /**
      * The uplink bitrate limits and degradation preference specified by your app.

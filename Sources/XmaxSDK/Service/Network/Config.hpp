@@ -9,7 +9,7 @@
 //
 
 #pragma once
-#include "Foundation/Models/RealtimeModelDefinition.hpp"
+#include "Service/Realtime/RealtimeModel.hpp"
 
 namespace xmax::detail {
 

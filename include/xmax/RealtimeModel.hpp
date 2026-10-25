@@ -58,17 +58,14 @@ inline constexpr xmax_model_info model_capabilities(
     if (model != RealtimeModel::x2_1)
         return info;
     info.display_name = "X2.1";
-    info.supported_formats[0] = {1920, 1080, 30};
-    info.supported_formats[1] = {1080, 1920, 30};
-    info.supported_formats[2] = {1408, 1408, 30};
-    info.supported_formats[3] = {1152, 1536, 30};
-    info.supported_formats[4] = {1536, 1152, 30};
-    info.format_count = 5;
-    info.minimum_input_pixels = 600000;
+    info.supported_formats[0] = {1024, 1920, 30};
+    info.supported_formats[1] = {1920, 1024, 30};
+    info.format_count = 2;
+    info.minimum_input_pixels = 200000;
     info.maximum_input_pixels = 2100000;
     info.input_size_alignment = 32;
     info.default_frame_rate = 30;
-    info.default_camera_format = info.supported_formats[1];
+    info.default_camera_format = info.supported_formats[0];
     return info;
 }
 } // namespace xmax

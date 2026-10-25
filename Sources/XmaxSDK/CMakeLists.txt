@@ -19,7 +19,7 @@ endfunction()
 
 xmax_module(xmax_foundation
   Foundation/Logging/XmaxLogger.cpp
-  Foundation/Logging/RtcStatsLogger.cpp
+  Foundation/RTC/RtcStatsLogger.cpp
   Foundation/Media/VideoFrame.cpp
   Foundation/Media/FrameConverter.cpp
   Foundation/Render/WindowRenderer.cpp
@@ -32,7 +32,7 @@ target_compile_definitions(xmax_foundation PRIVATE XMAX_VERSION="${PROJECT_VERSI
 if(WIN32)
   target_sources(xmax_foundation PRIVATE Foundation/Media/Camera/MediaFoundationCamera.cpp)
   target_compile_definitions(xmax_foundation PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
-  target_link_libraries(xmax_foundation PRIVATE winhttp bcrypt mf mfplat mfreadwrite mfuuid ole32 gdi32 user32 shell32 uuid)
+  target_link_libraries(xmax_foundation PRIVATE winhttp bcrypt mf mfplat mfreadwrite mfuuid ole32 gdi32 msimg32 user32 shell32 uuid)
 else()
   find_package(CURL REQUIRED)
   target_link_libraries(xmax_foundation PRIVATE CURL::libcurl)
@@ -62,12 +62,12 @@ target_link_libraries(xmax_service PUBLIC xmax_foundation)
 xmax_module(xmax_stream Stream/StreamController.cpp Stream/Encoding/EncodingBitratePolicy.cpp
   Stream/Quality/QualityController.cpp
   Stream/Room/RoomEvent.cpp Stream/Room/MessageCodec.cpp Stream/Room/RoomMessageSender.cpp)
-target_link_libraries(xmax_stream PUBLIC xmax_foundation)
+target_link_libraries(xmax_stream PUBLIC xmax_service)
 xmax_module(xmax_media Media/External/ExternalVideoController.cpp Media/Camera/CameraController.cpp)
-target_link_libraries(xmax_media PUBLIC xmax_foundation)
+target_link_libraries(xmax_media PUBLIC xmax_service)
 xmax_module(xmax_render Render/Video/RemoteVideoFramePipeline.cpp Render/Video/RemoteMediaFrameDispatcher.cpp)
-target_link_libraries(xmax_render PUBLIC xmax_foundation)
-xmax_module(xmax_core Core/Realtime/RealtimeCoordinator.cpp Core/Realtime/XmaxRealtimeManager.cpp)
+target_link_libraries(xmax_render PUBLIC xmax_service)
+xmax_module(xmax_core Core/Realtime/XmaxRealtimeLifecycleManager.cpp Core/Realtime/XmaxRealtimeFactory.cpp Core/Realtime/XmaxRealtimeManager.cpp)
 target_link_libraries(xmax_core PUBLIC xmax_service xmax_stream xmax_media xmax_render)
 
 # Header files are part of each module so IDE search and navigation include public models.
@@ -155,7 +155,7 @@ if(BUILD_TESTING)
   target_include_directories(xmax_layer_tests PRIVATE "${XMAX_SRC}" "${XMAX_REPO_ROOT}/third_party")
   target_link_libraries(xmax_layer_tests PRIVATE xmax_service xmax_stream xmax_media xmax_render)
   add_test(NAME layers COMMAND xmax_layer_tests)
-  foreach(suite IN ITEMS feature storage logging frame_conversion alignment realtime_extensions)
+  foreach(suite IN ITEMS feature storage logging frame_conversion alignment realtime_extensions lifecycle)
     add_executable(xmax_${suite}_tests ${XMAX_REPO_ROOT}/Tests/XmaxSDKTests/${suite}_tests.cpp)
     target_include_directories(xmax_${suite}_tests PRIVATE "${XMAX_SRC}" "${XMAX_REPO_ROOT}/third_party")
     target_link_libraries(xmax_${suite}_tests PRIVATE xmax_core)

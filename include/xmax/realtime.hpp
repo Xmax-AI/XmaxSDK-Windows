@@ -77,6 +77,47 @@ class realtime : public detail::owner<xmax_realtime, xmax_realtime_destroy> {
     }
 
     /**
+     * Binds caller-owned video with optional PCM, leaving capture ownership with your app.
+     *
+     * @param[in] config The fixed source format and audio declaration.
+     *
+     * @return A source-scoped receiver accepting preview frames even while disconnected.
+     *
+     * @see xmax_realtime_bind_external_media
+     */
+    external_frame_sink bind_external_media(
+        const xmax_external_media_config& config
+    ) {
+        xmax_external_frame_sink result = nullptr;
+        check(xmax_realtime_bind_external_media(
+            get(),
+            &config,
+            &result
+        ));
+        return external_frame_sink(result);
+    }
+
+    /**
+     * Returns independent native capture, encoding, transmission, decoding, and rendering metrics.
+     *
+     * @param[in] direction Zero for uplink and one for downlink.
+     *
+     * @return The latest snapshot; available = 0 before statistics arrive or after disconnection.
+     */
+    xmax_video_statistics video_statistics(
+        int32_t direction
+    ) const {
+        xmax_video_statistics result{};
+        result.struct_size = sizeof(result);
+        check(xmax_realtime_get_video_statistics(
+            get(),
+            direction,
+            &result
+        ));
+        return result;
+    }
+
+    /**
      * Sets one serialized callback for result-user PCM and decoded video on a shared rendering timeline.
      *
      * @param[in] listener The background callback, or an empty function to discard queued output and stop
@@ -297,9 +338,9 @@ class realtime : public detail::owner<xmax_realtime, xmax_realtime_destroy> {
     }
 
     /**
-     * Reports whether the connection requests external video frames from your app.
+     * Reports whether the current external source accepts preview or publication frames.
      *
-     * @return True when external frames are requested; false in SDK camera mode.
+     * @return True for a live external binding, including while disconnected; false for camera mode or failed input.
      *
      * @see xmax_realtime_is_requesting_frames
      */

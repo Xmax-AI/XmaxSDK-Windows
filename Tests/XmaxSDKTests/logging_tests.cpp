@@ -1,6 +1,6 @@
 #include "Core/Realtime/XmaxRealtimeManager.hpp"
 #include "Core/Storage/XmaxStorageManager.hpp"
-#include "Foundation/Logging/RtcStatsLogger.hpp"
+#include "Foundation/RTC/RtcStatsLogger.hpp"
 #include "Service/Network/ApiService.hpp"
 #include "TestSupport.hpp"
 #include <cstring>

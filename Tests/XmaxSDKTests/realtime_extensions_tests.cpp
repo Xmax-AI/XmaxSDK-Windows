@@ -7,6 +7,12 @@
 #include <future>
 #include <iostream>
 #include <map>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 
 using namespace std::chrono_literals;
 
@@ -208,7 +214,7 @@ static void external_source_failures() {
     CHECK(!manager.requesting(stale) && manager.requesting(active));
     auto pending = std::async(std::launch::async, [&] {
         const auto value = context("waiting for capture");
-        expect_error(XMAX_CANCELLED, [&] { manager.generate(&value); });
+        expect_error(XMAX_MEDIA_ERROR, [&] { manager.generate(&value); });
     });
     eventually([&] { return rtc->waits == 1; });
     manager.external_failure(active, Error(XMAX_MEDIA_ERROR, "capture disconnected", 1234, 503));
@@ -400,7 +406,7 @@ static void public_options_and_external_sink() {
     CHECK(!controller.quality().adaptive_enabled);
     auto original = controller.bind_external({640, 480, 30});
     auto latest = controller.bind_external({640, 480, 30});
-    CHECK(!original.requesting() && original.format().width == 640);
+    CHECK(!original.requesting() && latest.requesting() && original.format().width == 640);
     original.push({});
     original.report_error(XMAX_MEDIA_ERROR, "old source");
     CHECK(controller.state_info().reason == XMAX_REASON_NORMAL);
@@ -575,8 +581,309 @@ static void public_media_bridge() {
     CHECK(probe->frames[0].view().audio.data[0] == 0x31);
 }
 
+static xmax_external_audio_frame pcm_view(const std::vector<int16_t>& data, uint32_t rate, uint32_t channels, int64_t time) {
+    return {sizeof(xmax_external_audio_frame), XMAX_AUDIO_PCM16, rate, channels,
+            uint32_t(data.size() / channels), time, data.data(), data.size() * sizeof(int16_t)};
+}
+
+static void external_pcm_conversion() {
+    ExternalAudioConverter converter;
+    std::vector<ExternalAudioPacket> output;
+    const auto receive = [&](const ExternalAudioPacket& value) { output.push_back(value); };
+    std::vector<int16_t> samples(160, 12345);
+    for (int i = 0; i < 6; ++i)
+        converter.append(pcm_view(samples, 48000, 1, 1000000 + int64_t(i) * 160 * 1000000 / 48000), receive);
+    CHECK(output.size() == 2 && output[0].timestamp_us == 1000000 && output[1].timestamp_us == 1010000);
+    CHECK(output[0].samples == std::vector<int16_t>(480, 12345));
+    converter.append(pcm_view(samples, 48000, 1, 1000000), receive);
+    CHECK(output.size() == 2); // Overlapping source PCM cannot be replayed.
+    converter.append(pcm_view(samples, 48000, 1, -1), receive);
+    CHECK(output.size() == 2);
+    samples.assign(480, 23456);
+    converter.append(pcm_view(samples, 48000, 1, 2000000), receive);
+    CHECK(output.size() == 3 && output.back().timestamp_us == 2000000);
+    CHECK(output.back().samples == samples); // A timestamp gap contains no synthesized silence.
+    expect_error(XMAX_MEDIA_ERROR, [&] { converter.append(pcm_view(samples, 44100, 1, 2010000), receive); });
+    auto malformed = pcm_view(samples, 48000, 1, 2010000);
+    --malformed.data_size;
+    expect_error(XMAX_MEDIA_ERROR, [&] { converter.append(malformed, receive); });
+
+    ExternalAudioConverter resampled;
+    output.clear();
+    std::vector<int16_t> source(4410, 8192);
+    for (int i = 0; i < 10; ++i)
+        resampled.append(pcm_view(source, 44100, 1, i * 100000), receive);
+    CHECK(output.size() == 99); // The streaming filter retains its final lookahead, not a full packet queue.
+    for (size_t i = 0; i < output.size(); ++i) {
+        CHECK(output[i].timestamp_us == int64_t(i) * 10000);
+        for (const auto sample : output[i].samples)
+            CHECK(std::abs(sample - 8192) <= 1);
+    }
+
+    ExternalAudioConverter antialias;
+    output.clear();
+    source.resize(9600);
+    for (size_t i = 0; i < source.size(); ++i)
+        source[i] = int16_t(20000 * std::sin(2 * 3.141592653589793 * 30000 * i / 96000));
+    antialias.append(pcm_view(source, 96000, 1, 0), receive);
+    CHECK(output.size() == 9);
+    double energy = 0;
+    for (const auto sample : output[4].samples)
+        energy += double(sample) * sample;
+    CHECK(std::sqrt(energy / 480) < 200); // Frequencies above the new Nyquist limit must not alias into speech.
+
+    ExternalAudioConverter floats;
+    output.clear();
+    std::vector<float> stereo(960);
+    for (size_t i = 0; i < stereo.size(); i += 2) {
+        stereo[i] = .5f;
+        stereo[i + 1] = -.5f;
+    }
+    xmax_external_audio_frame frame{sizeof(frame), XMAX_AUDIO_FLOAT32, 48000, 2, 480, 0,
+                                    stereo.data(), stereo.size() * sizeof(float)};
+    floats.append(frame, receive);
+    CHECK(output.size() == 1 && output[0].samples == std::vector<int16_t>(480, 0));
+    stereo[0] = std::numeric_limits<float>::quiet_NaN();
+    frame.timestamp_us = 10000;
+    expect_error(XMAX_MEDIA_ERROR, [&] { floats.append(frame, receive); });
+}
+
+static void external_audio_public_bridge() {
+    auto rtc = std::make_shared<FakeRtc>();
+    xmax::realtime controller(new xmax_realtime_impl(std::make_unique<XmaxRealtimeManager>(api(), [rtc] { return rtc; })));
+    const xmax_external_media_config config{sizeof(config), {640, 480, 30}, 1};
+    auto sink = controller.bind_external_media(config);
+    CHECK(sink.requesting() && controller.requesting_frames()); // Binding accepts disconnected preview.
+    const xmax_external_media_config invalid{sizeof(invalid), {2, 2, 30}, 1};
+    xmax_external_frame_sink rejected = reinterpret_cast<xmax_external_frame_sink>(1);
+    CHECK(xmax_realtime_bind_external_media(controller.get(), &invalid, &rejected) == XMAX_INVALID_ARGUMENT);
+    CHECK(rejected == nullptr && sink.requesting()); // Rejected configuration must preserve a usable source.
+    sink.push(video(0, 640, 480).view());
+    CHECK(controller.acquire_local_frame());
+    sink.push(video(0, 640, 480).view());
+    sink.push(video(-1, 640, 480).view());
+    CHECK(!controller.acquire_local_frame() && sink.requesting());
+    std::vector<int16_t> samples(480, 1111);
+    sink.push_audio(pcm_view(samples, 48000, 1, 0));
+    CHECK(rtc->audio_packets.empty());
+    CHECK(xmax_realtime_connect(controller.get(), 1) == XMAX_OK);
+    CHECK(rtc->external_audio_enabled && !rtc->microphone && rtc->audio_packets.empty());
+    sink.push_audio(pcm_view(samples, 48000, 1, 10000));
+    CHECK(rtc->audio_packets.size() == 1 && rtc->audio_packets[0].timestamp_us == 10000);
+    controller.disconnect();
+    CHECK(sink.requesting());
+    sink.push_audio(pcm_view(samples, 48000, 1, 20000));
+    CHECK(rtc->audio_packets.size() == 1);
+    CHECK(xmax_realtime_connect(controller.get(), 0) == XMAX_OK);
+    CHECK(rtc->audio_packets.size() == 1);
+    sink.push_audio(pcm_view(samples, 48000, 1, 30000));
+    CHECK(rtc->audio_packets.size() == 2 && rtc->audio_packets.back().timestamp_us == 30000);
+    auto malformed = pcm_view(samples, 44100, 1, 40000);
+    CHECK(xmax_external_frame_sink_push_audio_frame(sink.get(), &malformed) == XMAX_MEDIA_ERROR);
+    CHECK(!sink.requesting());
+    CHECK(controller.state_info().event.state == XMAX_IDLE);
+    CHECK(controller.state_info().reason == XMAX_REASON_FAILURE);
+    auto replacement = controller.bind_external_media(config);
+    CHECK(replacement.requesting() && !sink.requesting());
+    sink.push_audio({});
+    auto silent = controller.bind_external({640, 480, 30});
+    silent.push_audio({}); // Sources without audio ignore submissions without starting the microphone.
+    CHECK(!replacement.requesting() && silent.requesting());
+    auto bad_frame = video(1, 4, 4);
+    auto bad_pixels = bad_frame.view();
+    CHECK(xmax_external_frame_sink_push_video_frame(silent.get(), &bad_pixels) == XMAX_MEDIA_ERROR);
+    CHECK(!silent.requesting() && controller.state_info().event.state == XMAX_IDLE);
+    controller.close();
+    CHECK(!silent.requesting());
+}
+
+static void full_video_statistics() {
+    auto rtc = std::make_shared<FakeRtc>();
+    auto* native = new xmax_realtime_impl(std::make_unique<XmaxRealtimeManager>(api(), [rtc] { return rtc; }));
+    xmax::realtime controller(native);
+    CHECK(!controller.video_statistics(0).available && controller.video_statistics(0).capture_fps == -1);
+    CHECK(!controller.video_statistics(1).available && controller.video_statistics(1).render_fps == -1);
+    auto sink = controller.bind_external({640, 480, 30});
+    controller.connect();
+    xmax_video_statistics value{};
+    value.struct_size = sizeof(value);
+    value.available = 1;
+    value.direction = 0;
+    value.capture_fps = 30;
+    value.encode_fps = 24;
+    value.send_fps = 22;
+    rtc->callbacks.statistics(value);
+    CHECK(controller.video_statistics(0).capture_fps == 30);
+    CHECK(controller.video_statistics(0).encode_fps == 24 && controller.video_statistics(0).send_fps == 22);
+    const auto old = rtc->callbacks.statistics;
+    value.direction = 1;
+    value.decode_fps = 25;
+    value.render_fps = 23;
+    std::strcpy(value.user_id, "result-user");
+    rtc->callbacks.statistics(value);
+    CHECK(controller.video_statistics(1).decode_fps == 25);
+    CHECK(std::string(controller.video_statistics(1).user_id) == "result-user");
+    controller.disconnect();
+    old(value);
+    CHECK(!controller.video_statistics(0).available && !controller.video_statistics(1).available);
+    controller.connect();
+    old(value);
+    CHECK(!controller.video_statistics(1).available);
+    CHECK(xmax_realtime_get_video_statistics(controller.get(), 2, &value) == XMAX_INVALID_ARGUMENT);
+    value.struct_size = 0;
+    CHECK(xmax_realtime_get_video_statistics(controller.get(), 0, &value) == XMAX_INVALID_ARGUMENT);
+    controller.close();
+}
+
+static void generation_startup_measurement() {
+    auto now = Clock::time_point{};
+    RealtimeTiming timing([&] { return now; });
+    timing.begin();
+    now += 5ms;
+    timing.begin_session();
+    now += 3ms;
+    timing.finish_session();
+    timing.begin_join();
+    now += 2ms;
+    timing.finish_join();
+    timing.begin_publication();
+    CHECK(RealtimeTiming::published(timing.publication(), now + 1ms));
+    now += 1ms;
+    timing.begin_signal();
+    now += 4ms;
+    timing.finish_signal();
+    now += 1ms;
+    timing.finish();
+    const auto completed = timing.snapshot();
+    CHECK(completed.session_ms == 3 && completed.rtc_join_ms == 2 && completed.publish_ms == 1);
+    CHECK(completed.first_frame_ms == 4 && completed.total_ms == 16);
+    now += 10s; // An existing connection's idle time must not leak into the next startup.
+    timing.begin();
+    timing.begin_signal();
+    now += 7ms;
+    timing.finish_signal();
+    timing.finish();
+    CHECK(timing.snapshot().total_ms == 7 && timing.snapshot().session_ms == -1);
+    CHECK(timing.snapshot().rtc_join_ms == -1 && timing.snapshot().publish_ms == -1);
+    timing.begin();
+    CHECK(!timing.failure(Error(XMAX_CANCELLED, "superseded")));
+    timing.begin_session();
+    now += 2ms;
+    timing.finish_session();
+    now += 1ms;
+    const auto failed = timing.failure(Error(XMAX_RTC_ERROR, "join failed"));
+    CHECK(failed && failed->code == XMAX_RTC_ERROR && failed->session_ms == 2 && failed->total_ms == 3);
+    CHECK(failed->rtc_join_ms == -1 && failed->first_frame_ms == -1);
+    CHECK(!timing.failure(Error(XMAX_RTC_ERROR, "duplicate")));
+
+    auto rtc = std::make_shared<FakeRtc>();
+    XmaxRealtimeManager sdk(api(), [rtc] { return rtc; });
+    sdk.prepare({640, 480, 30});
+    sdk.connect(false);
+    sdk.start("first", "", false, false);
+    xmax_event event{};
+    bool received = false;
+    while (sdk.poll(event))
+        if (event.type == XMAX_EVENT_TIMING) {
+            CHECK(event.session_ms == -1 && event.rtc_join_ms == -1 && event.publish_ms == -1);
+            CHECK(event.total_ms >= event.first_frame_ms && event.state == XMAX_GENERATING);
+            received = true;
+        }
+    CHECK(received);
+}
+
+static void quality_format_and_effect_contracts() {
+    CHECK(quality_format({1920, 1080, 30}, 2, false).width == 1728);
+    CHECK(quality_format({1920, 1080, 30}, 2, false).height == 972);
+    CHECK(quality_format({1920, 1080, 30}, 3, false).width == 1408);
+    CHECK(quality_format({1920, 1080, 30}, 4, false).width == 1152);
+    const auto reduced = quality_format({640, 480, 30}, 5, false);
+    CHECK(uint64_t(reduced.width) * reduced.height >= 200000);
+    CHECK(reduced.width <= 640 && reduced.height <= 480 && reduced.width % 4 == 0 && reduced.height % 4 == 0);
+    QualityDirection policy;
+    CHECK(!policy.observe(4, 0, 0, [](int level) { return level == 5; }));
+    CHECK(!policy.observe(4, 1, 1, [](int level) { return level == 5; }));
+    CHECK(policy.observe(4, 2, 2, [](int level) { return level == 5; }) == 5);
+    auto rtc = std::make_shared<FakeRtc>();
+    StreamController stream([rtc] { return rtc; });
+    stream.allocate();
+    stream.join({"a", "r", "u", "t", "b"}, {1920, 1080, 30}, false, {}, [] { return false; });
+    CHECK(rtc->encoding.minimum_bitrate == 500); // The existing Windows default remains intentional.
+    stream.start("camera", "", false, [] { return false; });
+    CHECK(!json::parse(rtc->messages.back())["params"].contains("padding"));
+    stream.stop();
+    stream.allocate();
+    stream.join({"a", "r", "u", "t", "b"}, {640, 480, 30}, false, {}, [] { return false; }, {1920, 1024, 30});
+    stream.start("external", "", false, [] { return false; });
+    CHECK(json::parse(rtc->messages.back())["params"]["padding"] == "contain");
+
+    TrajectoryBitmap first(120, 120), animated(120, 120), faded(120, 120);
+    first.segment({25, 60}, {60, 60}, 1, 1);
+    first.pointer({60, 60}, 0, 1, 1);
+    animated.segment({25, 60}, {60, 60}, 1, 1);
+    animated.pointer({60, 60}, .25, 1, 1);
+    CHECK(first.pixels() != animated.pixels());
+    CHECK((first.pixels()[60 * 120 + 60] & 0x00ffffff) == 0x00ffffff);
+    CHECK((first.pixels()[60 * 120 + 80] >> 24) > 0); // Ring and radial glow extend beyond the white core.
+    faded.segment({25, 60}, {60, 60}, .1, 1);
+    CHECK((faded.pixels()[60 * 120 + 40] >> 24) < (first.pixels()[60 * 120 + 40] >> 24));
+    for (const auto pixel : first.pixels()) {
+        const auto alpha = pixel >> 24;
+        CHECK((pixel & 255) <= alpha && ((pixel >> 8) & 255) <= alpha && ((pixel >> 16) & 255) <= alpha);
+    }
+    TrajectoryRegistry registry;
+    registry.update({{.2, .3}, {.4, .5}});
+    registry.update({{.6, .7}});
+    double elapsed = 0;
+    CHECK(registry.effects(elapsed).size() == 3 && elapsed >= 0);
+    registry.clear();
+    CHECK(registry.effects(elapsed).empty() && registry.snapshot().empty());
+}
+
+#ifdef _WIN32
+static void native_trajectory_compositing() {
+    WNDCLASSW type{};
+    type.lpfnWndProc = DefWindowProcW;
+    type.hInstance = GetModuleHandleW(nullptr);
+    type.lpszClassName = L"XmaxSDK.TrajectoryEffectsTest";
+    CHECK(RegisterClassW(&type) != 0);
+    const auto window = CreateWindowExW(0, type.lpszClassName, L"SDK trajectory effects verification",
+        WS_OVERLAPPEDWINDOW | WS_VISIBLE, 100, 100, 320, 280, nullptr, nullptr, type.hInstance, nullptr);
+    CHECK(window != nullptr);
+    try {
+        auto image = video(1, 640, 480);
+        render_window(image, window, XMAX_CONTENT_FIT);
+        render_trajectory_effects(window, {640, 480, 30}, XMAX_CONTENT_FIT,
+                                  {{{{.25, .5}, {.5, .5}}, 0}}, 0);
+        GdiFlush();
+        RECT bounds{};
+        CHECK(GetClientRect(window, &bounds));
+        const auto dc = GetDC(window);
+        const auto center = GetPixel(dc, bounds.right / 2, bounds.bottom / 2);
+        const double dpi = std::max(1.0, GetDeviceCaps(dc, LOGPIXELSX) / 96.0);
+        const auto ring = GetPixel(dc, bounds.right / 2 + int(18 * dpi), bounds.bottom / 2);
+        ReleaseDC(window, dc);
+        CHECK(center != CLR_INVALID && GetRValue(center) > 200 && GetGValue(center) > 200);
+        CHECK(ring != CLR_INVALID && GetGValue(ring) > GetRValue(ring) + 10);
+    } catch (...) {
+        DestroyWindow(window);
+        throw;
+    }
+    DestroyWindow(window);
+    UnregisterClassW(type.lpszClassName, type.hInstance);
+}
+#endif
+
 int main() {
     try {
+#ifdef _WIN32
+        native_trajectory_compositing();
+#endif
+        external_pcm_conversion();
+        external_audio_public_bridge();
+        full_video_statistics();
+        generation_startup_measurement();
+        quality_format_and_effect_contracts();
         disabled_quality();
         generation_replacement();
         replacement_during_connect();

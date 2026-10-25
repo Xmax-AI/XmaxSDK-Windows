@@ -113,7 +113,7 @@ static void lifecycle() {
     CHECK(s.acquire_frame() == nullptr);
     const auto old_frame_callback = rtc->callbacks.frame;
     s.disconnect(false);
-    CHECK(!s.requesting());
+    CHECK(s.requesting());
     CHECK(h->count("DELETE /session/session-1") == 1);
     CHECK(rtc->leaves == 1);
     rtc->callbacks.frame(frame);
@@ -185,7 +185,7 @@ static void heartbeat() {
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
     CHECK(error);
-    CHECK(!s.requesting());
+    CHECK(s.requesting()); // Connection failure retains the bound source and local preview.
     CHECK(h->count("PUT /session/session-1/heartbeat") == 1);
     CHECK(h->count("DELETE /session/session-1") == 1);
 }

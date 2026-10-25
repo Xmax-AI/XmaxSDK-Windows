@@ -34,7 +34,8 @@ void StreamController::allocate() {
  * Joins the room with input encoding, audio policy, and lifecycle-protected callbacks.
  *
  * @param[in] connection The current RTC room connection information.
- * @param[in] format The requested pixel dimensions and frame rate, subject to the interface's format limits.
+ * @param[in] format The requested pixel dimensions and frame rate, subject to the interface's format
+ * limits.
  * @param[in] microphone Whether to start microphone capture when joining the RTC room.
  * @param[in] callbacks Callbacks for result frames, RTC events, failures, and first publication; drained
  * before stop returns.
@@ -64,6 +65,14 @@ void StreamController::join(
             Clock::now() - quality_saved_[1] >= std::chrono::hours(1) ? 2 : cached_quality_[1];
     }
 
+    while (quality_.up.level > 1) {
+        try {
+            uplink_encoding(quality_.up.level);
+            break;
+        } catch (const Error&) {
+            --quality_.up.level;
+        }
+    }
     quality_.reset_samples();
     // Set playback policy before joining so result-user subscription starts at the correct volume.
     require(
@@ -72,6 +81,7 @@ void StreamController::join(
         "Allocate an RTC backend before joining"
     );
     room_.backend()->volume(volume_);
+    room_.backend()->external_audio(external_audio_);
     room_.join(
         connection,
         uplink_encoding(quality_.up.level),
@@ -85,10 +95,10 @@ void StreamController::join(
         XMAX_LOG_INFO,
         [&](auto language) {
             return XmaxLogger::localized(
-                language,
-                "RTC 已连接 (RTC Connected)",
-                "RTC Connected"
-            ) +
+                       language,
+                       "RTC 已连接 (RTC Connected)",
+                       "RTC Connected"
+                   ) +
                    "\n└─ " +
                    std::to_string(format.width) + " × " + std::to_string(format.height) + " @ " +
                    std::to_string(format.fps) + " fps, microphone=" + (microphone ? "on" : "off");
@@ -103,7 +113,8 @@ void StreamController::join(
  * @param[in] reference A reference image path or service-supported URL; empty omits the reference.
  * @param[in] face Whether to enable face restoration for generation.
  * @param[in] cancel A cooperative cancellation predicate; true requests termination of the operation.
- * @param[in] maintain The maintenance callback invoked while waiting or throttled; empty omits maintenance.
+ * @param[in] maintain The maintenance callback invoked while waiting or throttled; empty omits
+ * maintenance.
  */
 void StreamController::start(
     const std::string& prompt,
@@ -154,7 +165,8 @@ void StreamController::wait_remote(
  * @param[in] reference A reference image path or service-supported URL; empty omits the reference.
  * @param[in] face Whether to enable face restoration for generation.
  * @param[in] cancel A cooperative cancellation predicate; true requests termination of the operation.
- * @param[in] maintain The maintenance callback invoked while waiting or throttled; empty omits maintenance.
+ * @param[in] maintain The maintenance callback invoked while waiting or throttled; empty omits
+ * maintenance.
  */
 void StreamController::update(
     const std::string& prompt,
@@ -295,8 +307,8 @@ VideoEncodingConfiguration StreamController::uplink_encoding(
 /**
  * Validates and applies uplink bitrate limits and degradation preference.
  *
- * @param[in] value The uplink bitrate limits and degradation preference; see xmax_encoding_config for units
- * and special values.
+ * @param[in] value The uplink bitrate limits and degradation preference; see xmax_encoding_config for
+ * units and special values.
  */
 void StreamController::encoding(
     xmax_encoding_config value
@@ -363,6 +375,8 @@ json StreamController::generation_message(
             reference,
             face
         );
+    if (uint64_t(format_.width) * generation_format_.height == uint64_t(format_.height) * generation_format_.width)
+        value["params"].erase("padding");
     const auto target = quality_format(
         format_,
         quality_.down.level,
@@ -381,7 +395,8 @@ json StreamController::generation_message(
  *
  * @param[in] direction The transport direction: 0 for uplink or 1 for downlink.
  * @param[in] network_quality The native network-quality value for this direction.
- * @param[in] sampled_at The sample's monotonic time in seconds; expired or duplicate samples are ignored.
+ * @param[in] sampled_at The sample's monotonic time in seconds; expired or duplicate samples are
+ * ignored.
  * @param[in] cancel A cooperative cancellation predicate; true requests termination of the operation.
  *
  * @return The events triggered by this observation, or an empty collection if unchanged.
@@ -400,7 +415,28 @@ std::vector<xmax_event> StreamController::observe_quality(
     auto proposal = policy.observe(
         network_quality,
         sampled_at,
-        now
+        now,
+        [this, direction, &policy](int candidate) {
+            const auto current = quality_format(
+                format_,
+                policy.level,
+                direction != 0
+            );
+            const auto next = quality_format(
+                format_,
+                candidate,
+                direction != 0
+            );
+            if (current.width == next.width && current.height == next.height && current.fps == next.fps)
+                return false;
+            try {
+                if (!direction)
+                    uplink_encoding(candidate);
+                return true;
+            } catch (const Error&) {
+                return false;
+            }
+        }
     );
 
     if (!proposal)

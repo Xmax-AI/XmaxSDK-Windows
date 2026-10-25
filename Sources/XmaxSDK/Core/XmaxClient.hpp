@@ -10,6 +10,7 @@
 
 #pragma once
 #include "Core/Realtime/XmaxRealtimeManager.hpp"
+#include "Core/Realtime/XmaxRealtimeFactory.hpp"
 #include "Core/Storage/XmaxStorageManager.hpp"
 #include "Foundation/Render/WindowRenderer.hpp"
 
@@ -32,19 +33,16 @@ class XmaxClient {
         Config config,
         std::shared_ptr<Http> http = make_http()
     )
-        : api_(std::make_shared<ApiService>(
-            std::move(config),
-            std::move(http)
-        )) {
+        : api_(std::make_shared<ApiService>(std::move(config), std::move(http))) {
         XmaxLogger::write(
             LogCategory::Realtime,
             XMAX_LOG_INFO,
             [&](auto language) {
                 return XmaxLogger::localized(
-                    language,
-                    "创建 SDK Client (Client Created)",
-                    "Client Created"
-                ) +
+                           language,
+                           "创建 SDK Client (Client Created)",
+                           "Client Created"
+                       ) +
                        "\n└─ model=" + api_->config().model;
             }
         );
@@ -96,19 +94,10 @@ class XmaxClient {
             );
         }
 
-        auto history = std::make_shared<QualityHistory>(
-            api->config().model,
-            make_preference_store()
+        return XmaxRealtimeFactory::make(
+            std::move(api),
+            adaptive_quality
         );
-        auto manager = std::make_unique<XmaxRealtimeManager>(
-            api,
-            make_rtc,
-            std::chrono::seconds(10),
-            make_camera_capture,
-            std::move(history)
-        );
-        manager->adaptive(adaptive_quality);
-        return manager;
     }
 
     /**
@@ -124,7 +113,7 @@ class XmaxClient {
      * @return The bitmask of XMAX_CAP_* capabilities.
      */
     uint64_t capabilities() const {
-        return (rtc_available() ? XMAX_CAP_RTC | XMAX_CAP_REMOTE_MEDIA_OUTPUT : 0) |
+        return (rtc_available() ? XMAX_CAP_RTC | XMAX_CAP_REMOTE_MEDIA_OUTPUT | XMAX_CAP_EXTERNAL_AUDIO_INPUT : 0) |
                (camera_available() ? XMAX_CAP_CAMERA : 0) |
                (native_window_available() ? XMAX_CAP_NATIVE_WINDOW : 0) | XMAX_CAP_STORAGE |
                XMAX_CAP_TRAJECTORY;

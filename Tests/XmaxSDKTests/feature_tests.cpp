@@ -56,7 +56,7 @@ static void camera_lifecycle() {
         [capture] { return std::make_unique<FakeCamera>(capture); });
     sdk.prepare_camera("one", {1920, 1024, 30}, true);
     CHECK(sdk.state_snapshot().state == XMAX_READY && http->calls.empty());
-    CHECK(sdk.format().width == 1920 && sdk.format().height == 1080);
+    CHECK(sdk.format().width == 1920 && sdk.format().height == 1024);
     auto held = sdk.acquire_local_frame();
     CHECK(held && held->planes[0][0] == 42);
     CHECK(!sdk.requesting());
@@ -64,7 +64,7 @@ static void camera_lifecycle() {
     CHECK(rtc->microphone && rtc->joins == 1);
     CHECK(sdk.state_snapshot().state == XMAX_CONNECTED);
     sdk.start("first", "https://ref", true, false);
-    CHECK(json::parse(rtc->messages.front())["params"]["size"] == json::array({1920, 1080}));
+    CHECK(json::parse(rtc->messages.front())["params"]["size"] == json::array({1920, 1024}));
     const auto first_task = std::string(sdk.state_snapshot().task_id);
     capture->callbacks.frame(captured(2));
     CHECK(rtc->pushes == 1);
@@ -134,8 +134,8 @@ static void separate_connect_and_generation() {
     CHECK(rtc->encoding.minimum_bitrate == 50 && rtc->encoding.maximum_bitrate == 50);
     sdk.encoding({sizeof(xmax_encoding_config), 0, 2500, XMAX_ENCODER_MAINTAIN_QUALITY});
     CHECK(rtc->encoding.maximum_bitrate == 2500);
-    sdk.encoding({sizeof(xmax_encoding_config), 10000, 0, XMAX_ENCODER_AUTO});
-    CHECK(rtc->encoding.maximum_bitrate >= rtc->encoding.minimum_bitrate);
+    expect_error(XMAX_INVALID_ARGUMENT, [&] { sdk.encoding({sizeof(xmax_encoding_config), 10000, 0, XMAX_ENCODER_AUTO}); });
+    CHECK(rtc->encoding.maximum_bitrate == 2500 && rtc->encoding.minimum_bitrate == 0);
     sdk.adaptive(false);
     CHECK(!sdk.quality().adaptive_enabled);
     expect_error(XMAX_UNSUPPORTED, [&] { sdk.interpolation(true); });
@@ -181,8 +181,8 @@ static void quality_policy() {
         CHECK(!policy.observe(1, t, t));
     CHECK(!policy.observe(1, 28, 40)); // stale sample
     CHECK(!policy.observe(4, 28, 40)); // duplicate sample
-    CHECK(quality_format({1920, 1024, 30}, 2, true).width == 1500);
-    CHECK(quality_format({1920, 1024, 30}, 2, false).width == 1530);
+    CHECK(quality_format({1920, 1024, 30}, 2, true).width == 1680);
+    CHECK(quality_format({1920, 1024, 30}, 2, false).width == 1680);
     auto rtc = std::make_shared<FakeRtc>();
     StreamController stream([rtc] { return rtc; });
     stream.allocate();
@@ -279,7 +279,7 @@ static void publication_timing() {
 }
 static void async_exception_boundary() {
     std::atomic<int> failures{0};
-    RealtimeCoordinator coordinator([] {},
+    XmaxRealtimeLifecycleManager coordinator([] {},
                                     [&](Error error) {
                                         CHECK(error.code == XMAX_INTERNAL_ERROR);
                                         ++failures;

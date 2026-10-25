@@ -10,6 +10,7 @@
 
 #pragma once
 #include "Foundation/Media/VideoFrame.hpp"
+#include "Foundation/Render/TrajectoryEffect.hpp"
 
 namespace xmax::detail {
 
@@ -32,17 +33,19 @@ void render_window(
 );
 
 /**
- * Draws default trajectory lines and points over an HWND's video content.
+ * Composites fading trails, pointer glow, rings, and particles above native-window video.
  *
- * @param[in] window A Windows HWND owned by the calling thread.
- * @param[in] format The actual dimensions of the displayed video.
- * @param[in] content_mode The aspect-fit or aspect-fill layout mode.
- * @param[in] points The normalized trajectory in [0, 1].
+ * @param[in] window An HWND owned by the calling thread.
+ * @param[in] format The displayed video dimensions.
+ * @param[in] content_mode The aspect-fit or aspect-fill policy shared with video.
+ * @param[in] strokes Recent normalized strokes and fade ages.
+ * @param[in] elapsed The current gesture age in seconds for animation.
  */
-void render_trajectory(
+void render_trajectory_effects(
     void* window,
     xmax_video_format format,
     int32_t content_mode,
-    const std::vector<xmax_point>& points
+    const std::vector<TrajectoryStroke>& strokes,
+    double elapsed
 );
 } // namespace xmax::detail

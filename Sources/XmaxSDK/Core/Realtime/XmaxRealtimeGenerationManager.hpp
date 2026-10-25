@@ -34,9 +34,14 @@ class XmaxRealtimeGenerationManager {
     std::optional<Context> context;
 
     /**
-     * The thread-safe controller for coordinate mapping and sample coalescing.
+     * Retains the media controller's interaction channel for generation boundaries.
+     *
+     * @param[in,out] interaction The local interaction channel, which outlives this manager.
      */
-    InteractionController interaction;
+    explicit XmaxRealtimeGenerationManager(
+        InteractionController& interaction
+    ) : interaction_(interaction) {
+    }
 
     /**
      * Starts generation and waits for a real first frame, or updates current conditions; caches conditions
@@ -64,7 +69,7 @@ class XmaxRealtimeGenerationManager {
                 maintain
             );
         else {
-            interaction.clear();
+            interaction_.clear();
             stream.start(
                 value.prompt,
                 value.reference,
@@ -118,9 +123,16 @@ class XmaxRealtimeGenerationManager {
     void reset(
         bool clear_context
     ) {
-        interaction.clear();
+        interaction_.clear();
         if (clear_context)
             context.reset();
     }
+
+  private:
+
+    /**
+     * The borrowed local interaction channel owned by the media controller.
+     */
+    InteractionController& interaction_;
 };
 } // namespace xmax::detail

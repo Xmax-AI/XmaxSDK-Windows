@@ -10,6 +10,7 @@
 
 #pragma once
 #include "Foundation/RTC/RtcCallbacks.hpp"
+#include "Foundation/Media/ExternalAudioPacket.hpp"
 #include "Foundation/RTC/VideoEncodingConfiguration.hpp"
 #include "Foundation/RTC/Connection.hpp"
 #include "Foundation/Media/VideoFrame.hpp"
@@ -68,6 +69,36 @@ class Rtc {
     virtual void push(
         const Frame& frame
     ) = 0;
+
+    /**
+     * Selects custom PCM publication before join; microphone capture must be disabled when enabled.
+     *
+     * @param[in] enabled Whether the source supplies external PCM.
+     */
+    virtual void external_audio(
+        bool enabled
+    ) {
+        require(
+            !enabled,
+            XMAX_UNSUPPORTED,
+            "This RTC backend does not support external audio"
+        );
+    }
+
+    /**
+     * Publishes a 10 ms external PCM packet without local playback.
+     *
+     * @param[in] frame The 480 mono PCM16 samples and shared source timestamp.
+     */
+    virtual void push_audio(
+        const ExternalAudioPacket& frame
+    ) {
+        (void)frame;
+        throw Error(
+            XMAX_UNSUPPORTED,
+            "This RTC backend does not support external audio"
+        );
+    }
 
     /**
      * Resets first-result tracking before a new generation task.

@@ -65,9 +65,9 @@ class RenderController {
     ) {
         auto owned = std::make_shared<Frame>(std::move(frame));
         if (remote_.submit_owned(
-            owned,
-            token
-        ))
+                owned,
+                token
+            ))
             output_.video(
                 std::move(owned),
                 token
@@ -213,14 +213,17 @@ class RenderController {
             window,
             content_mode
         );
-        if (interaction_enabled)
-            trajectory_renderer_
-                .render(
+        if (interaction_enabled) {
+            double elapsed = 0;
+            const auto strokes = trajectory.effects(elapsed);
+            trajectory_renderer_.render(
                 window,
                 {frame.width, frame.height, 30},
                 content_mode,
-                trajectory.snapshot()
+                strokes,
+                elapsed
             );
+        }
     }
 
   private:

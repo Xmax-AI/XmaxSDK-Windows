@@ -94,7 +94,8 @@ RealtimeSession parse_connection(
 }
 
 /**
- * Allocates a server session and validates RTC information, retaining the identifier needed for rollback.
+ * Allocates a server session and validates RTC information, retaining the identifier needed for
+ * rollback.
  *
  * @param[in] cancel A cooperative cancellation predicate; true requests termination of the operation.
  *

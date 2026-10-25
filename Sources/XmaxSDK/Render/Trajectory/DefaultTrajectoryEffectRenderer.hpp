@@ -26,19 +26,22 @@ class DefaultTrajectoryEffectRenderer {
      * @param[in] window An HWND owned by the calling thread.
      * @param[in] format The displayed frame's actual dimensions.
      * @param[in] content_mode Aspect fit or centered aspect fill.
-     * @param[in] points The current task's unexpired normalized samples.
+     * @param[in] strokes The current task's fading normalized strokes.
+     * @param[in] elapsed The gesture animation age in seconds.
      */
     void render(
         void* window,
         xmax_video_format format,
         int32_t content_mode,
-        const std::vector<xmax_point>& points
+        const std::vector<TrajectoryStroke>& strokes,
+        double elapsed
     ) const {
-        render_trajectory(
+        render_trajectory_effects(
             window,
             format,
             content_mode,
-            points
+            strokes,
+            elapsed
         );
     }
 };

@@ -10,7 +10,7 @@
 
 #pragma once
 #include "Foundation/Media/VideoFrame.hpp"
-#include "Foundation/Models/RealtimeModelDefinition.hpp"
+#include "Service/Realtime/RealtimeModel.hpp"
 #include <cmath>
 #include <limits>
 
@@ -24,7 +24,7 @@ class MediaService {
   public:
 
     /**
-     * The model's five supported canvas sizes, with a default frame rate of 30.
+     * The model's supported canvas sizes, with a default frame rate of 30.
      */
     inline static constexpr auto formats = RealtimeModelDefinition::formats;
 
@@ -39,11 +39,21 @@ class MediaService {
         xmax_video_format format
     ) {
         validate_format(format);
+        require(
+            uint64_t(format.width) * format.height <= RealtimeModelDefinition::maximum_input_pixels,
+            XMAX_INVALID_ARGUMENT,
+            "Video input exceeds the model pixel limit"
+        );
+        require(
+            format.width >= 4 && format.height >= 4,
+            XMAX_INVALID_ARGUMENT,
+            "External video dimensions must be at least four pixels"
+        );
         return format;
     }
 
     /**
-     * Validates camera targets, mapping legacy dimensions to a 1080p format of the same orientation.
+     * Validates camera targets, mapping 1080p compatibility presets to the supported format of the same orientation.
      *
      * @param[in] format The requested camera encoding dimensions and frame rate; capture may use other
      * device-supported dimensions.
@@ -52,23 +62,18 @@ class MediaService {
         xmax_video_format format
     ) {
         auto result = input(format);
-        bool supported = (format.width == 1920 && format.height == 1024) ||
-                         (format.width == 1024 && format.height == 1920);
-
+        if (result.width == 1920 && result.height == 1080)
+            result.height = 1024;
+        else if (result.width == 1080 && result.height == 1920)
+            result.width = 1024;
+        bool supported = false;
         for (const auto& value : formats)
-            supported = supported || (value.width == format.width && value.height == format.height);
-
+            supported = supported || (value.width == result.width && value.height == result.height);
         require(
             supported,
             XMAX_INVALID_ARGUMENT,
-            "Supported input sizes: 1920x1080, 1080x1920, 1408x1408, 1152x1536, 1536x1152; "
-            "legacy 1920x1024 and 1024x1920 inputs are also accepted"
+            "Supported camera targets: 1024x1920 and 1920x1024"
         );
-
-        if (result.width == 1920 && result.height == 1024)
-            result.height = 1080;
-        else if (result.width == 1024 && result.height == 1920)
-            result.width = 1080;
         return result;
     }
 

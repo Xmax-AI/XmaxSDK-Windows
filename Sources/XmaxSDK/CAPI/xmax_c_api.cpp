@@ -175,10 +175,10 @@ void log_failure(
     xmax_result code
 ) noexcept {
     if (std::strncmp(
-        operation,
-        "xmax_logger_",
-        12
-    ) == 0)
+            operation,
+            "xmax_logger_",
+            12
+        ) == 0)
         return;
 
     XmaxLogger::write(
@@ -192,11 +192,7 @@ void log_failure(
                        "Error Code: "
                    ) +
                    std::to_string(code) +
-                   "\n└─ " + XmaxLogger::localized(
-                       language,
-                       "原因：",
-                       "Reason: "
-                   ) + last_error;
+                   "\n└─ " + XmaxLogger::localized(language, "原因：", "Reason: ") + last_error;
         }
     );
 }
@@ -580,10 +576,7 @@ xmax_result XMAX_CALL xmax_realtime_update_camera_preset(
                 XMAX_INVALID_STATE,
                 "No camera stream is active"
             );
-            realtime->session->update_camera_format(RealtimeModelDefinition::preset_format(
-                preset,
-                current.fps
-            ));
+            realtime->session->update_camera_format(RealtimeModelDefinition::preset_format(preset, current.fps));
         }
     );
 }
@@ -807,9 +800,9 @@ xmax_result XMAX_CALL xmax_logger_configure(
     return protect(
         __func__,
         [&] { XmaxLogger::configure(
-            options,
-            language
-        ); }
+                  options,
+                  language
+              ); }
     );
 }
 
@@ -1150,10 +1143,10 @@ xmax_result XMAX_CALL xmax_realtime_prepare_camera(
 
             r->session
                 ->prepare_camera(
-                config->device_id ? config->device_id : "",
-                format,
-                config->use_microphone != 0
-            );
+                    config->device_id ? config->device_id : "",
+                    format,
+                    config->use_microphone != 0
+                );
         }
     );
 }
@@ -1618,7 +1611,8 @@ xmax_result XMAX_CALL xmax_realtime_close(
  *
  * @return XMAX_OK on success, or a negative error code on failure. Use xmax_last_error for details.
  *
- * @note This flag does not pace external frames. The query does not wait for lifecycle operations.
+ * @note The flag stays true while a live external source drives disconnected preview. It becomes false
+ * after unbinding or source failure. This flag does not pace frames or wait for lifecycle work.
  */
 xmax_result XMAX_CALL xmax_realtime_is_requesting_frames(
     xmax_realtime r,
@@ -2331,10 +2325,10 @@ xmax_result XMAX_CALL xmax_external_frame_sink_get_format(
 }
 
 /**
- * Reports whether the current source binding requests publication frames.
+ * Reports whether the current source binding accepts preview and publication frames.
  *
  * @param[in] sink A valid source receiver.
- * @param[out] requesting Receives 1 while publication needs this source, or 0 after unbinding or closure.
+ * @param[out] requesting Receives 1 for a live binding, including while disconnected, or 0 after failure or unbinding.
  *
  * @return XMAX_OK on success, or a negative error code on failure.
  *
@@ -2361,10 +2355,12 @@ xmax_result XMAX_CALL xmax_external_frame_sink_is_requesting_frames(
  * Copies and submits a source-bound video frame without scaling, rotation, or pixel mirroring.
  *
  * @param[in] sink The receiver returned when this source was bound.
- * @param[in] frame The borrowed BGRA, NV12, or I420 pixels matching the bound format; monotonic microsecond
- * timestamps must strictly increase. Pixels can be reused after return but must not be changed concurrently.
+ * @param[in] frame The borrowed BGRA, NV12, or I420 pixels matching the bound format. Negative, duplicate, or
+ * decreasing monotonic microsecond timestamps are ignored. Pixels can be reused after return but must
+ * not be changed concurrently.
  *
- * @return XMAX_OK for submission or a stale binding, or a negative error code for invalid current input.
+ * @return XMAX_OK for submission, ignored timestamps, or a stale binding; XMAX_MEDIA_ERROR for invalid
+ * current pixels, which also fails the binding and schedules connection/media cleanup.
  */
 xmax_result XMAX_CALL xmax_external_frame_sink_push_video_frame(
     xmax_external_frame_sink sink,
@@ -2407,10 +2403,10 @@ xmax_result XMAX_CALL xmax_external_frame_sink_report_error(
             sized(error);
             require(
                 error->code < 0 && std::memchr(
-                    error->message,
-                    0,
-                    sizeof(error->message)
-                ),
+                                       error->message,
+                                       0,
+                                       sizeof(error->message)
+                                   ),
                 XMAX_INVALID_ARGUMENT,
                 "A negative error code and NUL-terminated source error are required"
             );
@@ -2432,4 +2428,93 @@ void XMAX_CALL xmax_external_frame_sink_release(
     xmax_external_frame_sink sink
 ) {
     delete sink;
+}
+
+/**
+ * Binds caller-owned video and optional external PCM without microphone capture.
+ *
+ * @param[in] realtime The disconnected realtime controller.
+ * @param[in] config The fixed source configuration.
+ * @param[out] out_sink Receives an owned receiver, or NULL on failure.
+ *
+ * @return XMAX_OK on success, or a negative SDK error code.
+ */
+xmax_result XMAX_CALL xmax_realtime_bind_external_media(
+    xmax_realtime realtime,
+    const xmax_external_media_config* config,
+    xmax_external_frame_sink* out_sink
+) {
+    if (out_sink)
+        *out_sink = nullptr;
+    return protect(
+        __func__,
+        [&] {
+            handle(realtime);
+            sized(config);
+            handle(out_sink);
+            require(
+                config->has_audio == 0 || config->has_audio == 1,
+                XMAX_INVALID_ARGUMENT,
+                "has_audio must be 0 or 1"
+            );
+            auto sink = std::make_unique<xmax_external_frame_sink_impl>();
+            sink->session = realtime->session;
+            sink->format = config->video_format;
+            sink->binding = realtime->session->prepare(
+                config->video_format,
+                config->has_audio != 0
+            );
+            *out_sink = sink.release();
+        }
+    );
+}
+
+/**
+ * Converts and uploads source-bound PCM, ignoring inactive and replaced sources.
+ *
+ * @param[in] sink The source-scoped receiver.
+ * @param[in] frame The borrowed PCM samples and source timestamp.
+ *
+ * @return XMAX_OK on success or ignored input, or a negative SDK error code.
+ */
+xmax_result XMAX_CALL xmax_external_frame_sink_push_audio_frame(
+    xmax_external_frame_sink sink,
+    const xmax_external_audio_frame* frame
+) {
+    return protect(
+        __func__,
+        [&] {
+            handle(sink);
+            handle(frame);
+            if (auto session = sink->session.lock())
+                session->push_audio(
+                    *frame,
+                    sink->binding
+                );
+        }
+    );
+}
+
+/**
+ * Returns the latest video statistics without consuming realtime events.
+ *
+ * @param[in] realtime The realtime controller.
+ * @param[in] direction Zero for uplink and one for downlink.
+ * @param[in,out] statistics The destination, with struct_size initialized.
+ *
+ * @return XMAX_OK on success, or a negative SDK error code.
+ */
+xmax_result XMAX_CALL xmax_realtime_get_video_statistics(
+    xmax_realtime realtime,
+    int32_t direction,
+    xmax_video_statistics* statistics
+) {
+    return protect(
+        __func__,
+        [&] {
+            handle(realtime);
+            sized(statistics);
+            *statistics = realtime->session->video_statistics(direction);
+        }
+    );
 }

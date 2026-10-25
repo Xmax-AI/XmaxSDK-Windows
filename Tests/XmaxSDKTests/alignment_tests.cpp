@@ -16,7 +16,7 @@ struct RecordingHttp : FakeHttp {
 
 static void model_and_environment() {
     const auto model = RealtimeModelDefinition::info(RealtimeModelDefinition::parse("x2.1"));
-    CHECK(model.format_count == 5 && model.default_camera_format.width == 1080);
+    CHECK(model.format_count == 2 && model.default_camera_format.width == 1024);
     CHECK(model.default_camera_format.height == 1920 && model.maximum_input_pixels == 2100000);
     for (int value : {1, 2}) {
         const auto removed = static_cast<xmax::RealtimeModel>(value);
@@ -110,10 +110,10 @@ static void camera_configuration() {
     manager.update_camera_format({1080, 1920, 24});
     CHECK(manager.camera_format().height == 1920 && manager.camera_format().fps == 24);
     CHECK(manager.acquire_local_frame()->width == 640);
-    probe->fail_width = 1408;
-    expect_error(XMAX_MEDIA_ERROR, [&] { manager.update_camera_format({1408, 1408, 24}); });
+    probe->fail_width = 1920;
+    expect_error(XMAX_MEDIA_ERROR, [&] { manager.update_camera_format({1920, 1024, 24}); });
     CHECK(manager.state_snapshot().state == XMAX_READY);
-    CHECK(manager.camera_format().width == 1080 && probe->current.width == 1080);
+    CHECK(manager.camera_format().width == 1024 && probe->current.width == 1024);
     CHECK(manager.acquire_local_frame());
     manager.stop_media();
     CHECK(manager.camera_format().width == 0);
@@ -272,6 +272,7 @@ static void independent_timing_and_error_ownership() {
     auto now = Clock::time_point(std::chrono::seconds(1));
     RealtimeTiming timing([&] { return now; });
     timing.begin();
+    timing.begin_session();
     CHECK(timing.snapshot().first_frame_ms == -1);
     now += std::chrono::milliseconds(120);
     timing.finish_session();
@@ -286,16 +287,18 @@ static void independent_timing_and_error_ownership() {
     timing.begin_signal();
     now += std::chrono::milliseconds(250);
     timing.finish_signal();
+    timing.finish();
     const auto snapshot = timing.snapshot();
     CHECK(snapshot.session_ms == 120 && snapshot.rtc_join_ms == 100);
     CHECK(snapshot.publish_ms == 12 && snapshot.first_frame_ms == 250 && snapshot.total_ms == 470);
     timing.reset_publication();
     timing.begin();
+    timing.begin_session();
     timing.begin_join();
     CHECK(!timing.update_publication(publication));
     CHECK(timing.snapshot().publish_ms == -1);
 
-    RealtimeErrorHandler errors;
+    XmaxRealtimeErrorManager errors;
     const auto secret = XmaxLogger::protect_secret("STRUCTURE_SECRET_SENTINEL");
     errors.record(Error(XMAX_API_ERROR, "STRUCTURE_SECRET_SENTINEL: 拒绝访问", 123, 403));
     const auto details = errors.details();
@@ -310,7 +313,7 @@ static void independent_timing_and_error_ownership() {
 static void public_configuration() {
     xmax_model_info info{};
     info.struct_size = sizeof(info);
-    CHECK(xmax_model_get_info("x2.1", &info) == XMAX_OK && info.default_camera_format.width == 1080);
+    CHECK(xmax_model_get_info("x2.1", &info) == XMAX_OK && info.default_camera_format.width == 1024);
     CHECK(xmax_model_get_info("unknown", &info) == XMAX_INVALID_ARGUMENT);
     xmax_error_info error{};
     error.struct_size = sizeof(error);

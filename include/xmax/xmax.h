@@ -435,11 +435,10 @@ typedef struct xmax_client_config {
 /**
  * Video dimensions and frame rate for external input or a camera's RTC encoding target.
  *
- * Camera targets support 1920x1080, 1080x1920, 1408x1408, 1152x1536, and 1536x1152 at [1, 60] fps. External
- * input accepts even dimensions in [4, 8192] totaling at most 2100000 pixels, without restricting input to
- * camera presets. Legacy 1920x1024 and 1024x1920 external formats remain supported; camera targets map these
- * to 1920x1080 and 1080x1920. Capture preserves native frame dimensions; RTC handles target aspect ratio and
- * resolution.
+ * Camera targets support 1024x1920 and 1920x1024 at [1, 60] fps. The 1080p landscape and portrait
+ * presets remain accepted as compatibility aliases for these targets. External input accepts even
+ * dimensions in [4, 8192] totaling at most 2100000 pixels, without restricting input to camera presets.
+ * Capture preserves native frame dimensions; RTC handles target aspect ratio and resolution.
  */
 typedef struct xmax_video_format {
 
@@ -506,6 +505,169 @@ typedef struct xmax_video_frame {
     size_t plane_sizes[3];
 
 } xmax_video_frame;
+
+/**
+ * The sample representation of interleaved external PCM.
+ */
+typedef enum xmax_audio_sample_format {
+
+    /**
+     * Signed little-endian 16-bit samples.
+     */
+    XMAX_AUDIO_PCM16 = 0,
+
+    /**
+     * Little-endian IEEE 754 32-bit samples, finite and in [-1, 1].
+     */
+    XMAX_AUDIO_FLOAT32 = 1
+
+} xmax_audio_sample_format;
+
+/**
+ * Borrowed external PCM on the same monotonic timeline as the source video.
+ */
+typedef struct xmax_external_audio_frame {
+
+    /**
+     * The structure size in bytes; initialize with sizeof.
+     */
+    uint32_t struct_size;
+
+    /**
+     * The interleaved sample representation, fixed for this binding.
+     */
+    xmax_audio_sample_format sample_format;
+
+    /**
+     * The sampling frequency in [8000, 192000] Hz, fixed for this binding.
+     */
+    uint32_t sample_rate;
+
+    /**
+     * The channel count in [1, 8], fixed for this binding; channels are mixed equally.
+     */
+    uint32_t channels;
+
+    /**
+     * The samples per channel, from 1 through sample_rate; at most one second per call.
+     */
+    uint32_t samples_per_channel;
+
+    /**
+     * The first sample timestamp, in nonnegative monotonic microseconds shared with video.
+     */
+    int64_t timestamp_us;
+
+    /**
+     * The contiguous interleaved samples, borrowed until submission returns.
+     */
+    const void* data;
+
+    /**
+     * The exact sample byte count; samples_per_channel * channels * bytes per sample.
+     */
+    size_t data_size;
+
+} xmax_external_audio_frame;
+
+/**
+ * Declares external video and optional PCM upload without microphone capture or local audio playback.
+ */
+typedef struct xmax_external_media_config {
+
+    /**
+     * The structure size in bytes; initialize with sizeof.
+     */
+    uint32_t struct_size;
+
+    /**
+     * The exact video input dimensions and frame rate, retained without pixel scaling.
+     */
+    xmax_video_format video_format;
+
+    /**
+     * Whether the source supplies PCM audio; must be 0 or 1 and remains fixed until unbinding.
+     */
+    int32_t has_audio;
+
+} xmax_external_media_config;
+
+/**
+ * A directional RTC video snapshot. Unavailable numeric metrics are -1; available is 0 after cleanup.
+ */
+typedef struct xmax_video_statistics {
+
+    /**
+     * The structure size in bytes; initialize with sizeof.
+     */
+    uint32_t struct_size;
+
+    /**
+     * Whether this direction has a current video statistics snapshot.
+     */
+    int32_t available;
+
+    /**
+     * The transport direction: 0 for uplink and 1 for downlink.
+     */
+    int32_t direction;
+
+    /**
+     * The result user account for downlink; empty for uplink or when unavailable.
+     */
+    char user_id[128];
+
+    /**
+     * The encoded uplink or received downlink width, in pixels.
+     */
+    int32_t width;
+
+    /**
+     * The encoded uplink or received downlink height, in pixels.
+     */
+    int32_t height;
+
+    /**
+     * The local capture frame rate; unavailable for downlink.
+     */
+    int32_t capture_fps;
+
+    /**
+     * The local encoder output frame rate; unavailable for downlink.
+     */
+    int32_t encode_fps;
+
+    /**
+     * The outgoing transmission frame rate; unavailable for downlink.
+     */
+    int32_t send_fps;
+
+    /**
+     * The received decoder output frame rate; unavailable for uplink.
+     */
+    int32_t decode_fps;
+
+    /**
+     * The native RTC render frame rate, excluding SDK processing; unavailable for uplink.
+     */
+    int32_t render_fps;
+
+    /**
+     * The sent or received video bitrate, in kbps.
+     */
+    int32_t bitrate_kbps;
+
+    /**
+     * The sent or received video packet loss, in [0, 100].
+     */
+    int32_t packet_loss_percent;
+
+    /**
+     * The RTC media end-to-end delay, in milliseconds; unavailable for uplink.
+     */
+    int32_t e2e_ms;
+
+} xmax_video_statistics;
 
 /**
  * The prompt, optional reference image, and face-restoration conditions; strings remain valid throughout the
@@ -636,7 +798,9 @@ typedef struct xmax_event {
     double first_frame_ms;
 
     /**
-     * The total startup duration from connection start to the first result frame, in milliseconds.
+     * The duration from this generation startup request to its committed first result, in milliseconds.
+     * Existing-connection idle time and camera preparation are excluded. Failure timing reports elapsed
+     * startup time with a negative code and leaves unfinished stages at -1.
      */
     double total_ms;
 
@@ -680,7 +844,12 @@ enum {
     /**
      * The RTC build provides copied result-user PCM and video output on a shared rendering timeline.
      */
-    XMAX_CAP_REMOTE_MEDIA_OUTPUT = 1u << 6
+    XMAX_CAP_REMOTE_MEDIA_OUTPUT = 1u << 6,
+
+    /**
+     * The RTC build supports source-bound external PCM upload.
+     */
+    XMAX_CAP_EXTERNAL_AUDIO_INPUT = 1u << 7
 };
 
 /**
@@ -763,7 +932,7 @@ typedef struct xmax_camera_config {
     const char* device_id;
 
     /**
-     * The RTC encoding target; an all-zero format selects the model's camera default (1080x1920 at 30 fps
+     * The RTC encoding target; an all-zero format selects the model's camera default (1024x1920 at 30 fps
      * for x2.1). Frame views report actual capture dimensions.
      */
     xmax_video_format format;
@@ -1027,29 +1196,39 @@ typedef enum xmax_camera_preset {
     XMAX_CAMERA_PRESET_NONE = 0,
 
     /**
-     * A 16:9 landscape frame.
+     * The 1080p landscape compatibility alias for the model's 1920x1024 target.
      */
     XMAX_CAMERA_PRESET_1920_1080 = 1,
 
     /**
-     * A 9:16 portrait frame.
+     * The 1080p portrait compatibility alias for the model's 1024x1920 target.
      */
     XMAX_CAMERA_PRESET_1080_1920 = 2,
 
     /**
-     * A 1:1 square frame.
+     * A reserved square preset; the current model rejects this value.
      */
     XMAX_CAMERA_PRESET_1408_1408 = 3,
 
     /**
-     * A 3:4 portrait frame.
+     * A reserved 3:4 preset; the current model rejects this value.
      */
     XMAX_CAMERA_PRESET_1152_1536 = 4,
 
     /**
-     * A 4:3 landscape frame.
+     * A reserved 4:3 preset; the current model rejects this value.
      */
-    XMAX_CAMERA_PRESET_1536_1152 = 5
+    XMAX_CAMERA_PRESET_1536_1152 = 5,
+
+    /**
+     * The model's 1920 by 1024 landscape camera target.
+     */
+    XMAX_CAMERA_PRESET_1920_1024 = 6,
+
+    /**
+     * The model's 1024 by 1920 portrait camera target.
+     */
+    XMAX_CAMERA_PRESET_1024_1920 = 7
 
 } xmax_camera_preset;
 
@@ -1096,7 +1275,7 @@ typedef struct xmax_model_info {
     const char* display_name;
 
     /**
-     * The five supported video dimensions with recommended default frame rates.
+     * Storage for up to five supported formats; only the first format_count entries are populated.
      */
     xmax_video_format supported_formats[5];
 
@@ -2282,7 +2461,8 @@ XMAX_API xmax_result XMAX_CALL xmax_realtime_close(
  *
  * @return XMAX_OK on success, or a negative error code on failure. Use xmax_last_error for details.
  *
- * @note This flag does not pace external frames. The query does not wait for lifecycle operations.
+ * @note The flag stays true while a live external source drives disconnected preview. It becomes false
+ * after unbinding or source failure. This flag does not pace frames or wait for lifecycle work.
  */
 XMAX_API xmax_result XMAX_CALL
 xmax_realtime_is_requesting_frames(
@@ -2707,10 +2887,10 @@ xmax_external_frame_sink_get_format(
 );
 
 /**
- * Reports whether the current source binding requests publication frames.
+ * Reports whether the current source binding accepts preview and publication frames.
  *
  * @param[in] sink A valid source receiver.
- * @param[out] requesting Receives 1 while publication needs this source, or 0 after unbinding or closure.
+ * @param[out] requesting Receives 1 for a live binding, including while disconnected, or 0 after failure or unbinding.
  *
  * @return XMAX_OK on success, or a negative error code on failure.
  *
@@ -2726,10 +2906,12 @@ xmax_external_frame_sink_is_requesting_frames(
  * Copies and submits a source-bound video frame without scaling, rotation, or pixel mirroring.
  *
  * @param[in] sink The receiver returned when this source was bound.
- * @param[in] frame The borrowed BGRA, NV12, or I420 pixels matching the bound format; monotonic microsecond
- * timestamps must strictly increase. Pixels can be reused after return but must not be changed concurrently.
+ * @param[in] frame The borrowed BGRA, NV12, or I420 pixels matching the bound format. Negative, duplicate, or
+ * decreasing monotonic microsecond timestamps are ignored. Pixels can be reused after return but must
+ * not be changed concurrently.
  *
- * @return XMAX_OK for submission or a stale binding, or a negative error code for invalid current input.
+ * @return XMAX_OK for submission, ignored timestamps, or a stale binding; XMAX_MEDIA_ERROR for invalid
+ * current pixels, which also fails the binding and schedules connection/media cleanup.
  */
 XMAX_API xmax_result XMAX_CALL
 xmax_external_frame_sink_push_video_frame(
@@ -2774,6 +2956,61 @@ static_assert(
 typedef char xmax_require_32bit_enums
     [(sizeof(xmax_state) == 4 && sizeof(xmax_pixel_format) == 4 && sizeof(xmax_event_type) == 4) ? 1 : -1];
 #endif
+
+/**
+ * Binds caller-owned video with optional PCM and returns a source-scoped receiver.
+ *
+ * @param[in] realtime The controller, disconnected and either idle or media-ready.
+ * @param[in] config The fixed source declaration; has_audio disables microphone capture for this source.
+ * @param[out] out_sink Receives an owned receiver, or NULL on failure.
+ *
+ * @return XMAX_OK on success, or a negative error code on failure.
+ *
+ * @note This call blocks; use a worker thread. Capture, permissions, and pacing remain your app's responsibility.
+ * Frames remain accepted for preview while disconnected. Release the receiver with xmax_external_frame_sink_release.
+ */
+XMAX_API xmax_result XMAX_CALL xmax_realtime_bind_external_media(
+    xmax_realtime realtime,
+    const xmax_external_media_config* config,
+    xmax_external_frame_sink* out_sink
+);
+
+/**
+ * Copies, converts, and uploads source-bound PCM without playing it locally.
+ *
+ * @param[in] sink The source receiver created with has_audio enabled; stale receivers ignore input.
+ * @param[in] frame Borrowed interleaved PCM with a timestamp on the video timeline, copied before return.
+ *
+ * @return XMAX_OK on success or ignored input, or a negative error code for invalid current input.
+ *
+ * @note PCM is converted to 48 kHz mono PCM16 in 10 ms packets and uploaded only while published.
+ * No audio is queued for a future connection. A gap starts a new segment; overlapping or negative
+ * timestamps are ignored. Format changes fail the binding. Audio submitted without opting in is ignored.
+ * Use one serial source queue for audio submissions; do not release sink concurrently with a call.
+ */
+XMAX_API xmax_result XMAX_CALL xmax_external_frame_sink_push_audio_frame(
+    xmax_external_frame_sink sink,
+    const xmax_external_audio_frame* frame
+);
+
+/**
+ * Returns the latest directional video statistics independently of event-queue consumption.
+ *
+ * @param[in] realtime The realtime controller.
+ * @param[in] direction The transport direction: 0 for uplink or 1 for downlink.
+ * @param[in,out] statistics The snapshot destination, with struct_size initialized.
+ *
+ * @return XMAX_OK on success, or a negative error code on failure.
+ *
+ * @note A snapshot with available = 0 has no current stream. Reads do not wait for lifecycle work.
+ * Poll after video statistics events; disconnect clears both directions.
+ */
+XMAX_API xmax_result XMAX_CALL xmax_realtime_get_video_statistics(
+    xmax_realtime realtime,
+    int32_t direction,
+    xmax_video_statistics* statistics
+);
+
 #ifdef __cplusplus
 }
 #endif

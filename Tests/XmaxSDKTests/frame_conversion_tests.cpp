@@ -91,7 +91,7 @@ static void camera_passthrough(xmax_pixel_format pixel_format) {
 }
 
 /**
- * 模型五组尺寸均可使用，生成画布按比例选择，旧摄像头尺寸映射到 1080p。
+ * 模型尺寸用于摄像头编码和生成画布，1080p 兼容参数映射至支持的尺寸。
  */
 static void model_formats() {
     for (const auto& preset : MediaService::formats) {
@@ -101,16 +101,16 @@ static void model_formats() {
         CHECK(canvas.width == preset.width && canvas.height == preset.height);
     }
 
-    CHECK(MediaService::camera_input({1920, 1024, 24}).height == 1080);
-    CHECK(MediaService::camera_input({1024, 1920, 24}).width == 1080);
+    CHECK(MediaService::camera_input({1920, 1024, 24}).height == 1024);
+    CHECK(MediaService::camera_input({1024, 1920, 24}).width == 1024);
     CHECK(MediaService::camera_input({1080, 1920, 24}).fps == 24);
     CHECK(MediaService::input({1920, 1024, 30}).height == 1024);
     const auto portrait = MediaService::generation({1024, 1920, 30});
-    CHECK(portrait.width == 1080 && portrait.height == 1920);
+    CHECK(portrait.width == 1024 && portrait.height == 1920);
     const auto square = MediaService::generation({800, 800, 30});
-    CHECK(square.width == 1408 && square.height == 1408);
+    CHECK((square.width == 1024 && square.height == 1920) || (square.width == 1920 && square.height == 1024));
     const auto landscape = MediaService::generation({640, 480, 30});
-    CHECK(landscape.width == 1536 && landscape.height == 1152);
+    CHECK(landscape.width == 1920 && landscape.height == 1024);
     expect_error(XMAX_INVALID_ARGUMENT, [] { MediaService::camera_input({640, 480, 30}); });
 }
 

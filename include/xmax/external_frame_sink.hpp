@@ -43,7 +43,7 @@ class external_frame_sink : public detail::owner<xmax_external_frame_sink, xmax_
     }
 
     /**
-     * Reports publication demand for this source; stale or closed bindings return false.
+     * Reports whether the binding accepts preview or publication frames, including while disconnected.
      */
     bool requesting() const {
         int32_t result = 0;
@@ -64,6 +64,20 @@ class external_frame_sink : public detail::owner<xmax_external_frame_sink, xmax_
         const xmax_video_frame& frame
     ) const {
         check(xmax_external_frame_sink_push_video_frame(
+            get(),
+            &frame
+        ));
+    }
+
+    /**
+     * Uploads source PCM as 48 kHz mono 10 ms packets without local playback.
+     *
+     * @param[in] frame The borrowed interleaved PCM; see xmax_external_frame_sink_push_audio_frame.
+     */
+    void push_audio(
+        const xmax_external_audio_frame& frame
+    ) const {
+        check(xmax_external_frame_sink_push_audio_frame(
             get(),
             &frame
         ));

@@ -65,6 +65,13 @@ struct FakeRtc : Rtc {
     float remote_volume = -1;
     bool microphone = false;
     bool observing_media = false;
+    bool external_audio_enabled = false;
+    std::vector<ExternalAudioPacket> audio_packets;
+    void external_audio(bool enabled) override { external_audio_enabled = enabled; }
+    void push_audio(const ExternalAudioPacket& packet) override {
+        std::lock_guard<std::mutex> lock(mutex);
+        audio_packets.push_back(packet);
+    }
     void join(const Connection&, VideoEncodingConfiguration config, bool mic, RtcCallbacks cb,
               const Cancel& cancel) override {
         callbacks = std::move(cb);

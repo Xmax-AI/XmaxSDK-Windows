@@ -9,25 +9,23 @@
 //
 
 #include "Foundation/Media/VideoFrame.hpp"
-#include "Foundation/Models/RealtimeModelDefinition.hpp"
 #include <cstring>
 
 namespace xmax::detail {
 
 /**
- * Validates nonzero even dimensions, pixel budget, and frame-rate limits.
+ * Validates video layout dimensions and frame rate independently of generation model limits.
  *
- * @param[in] f Even dimensions in [2, 8192], at most 2100000 pixels, and a frame rate in [1, 60].
+ * @param[in] f Even dimensions in [2, 8192] and a frame rate in [1, 60].
  */
 void validate_format(
     xmax_video_format f
 ) {
     require(
         f.width >= 2 && f.height >= 2 && f.width <= 8192 && f.height <= 8192 && f.width % 2 == 0 &&
-            f.height % 2 == 0 && f.fps >= 1 && f.fps <= 60 &&
-            uint64_t(f.width) * f.height <= RealtimeModelDefinition::maximum_input_pixels,
+            f.height % 2 == 0 && f.fps >= 1 && f.fps <= 60,
         XMAX_INVALID_ARGUMENT,
-        "Video format requires even dimensions, at most 2100000 pixels, and 1-60 fps"
+        "Video format requires even dimensions in [2, 8192] and 1-60 fps"
     );
 }
 
@@ -64,7 +62,6 @@ void validate_frame(
     require(
         s.struct_size >= sizeof(s) && s.width >= 2 && s.height >= 2 && s.width <= 8192 && s.height <= 8192 &&
             s.width % 2 == 0 && s.height % 2 == 0 &&
-            uint64_t(s.width) * s.height <= RealtimeModelDefinition::maximum_input_pixels &&
             s.timestamp_us >= 0,
         XMAX_INVALID_ARGUMENT,
         "Invalid video frame dimensions or timestamp"

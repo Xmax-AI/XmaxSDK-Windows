@@ -9,9 +9,9 @@
 //
 
 #pragma once
-#include "Core/Realtime/RealtimeCoordinator.hpp"
-#include "Core/Realtime/RealtimeTiming.hpp"
-#include "Core/Realtime/RealtimeErrorHandler.hpp"
+#include "Core/Realtime/XmaxRealtimeLifecycleManager.hpp"
+#include "Service/Realtime/RealtimeTiming.hpp"
+#include "Core/Realtime/XmaxRealtimeErrorManager.hpp"
 #include "Media/MediaController.hpp"
 #include "Render/RenderController.hpp"
 #include "Core/Realtime/XmaxRealtimeConnectionManager.hpp"
@@ -61,11 +61,13 @@ class XmaxRealtimeManager {
      * Binds external video input and enters the media-ready state.
      *
      * @param[in] format The input dimensions and frame rate; see xmax_video_format for limits.
+     * @param[in] has_audio Whether the source provides PCM upload without microphone capture.
      *
      * @return The revision identifying this external source binding.
      */
     uint64_t prepare(
-        xmax_video_format format
+        xmax_video_format format,
+        bool has_audio = false
     );
 
     /**
@@ -127,11 +129,24 @@ class XmaxRealtimeManager {
     );
 
     /**
-     * Reports whether a particular external source currently supplies the active connection.
+     * Converts and submits source-bound PCM; stale or disconnected audio is discarded.
+     *
+     * @param[in] frame The borrowed PCM data on the source video timeline.
+     * @param[in] binding The source revision returned at binding.
+     *
+     * @throws Error If current PCM input is invalid; the binding is also failed and cleaned up.
+     */
+    void push_audio(
+        const xmax_external_audio_frame& frame,
+        uint64_t binding
+    );
+
+    /**
+     * Reports whether a source binding accepts frames for preview and publication.
      *
      * @param[in] binding The revision returned when this source was bound.
      *
-     * @return False for stale bindings, camera mode, or inactive publication.
+     * @return True for a live binding, including while disconnected; false after failure or unbinding.
      */
     bool requesting(
         uint64_t binding
@@ -263,9 +278,9 @@ class XmaxRealtimeManager {
     xmax_quality_status quality();
 
     /**
-     * Reports whether external input requests frames without waiting for lifecycle work.
+     * Reports whether external input accepts preview and publication frames.
      *
-     * @return True when external input requests frames; false for camera mode or no request.
+     * @return True for a live external binding, including while disconnected; false for camera mode or failed input.
      */
     bool requesting() const;
 
@@ -299,7 +314,7 @@ class XmaxRealtimeManager {
     bool poll(
         xmax_event& event
     ) {
-        return coordinator_.poll(event);
+        return lifecycle_.poll(event);
     }
 
     /**
@@ -336,6 +351,17 @@ class XmaxRealtimeManager {
     xmax_video_format camera_format();
 
     /**
+     * Returns the latest directional video statistics without consuming events.
+     *
+     * @param[in] direction Zero for uplink and one for downlink.
+     *
+     * @return A current snapshot, or available = 0 with unavailable metrics set to -1.
+     */
+    xmax_video_statistics video_statistics(
+        int direction
+    ) const;
+
+    /**
      * Applies a directional quality level during generation without locking out subsequent adaptation.
      *
      * @param[in] direction 0 for uplink; 1 for downlink.
@@ -361,7 +387,7 @@ class XmaxRealtimeManager {
     bool poll(
         xmax_event_info& info
     ) {
-        return coordinator_.poll(info);
+        return lifecycle_.poll(info);
     }
 
     /**
@@ -387,7 +413,7 @@ class XmaxRealtimeManager {
      * Returns a copy of unexpired normalized points for the current task.
      */
     std::vector<xmax_point> trajectory() const {
-        if (coordinator_.state() != XMAX_GENERATING)
+        if (lifecycle_.state() != XMAX_GENERATING)
             return {};
         return render_.trajectory.snapshot();
     }
@@ -415,7 +441,7 @@ class XmaxRealtimeManager {
             frame,
             window,
             content_mode,
-            coordinator_.state() == XMAX_GENERATING
+            lifecycle_.state() == XMAX_GENERATING
         );
     }
 
@@ -457,11 +483,6 @@ class XmaxRealtimeManager {
     };
 
     /**
-     * The input-request revision for the current connection, checked by media threads.
-     */
-    std::atomic<uint64_t> input_epoch_{0};
-
-    /**
      * The media-binding revision used to reject old callbacks.
      */
     std::atomic<uint64_t> media_epoch_{0};
@@ -469,17 +490,27 @@ class XmaxRealtimeManager {
     /**
      * Serializes binding revision changes with asynchronous fault admission.
      */
-    std::mutex media_binding_mutex_;
+    mutable std::mutex media_binding_mutex_;
 
     /**
-     * The binding whose first unrecoverable fault was accepted, protected by media_binding_mutex_.
+     * The failed binding, read atomically by source callbacks; first-fault acceptance is serialized.
      */
-    uint64_t failed_media_epoch_ = 0;
+    std::atomic<uint64_t> failed_media_epoch_{0};
 
     /**
      * The microphone connection policy saved with the camera binding.
      */
     bool camera_microphone_ = false;
+
+    /**
+     * The mutex protecting RTC-thread statistics updates and application snapshot reads.
+     */
+    mutable std::mutex statistics_mutex_;
+
+    /**
+     * The latest uplink and downlink statistics; available = 0 marks a cleared stream.
+     */
+    xmax_video_statistics statistics_[2]{};
 
     /**
      * The manager for generation conditions and task trajectories.
@@ -494,17 +525,7 @@ class XmaxRealtimeManager {
     /**
      * The component retaining the lifecycle state's reason and original error.
      */
-    RealtimeErrorHandler errors_;
-
-    /**
-     * The latest active session identifier, retained in disconnected state snapshots.
-     */
-    std::string last_session_id_;
-
-    /**
-     * The latest generation task identifier, retained in disconnected state snapshots.
-     */
-    std::string last_task_id_;
+    XmaxRealtimeErrorManager errors_;
 
     /**
      * The stage timer for connection and generation startup.
@@ -517,9 +538,9 @@ class XmaxRealtimeManager {
     std::chrono::milliseconds heartbeat_interval_;
 
     /**
-     * The coordinator for lifecycle execution, cancellation, and application events.
+     * The owner of operation admission, scoped termination, state, and application events.
      */
-    RealtimeCoordinator coordinator_;
+    XmaxRealtimeLifecycleManager lifecycle_;
 
     /**
      * Ensures final shutdown finishes once, independently of temporary source-call references.
@@ -535,11 +556,6 @@ class XmaxRealtimeManager {
      * The task accepting interaction, or empty when generation is inactive.
      */
     std::string interaction_task_;
-
-    /**
-     * The latest generation request revision; superseded and explicitly terminated requests are cancelled.
-     */
-    std::atomic<uint64_t> generation_request_{0};
 
     /**
      * Replaces an unfinished generation request, then executes after its cleanup on the lifecycle queue.
@@ -558,6 +574,15 @@ class XmaxRealtimeManager {
     void drain_interaction();
 
     /**
+     * Publishes a timing snapshot with the current lifecycle state and session/task identities.
+     *
+     * @param[in] event The completed or failed startup timing snapshot.
+     */
+    void emit_timing(
+        xmax_event event
+    );
+
+    /**
      * Updates session state and delivers its state event to your app.
      *
      * @param[in] state The new realtime lifecycle state.
@@ -567,14 +592,27 @@ class XmaxRealtimeManager {
     );
 
     /**
-     * Cleans up RTC and the server session, optionally releasing media and generation conditions.
+     * Stages final state and startup bookkeeping until the operation releases admission.
      *
-     * @param[in] close Whether to also release local media and cached generation conditions.
-     *
-     * @return True if the server session closed; false if closing failed, with an error event delivered.
+     * @param[in] state The operation's successful phase.
+     * @param[in] token The current operation token.
+     * @param[in] completed Optional bookkeeping performed after state publication.
      */
-    bool cleanup(
-        bool close
+    void complete_state(
+        xmax_state state,
+        const XmaxRealtimeLifecycleManager::Token& token,
+        std::function<void()> completed = {}
+    );
+
+    /**
+     * Releases the resource scope selected by lifecycle termination without owning state transitions.
+     *
+     * @param[in] scope The generation, connection, or full media cleanup scope.
+     *
+     * @return The remaining local-media availability, session identifier, and release outcome.
+     */
+    XmaxRealtimeLifecycleManager::CleanupResult cleanup(
+        XmaxRealtimeLifecycleManager::TerminationScope scope
     );
 
     /**
@@ -619,8 +657,10 @@ class XmaxRealtimeManager {
      *
      * @param[in] context The prompt, reference image, and face-restoration conditions for this generation.
      * @param[in] cancel A cooperative cancellation predicate; true requests termination of the operation.
+     *
+     * @return True when a new task reached its first result; false when existing conditions were updated.
      */
-    void generate_impl(
+    bool generate_impl(
         const Context& context,
         const Cancel& cancel
     );

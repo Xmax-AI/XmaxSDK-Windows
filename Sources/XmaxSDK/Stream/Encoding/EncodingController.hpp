@@ -41,7 +41,7 @@ class EncodingController {
         );
         const auto budget = bitrate(format);
         const int maximum = value_.maximum_bitrate_kbps == 0
-                                ? std::max(budget.second, std::max(0, value_.minimum_bitrate_kbps))
+                                ? budget.second
                                 : value_.maximum_bitrate_kbps;
         const int minimum =
             value_.minimum_bitrate_kbps < 0 ? std::min(500, maximum) : value_.minimum_bitrate_kbps;

@@ -10,6 +10,7 @@
 
 #pragma once
 #include "Media/Camera/CameraController.hpp"
+#include "Media/Interaction/InteractionController.hpp"
 #include "Media/External/ExternalVideoController.hpp"
 
 namespace xmax::detail {
@@ -20,6 +21,11 @@ namespace xmax::detail {
 class MediaController {
 
   public:
+
+    /**
+     * The local interaction samples waiting for generation-task delivery.
+     */
+    InteractionController interaction;
 
     /**
      * Combines camera capture and external frame delivery using the supplied camera factory.
@@ -68,6 +74,7 @@ class MediaController {
     void close() {
         camera_.stop();
         external_.close();
+        interaction.clear();
         camera_active_ = false;
         device_.clear();
     }
@@ -77,15 +84,18 @@ class MediaController {
      *
      * @param[in] format The input dimensions and frame rate; see xmax_video_format for limits.
      * @param[in] binding The revision rejecting frames from replaced external sources.
+     * @param[in] has_audio Whether this source supplies PCM instead of microphone input.
      */
     void prepare_external(
         xmax_video_format format,
-        uint64_t binding = 0
+        uint64_t binding = 0,
+        bool has_audio = false
     ) {
         close();
         external_.prepare(
             format,
-            binding
+            binding,
+            has_audio
         );
     }
 

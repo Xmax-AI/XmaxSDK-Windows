@@ -12,6 +12,7 @@
 #include "Foundation/Media/FrameConverter.hpp"
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #ifdef _WIN32
 #include <windows.h>
 #endif
@@ -157,121 +158,179 @@ void render_window(
 }
 
 /**
- * Draws default trajectory lines and points over an HWND's video content.
+ * Composites fading trails, pointer glow, rings, and particles above native-window video.
  *
- * @param[in] window A Windows HWND owned by the calling thread.
- * @param[in] format The actual dimensions of the displayed video.
- * @param[in] content_mode The aspect-fit or aspect-fill layout mode.
- * @param[in] points The normalized trajectory in [0, 1].
+ * @param[in] window An HWND owned by the calling thread.
+ * @param[in] format The displayed video dimensions.
+ * @param[in] content_mode The aspect-fit or aspect-fill policy shared with video.
+ * @param[in] strokes Recent normalized strokes and fade ages.
+ * @param[in] elapsed The current gesture age in seconds for animation.
  */
-void render_trajectory(
+void render_trajectory_effects(
     void* window,
     xmax_video_format format,
     int32_t content_mode,
-    const std::vector<xmax_point>& points
+    const std::vector<TrajectoryStroke>& strokes,
+    double elapsed
 ) {
 #ifdef _WIN32
-    if (points.empty())
+    if (strokes.empty())
         return;
-
     const auto hwnd = static_cast<HWND>(window);
-    require(
-        IsWindow(hwnd) && GetWindowThreadProcessId(
-            hwnd,
-            nullptr
-        ) == GetCurrentThreadId(),
-        XMAX_INVALID_ARGUMENT,
-        "Trajectory rendering requires an HWND owned by the calling thread"
-    );
-
     RECT bounds{};
     require(
-        GetClientRect(
-            hwnd,
-            &bounds
-        ) && format.width &&
-            format.height,
+        IsWindow(hwnd) && GetWindowThreadProcessId(hwnd, nullptr) == GetCurrentThreadId() &&
+            GetClientRect(
+                hwnd,
+                &bounds
+            ) &&
+            format.width && format.height,
         XMAX_INVALID_ARGUMENT,
-        "Invalid trajectory surface"
+        "Trajectory effects require a valid owner-thread video window"
     );
-
-    const auto sx = double(bounds.right) / format.width;
-    const auto sy = double(bounds.bottom) / format.height;
-    const auto scale = content_mode == XMAX_CONTENT_FIT ? std::min(sx, sy) : std::max(sx, sy);
-    const auto width = format.width * scale, height = format.height * scale;
-    const auto left = (bounds.right - width) / 2, top = (bounds.bottom - height) / 2;
-
+    if (bounds.right <= 0 || bounds.bottom <= 0)
+        return;
+    const double sx = double(bounds.right) / format.width, sy = double(bounds.bottom) / format.height;
+    const double scale = content_mode == XMAX_CONTENT_FIT ? std::min(sx, sy) : std::max(sx, sy);
+    const double video_width = format.width * scale, video_height = format.height * scale;
+    const double offset_x = (bounds.right - video_width) / 2, offset_y = (bounds.bottom - video_height) / 2;
     const auto dc = GetDC(hwnd);
     require(
         dc != nullptr,
         XMAX_MEDIA_ERROR,
         "Cannot acquire trajectory surface"
     );
-    const auto saved = SaveDC(dc);
-    IntersectClipRect(
-        dc,
-        0,
-        0,
-        bounds.right,
-        bounds.bottom
-    );
-    const auto pen = CreatePen(
-        PS_SOLID,
-        3,
-        RGB(84, 99, 255)
-    );
-    const auto brush = CreateSolidBrush(RGB(84, 99, 255));
-    const auto old_pen = SelectObject(
-        dc,
-        pen
-    );
-    const auto old_brush = SelectObject(
-        dc,
-        brush
-    );
-
-    bool first = true;
-    for (const auto& point : points) {
-        const int x = int(std::round(left + point.x * width));
-        const int y = int(std::round(top + point.y * height));
-        if (first)
-            MoveToEx(
-                dc,
-                x,
-                y,
-                nullptr
-            );
-        else
-            LineTo(
-                dc,
-                x,
-                y
-            );
-        Ellipse(
-            dc,
-            x - 4,
-            y - 4,
-            x + 4,
-            y + 4
+    const double dpi = std::max(1.0, GetDeviceCaps(dc, LOGPIXELSX) / 96.0);
+    int left = bounds.right, right = 0, top = bounds.bottom, bottom = 0;
+    for (const auto& stroke : strokes)
+        for (const auto& point : stroke.points) {
+            const auto x = offset_x + point.x * video_width, y = offset_y + point.y * video_height;
+            left = std::min(left, int(std::floor(x - 50 * dpi)));
+            right = std::max(right, int(std::ceil(x + 50 * dpi)));
+            top = std::min(top, int(std::floor(y - 50 * dpi)));
+            bottom = std::max(bottom, int(std::ceil(y + 50 * dpi)));
+        }
+    left = std::max(left, int(std::ceil(std::max(0.0, offset_x))));
+    top = std::max(top, int(std::ceil(std::max(0.0, offset_y))));
+    right = std::min(right, int(std::floor(std::min(double(bounds.right), offset_x + video_width))));
+    bottom = std::min(bottom, int(std::floor(std::min(double(bounds.bottom), offset_y + video_height))));
+    const int width = right - left, height = bottom - top;
+    if (width <= 0 || height <= 0) {
+        ReleaseDC(
+            hwnd,
+            dc
         );
-        first = false;
+        return;
     }
-
-    SelectObject(
-        dc,
-        old_pen
-    );
-    SelectObject(
-        dc,
-        old_brush
-    );
-    DeleteObject(pen);
-    DeleteObject(brush);
-    if (saved)
-        RestoreDC(
-            dc,
-            saved
+    // Allocate before acquiring bitmap resources; render failures must still release the window DC.
+    try {
+        require(
+            uint64_t(width) * height <= 16777216,
+            XMAX_MEDIA_ERROR,
+            "Trajectory surface exceeds the pixel budget"
         );
+        TrajectoryBitmap effect(
+            width,
+            height
+        );
+        const auto map = [&](xmax_point point) {
+            return xmax_point{offset_x + point.x * video_width - left, offset_y + point.y * video_height - top};
+        };
+        for (const auto& stroke : strokes) {
+            const double opacity = std::pow(
+                .95,
+                std::max(0.0, stroke.age) * 60
+            );
+            if (stroke.points.size() == 1)
+                effect.segment(
+                    map(stroke.points.front()),
+                    map(stroke.points.front()),
+                    opacity,
+                    dpi
+                );
+            for (size_t i = 1; i < stroke.points.size(); ++i)
+                effect.segment(
+                    map(stroke.points[i - 1]),
+                    map(stroke.points[i]),
+                    opacity,
+                    dpi
+                );
+        }
+        if (!strokes.back().points.empty()) {
+            const double opacity = std::clamp(1 - strokes.back().age / .15, 0.0, 1.0);
+            effect.pointer(
+                map(strokes.back().points.back()),
+                elapsed,
+                opacity,
+                dpi
+            );
+        }
+        BITMAPINFO info{};
+        info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+        info.bmiHeader.biWidth = width;
+        info.bmiHeader.biHeight = -height;
+        info.bmiHeader.biPlanes = 1;
+        info.bmiHeader.biBitCount = 32;
+        info.bmiHeader.biCompression = BI_RGB;
+        void* pixels = nullptr;
+        const auto bitmap = CreateDIBSection(
+            dc,
+            &info,
+            DIB_RGB_COLORS,
+            &pixels,
+            nullptr,
+            0
+        );
+        const auto memory = bitmap ? CreateCompatibleDC(dc) : nullptr;
+        if (!bitmap || !memory) {
+            if (bitmap)
+                DeleteObject(bitmap);
+            throw Error(
+                XMAX_MEDIA_ERROR,
+                "Cannot allocate trajectory compositing surface"
+            );
+        }
+        std::memcpy(
+            pixels,
+            effect.pixels().data(),
+            effect.pixels().size() * sizeof(uint32_t)
+        );
+        const auto old = SelectObject(
+            memory,
+            bitmap
+        );
+        const BLENDFUNCTION blend{AC_SRC_OVER, 0, 255, AC_SRC_ALPHA};
+        const auto rendered = AlphaBlend(
+            dc,
+            left,
+            top,
+            width,
+            height,
+            memory,
+            0,
+            0,
+            width,
+            height,
+            blend
+        );
+        SelectObject(
+            memory,
+            old
+        );
+        DeleteDC(memory);
+        DeleteObject(bitmap);
+        require(
+            rendered != 0,
+            XMAX_MEDIA_ERROR,
+            "Cannot composite trajectory effects"
+        );
+    } catch (...) {
+        ReleaseDC(
+            hwnd,
+            dc
+        );
+        throw;
+    }
     ReleaseDC(
         hwnd,
         dc
@@ -280,10 +339,11 @@ void render_trajectory(
     (void)window;
     (void)format;
     (void)content_mode;
-    (void)points;
+    (void)strokes;
+    (void)elapsed;
     throw Error(
         XMAX_UNSUPPORTED,
-        "Native trajectory presentation is provided by the Windows build"
+        "Native trajectory rendering is available on Windows only"
     );
 #endif
 }

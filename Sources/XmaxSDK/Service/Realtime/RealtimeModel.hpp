@@ -1,5 +1,5 @@
 //
-//  RealtimeModelDefinition.hpp
+//  RealtimeModel.hpp
 //  XmaxSDK
 //
 //  Author: 翁跃庭 (Yueting Weng)
@@ -32,12 +32,8 @@ class RealtimeModelDefinition {
     /**
      * The model's encoding targets, read from its public description.
      */
-    inline static constexpr std::array<xmax_video_format, 5> formats{
-        {capabilities.supported_formats[0],
-         capabilities.supported_formats[1],
-         capabilities.supported_formats[2],
-         capabilities.supported_formats[3],
-         capabilities.supported_formats[4]}
+    inline static constexpr std::array<xmax_video_format, 2> formats{
+        {capabilities.supported_formats[0], capabilities.supported_formats[1]}
     };
 
     /**
@@ -93,12 +89,22 @@ class RealtimeModelDefinition {
         xmax_camera_preset preset,
         uint32_t fps
     ) {
-        require(
-            preset >= XMAX_CAMERA_PRESET_1920_1080 && preset <= XMAX_CAMERA_PRESET_1536_1152,
-            XMAX_INVALID_ARGUMENT,
-            "Invalid camera preset"
-        );
-        auto format = formats[size_t(preset) - 1];
+        xmax_video_format format{};
+        switch (preset) {
+        case XMAX_CAMERA_PRESET_1920_1080:
+        case XMAX_CAMERA_PRESET_1920_1024:
+            format = {1920, 1024, fps};
+            break;
+        case XMAX_CAMERA_PRESET_1080_1920:
+        case XMAX_CAMERA_PRESET_1024_1920:
+            format = {1024, 1920, fps};
+            break;
+        default:
+            throw Error(
+                XMAX_INVALID_ARGUMENT,
+                "This camera preset is not supported by the model"
+            );
+        }
         format.fps = fps;
         return format;
     }
@@ -113,9 +119,10 @@ class RealtimeModelDefinition {
     static xmax_camera_preset preset(
         xmax_video_format format
     ) {
-        for (size_t i = 0; i < formats.size(); ++i)
-            if (formats[i].width == format.width && formats[i].height == format.height)
-                return xmax_camera_preset(i + 1);
+        if (format.width == 1920 && format.height == 1024)
+            return XMAX_CAMERA_PRESET_1920_1024;
+        if (format.width == 1024 && format.height == 1920)
+            return XMAX_CAMERA_PRESET_1024_1920;
         return XMAX_CAMERA_PRESET_NONE;
     }
 };

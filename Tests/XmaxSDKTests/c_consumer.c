@@ -58,6 +58,7 @@ int main(void) {
     CHECK(xmax_client_get_capabilities(client, &extended.caps) == XMAX_OK);
     CHECK(extended.caps.abi_version == XMAX_ABI_VERSION && (extended.caps.flags & XMAX_CAP_STORAGE));
     CHECK(!(extended.caps.flags & XMAX_CAP_FRAME_INTERPOLATION));
+    CHECK(!!(extended.caps.flags & XMAX_CAP_EXTERNAL_AUDIO_INPUT) == !!(extended.caps.flags & XMAX_CAP_RTC));
     CHECK(extended.canary == UINT64_C(0x123456789abcdef0));
     xmax_storage storage = NULL;
     CHECK(xmax_storage_create(client, &storage) == XMAX_OK);
@@ -81,6 +82,36 @@ int main(void) {
     configured_quality.struct_size = sizeof(configured_quality);
     CHECK(xmax_realtime_get_quality(configured, &configured_quality) == XMAX_OK);
     CHECK(!configured_quality.adaptive_enabled);
+    {
+        xmax_video_statistics statistics = {0};
+        xmax_external_media_config media = {0};
+        xmax_external_frame_sink audio_sink = NULL;
+        xmax_external_audio_frame pcm = {0};
+        int16_t samples[480] = {0};
+        int32_t accepting = 0;
+        statistics.struct_size = sizeof(statistics);
+        CHECK(xmax_realtime_get_video_statistics(configured, 0, &statistics) == XMAX_OK);
+        CHECK(!statistics.available && statistics.capture_fps == -1);
+        CHECK(xmax_realtime_get_video_statistics(configured, 2, &statistics) == XMAX_INVALID_ARGUMENT);
+        media.struct_size = sizeof(media);
+        media.video_format.width = 640;
+        media.video_format.height = 480;
+        media.video_format.fps = 30;
+        media.has_audio = 1;
+        CHECK(xmax_realtime_bind_external_media(configured, &media, &audio_sink) == XMAX_OK);
+        CHECK(xmax_external_frame_sink_is_requesting_frames(audio_sink, &accepting) == XMAX_OK && accepting);
+        pcm.struct_size = sizeof(pcm);
+        pcm.sample_format = XMAX_AUDIO_PCM16;
+        pcm.sample_rate = 48000;
+        pcm.channels = 1;
+        pcm.samples_per_channel = 480;
+        pcm.data = samples;
+        pcm.data_size = sizeof(samples);
+        CHECK(xmax_external_frame_sink_push_audio_frame(audio_sink, &pcm) == XMAX_OK);
+        CHECK(xmax_realtime_close(configured) == XMAX_OK);
+        CHECK(xmax_external_frame_sink_is_requesting_frames(audio_sink, &accepting) == XMAX_OK && !accepting);
+        xmax_external_frame_sink_release(audio_sink);
+    }
     int released_contexts = 0;
     xmax_remote_media_listener listener = {
         sizeof(listener), offline_media_callback, &released_contexts, release_offline_context

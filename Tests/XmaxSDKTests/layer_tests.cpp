@@ -68,7 +68,7 @@ static void stream_without_core() {
     stream.allocate();
     const auto cancel = [] { return false; };
     stream.join({"app", "room", "user", "token", "bot"}, {1920, 1080, 30}, true, {}, cancel);
-    CHECK(rtc->encoding.format.width == 1536 && rtc->encoding.format.height == 864 && rtc->encoding.format.fps == 24);
+    CHECK(rtc->encoding.format.width == 1728 && rtc->encoding.format.height == 972 && rtc->encoding.format.fps == 24);
     CHECK(rtc->encoding.minimum_bitrate == 500);
     CHECK(rtc->microphone && rtc->remote_volume == 0.4f);
     stream.start("角色✨", "https://ref", true, cancel);

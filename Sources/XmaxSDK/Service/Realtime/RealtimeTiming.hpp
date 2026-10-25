@@ -11,6 +11,9 @@
 #pragma once
 #include "Foundation/Common.hpp"
 #include <algorithm>
+#include <optional>
+#include "Foundation/Text/Utf8.hpp"
+#include "Foundation/Logging/XmaxLogger.hpp"
 
 namespace xmax::detail {
 
@@ -55,10 +58,11 @@ class RealtimeTiming {
     }
 
     /**
-     * Starts connection timing and clears previous stage values.
+     * Starts a generation-startup measurement and clears previous stage values.
      */
     void begin() {
         started_ = now_();
+        measuring_ = true;
         snapshot_ = {};
         snapshot_.struct_size = sizeof(snapshot_);
         snapshot_.type = XMAX_EVENT_TIMING;
@@ -68,11 +72,18 @@ class RealtimeTiming {
     }
 
     /**
+     * Records the start of session creation independently of the total startup measurement.
+     */
+    void begin_session() {
+        session_started_ = now_();
+    }
+
+    /**
      * Records completion of server-session creation.
      */
     void finish_session() {
         snapshot_.session_ms = elapsed(
-            started_,
+            session_started_,
             now_()
         );
     }
@@ -111,7 +122,7 @@ class RealtimeTiming {
     }
 
     /**
-     * Records first-result and total startup durations and merges publication notifications.
+     * Records first-result duration and merges publication notifications.
      */
     void finish_signal() {
         const auto now = now_();
@@ -119,11 +130,45 @@ class RealtimeTiming {
             signalling_,
             now
         );
+        update_publication();
+    }
+
+    /**
+     * Finishes total startup timing after the generating state has been committed.
+     */
+    void finish() {
+        if (measuring_)
+            snapshot_.total_ms = elapsed(
+                started_,
+                now_()
+            );
+        measuring_ = false;
+    }
+
+    /**
+     * Returns an incomplete startup snapshot for a real failure, preserving completed stage durations.
+     *
+     * @param[in] error The startup failure; cancellation produces no failure snapshot.
+     *
+     * @return The failure snapshot, or no value if no startup is active or the request was cancelled.
+     */
+    std::optional<xmax_event> failure(
+        const Error& error
+    ) {
+        if (!measuring_ || error.code == XMAX_CANCELLED)
+            return {};
+        measuring_ = false;
+        snapshot_.code = error.code;
+        copy_utf8(
+            snapshot_.message,
+            sizeof(snapshot_.message),
+            XmaxLogger::redact(error.what())
+        );
         snapshot_.total_ms = elapsed(
             started_,
-            now
+            now_()
         );
-        update_publication();
+        return snapshot_;
     }
 
     /**
@@ -195,6 +240,16 @@ class RealtimeTiming {
      * The current connection's start time.
      */
     Clock::time_point started_{};
+
+    /**
+     * The session creation start time, independent of an already-connected generation request.
+     */
+    Clock::time_point session_started_{};
+
+    /**
+     * Whether a generation startup is still being measured.
+     */
+    bool measuring_ = false;
 
     /**
      * The RTC join start time.

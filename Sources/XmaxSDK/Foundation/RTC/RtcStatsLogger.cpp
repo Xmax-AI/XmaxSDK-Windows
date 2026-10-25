@@ -8,7 +8,7 @@
 //  Copyright (c) 2026 XMAX.AI PTE. LTD.
 //
 
-#include "Foundation/Logging/RtcStatsLogger.hpp"
+#include "Foundation/RTC/RtcStatsLogger.hpp"
 
 namespace xmax::detail {
 namespace {
@@ -77,59 +77,44 @@ void RtcStatsLogger::video(
             };
             auto result = e.direction
                               ? label(
-                                  "视频下行统计 (Video Downlink Statistics)",
-                                  "Video Downlink Statistics"
-                              )
+                                    "视频下行统计 (Video Downlink Statistics)",
+                                    "Video Downlink Statistics"
+                                )
                               : label(
-                                  "视频上行统计 (Video Uplink Statistics)",
-                                  "Video Uplink Statistics"
-                              );
+                                    "视频上行统计 (Video Uplink Statistics)",
+                                    "Video Uplink Statistics"
+                                );
             result +=
-                "\n├─ " + label(
-                    "分辨率：",
-                    "Resolution: "
-                ) +
+                "\n├─ " + label("分辨率：", "Resolution: ") +
                 (e.width < 0 || e.height < 0 ? "—"
                                              : std::to_string(e.width) + " × " + std::to_string(e.height));
-            result += "\n├─ " + label(
-                "码率：",
-                "Bitrate: "
-            ) + metric(
-                e.bitrate_kbps,
-                " kbps"
-            );
+            result += "\n├─ " + label("码率：", "Bitrate: ") + metric(e.bitrate_kbps, " kbps");
 
             if (!e.direction)
-                result += "\n├─ " + label(
-                    "采集帧率：",
-                    "Capture Frame Rate: "
-                ) + metric(
-                    capture_fps,
-                    " fps"
-                );
+                result += "\n├─ " + label("采集帧率：", "Capture Frame Rate: ") + metric(capture_fps, " fps");
 
             result += "\n├─ " +
                       (e.direction ? label(
-                          "解码帧率：",
-                          "Decode Frame Rate: "
-                      )
+                                         "解码帧率：",
+                                         "Decode Frame Rate: "
+                                     )
                                    : label(
-                                       "编码帧率：",
-                                       "Encode Frame Rate: "
-                                   )) +
+                                         "编码帧率：",
+                                         "Encode Frame Rate: "
+                                     )) +
                       metric(
                           codec_fps,
                           " fps"
                       );
             result += "\n├─ " +
                       (e.direction ? label(
-                          "渲染帧率：",
-                          "Render Frame Rate: "
-                      )
+                                         "渲染帧率：",
+                                         "Render Frame Rate: "
+                                     )
                                    : label(
-                                       "发送帧率：",
-                                       "Send Frame Rate: "
-                                   )) +
+                                         "发送帧率：",
+                                         "Send Frame Rate: "
+                                     )) +
                       metric(
                           e.fps,
                           " fps"
@@ -145,13 +130,7 @@ void RtcStatsLogger::video(
                       );
 
             if (e.direction)
-                result += "\n└─ " + label(
-                    "端到端时延：",
-                    "End-to-End Delay: "
-                ) + metric(
-                    e.e2e_ms,
-                    " ms"
-                );
+                result += "\n└─ " + label("端到端时延：", "End-to-End Delay: ") + metric(e.e2e_ms, " ms");
 
             return result;
         },
@@ -176,15 +155,11 @@ void RtcStatsLogger::event(
             XMAX_LOG_DEBUG,
             [&](auto language) {
                 return XmaxLogger::localized(
-                    language,
-                    "网络质量 (Network Quality)",
-                    "Network Quality"
-                ) +
-                       "\n├─ " + XmaxLogger::localized(
                            language,
-                           "方向：",
-                           "Direction: "
+                           "网络质量 (Network Quality)",
+                           "Network Quality"
                        ) +
+                       "\n├─ " + XmaxLogger::localized(language, "方向：", "Direction: ") +
                        (e.direction ? "downlink" : "uplink") + "\n└─ " +
                        XmaxLogger::localized(
                            language,
@@ -204,19 +179,13 @@ void RtcStatsLogger::event(
             e.type == XMAX_EVENT_PERFORMANCE && e.code ? XMAX_LOG_WARNING : XMAX_LOG_INFO,
             [&](auto language) {
                 return XmaxLogger::localized(
-                    language,
-                    "画质 / 设备性能 (Quality / Device Performance)",
-                    "Quality / Device Performance"
-                ) +
-                       "\n├─ direction=" + std::to_string(e.direction) + ", tier=" + metric(
-                           e.quality,
-                           ""
+                           language,
+                           "画质 / 设备性能 (Quality / Device Performance)",
+                           "Quality / Device Performance"
                        ) +
+                       "\n├─ direction=" + std::to_string(e.direction) + ", tier=" + metric(e.quality, "") +
                        ", alarm=" + std::to_string(e.code) + "\n└─ " + std::to_string(e.width) + " × " +
-                       std::to_string(e.height) + " @ " + metric(
-                           e.fps,
-                           " fps"
-                       );
+                       std::to_string(e.height) + " @ " + metric(e.fps, " fps");
             },
             XMAX_LOG_PERFORMANCE
         );
@@ -226,15 +195,11 @@ void RtcStatsLogger::event(
             XMAX_LOG_INFO,
             [&](auto language) {
                 return XmaxLogger::localized(
-                    language,
-                    "实时启动耗时 (Realtime Launch Timing)",
-                    "Realtime Launch Timing"
-                ) +
-                       "\n├─ " + XmaxLogger::localized(
                            language,
-                           "创建会话：",
-                           "Create session: "
+                           e.code < 0 ? "实时启动失败耗时 (Realtime Launch Failure Timing)" : "实时启动耗时 (Realtime Launch Timing)",
+                           e.code < 0 ? "Realtime Launch Failure Timing" : "Realtime Launch Timing"
                        ) +
+                       "\n├─ " + XmaxLogger::localized(language, "创建会话：", "Create session: ") +
                        milliseconds(e.session_ms) + "\n├─ " +
                        XmaxLogger::localized(
                            language,
@@ -242,11 +207,7 @@ void RtcStatsLogger::event(
                            "RTC join: "
                        ) +
                        milliseconds(e.rtc_join_ms) +
-                       "\n├─ " + XmaxLogger::localized(
-                           language,
-                           "本地推流：",
-                           "Publish local stream: "
-                       ) +
+                       "\n├─ " + XmaxLogger::localized(language, "本地推流：", "Publish local stream: ") +
                        milliseconds(e.publish_ms) + "\n├─ " +
                        XmaxLogger::localized(
                            language,
@@ -259,7 +220,8 @@ void RtcStatsLogger::event(
                            "总启动耗时：",
                            "Total startup: "
                        ) +
-                       milliseconds(e.total_ms);
+                       milliseconds(e.total_ms) +
+                       (e.code < 0 ? "\n└─ " + XmaxLogger::redact(e.message) : "");
             }
         );
     }

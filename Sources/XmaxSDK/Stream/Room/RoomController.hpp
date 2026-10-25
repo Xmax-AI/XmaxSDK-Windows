@@ -150,6 +150,19 @@ class RoomController {
     }
 
     /**
+     * Publishes PCM through an atomic room snapshot from the submitting source thread.
+     *
+     * @param[in] frame The synchronous 10 ms PCM packet.
+     */
+    void push_audio(
+        const ExternalAudioPacket& frame
+    ) {
+        const auto rtc = std::atomic_load(&media_rtc_);
+        if (rtc)
+            rtc->push_audio(frame);
+    }
+
+    /**
      * The room connection information, accessed only on the lifecycle thread.
      */
     Connection connection;

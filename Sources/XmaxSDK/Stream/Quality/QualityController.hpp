@@ -47,6 +47,7 @@ class QualityDirection {
      * ignored.
      * @param[in] now The current monotonic time in seconds, used for cooldowns, stable windows, and sample
      * expiry.
+     * @param[in] accepts Optional validation rejecting unchanged or unsupported candidate formats.
      *
      * @return A proposed level satisfying stability, freshness, and cooldown requirements; otherwise
      * std::nullopt.
@@ -54,7 +55,8 @@ class QualityDirection {
     std::optional<int> observe(
         int quality,
         double sampled_at,
-        double now
+        double now,
+        const std::function<bool(int)>& accepts = {}
     );
 
     /**

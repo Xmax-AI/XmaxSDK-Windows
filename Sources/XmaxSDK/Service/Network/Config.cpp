@@ -13,9 +13,9 @@
 namespace xmax::detail {
 
 /**
- * Resolves the general or realtime API endpoint for the service environment.
+ * Resolves the API root for the environment.
  *
- * @param[in] realtime Whether to use the realtime-session endpoint.
+ * @param[in] realtime True selects the realtime-session endpoint; false selects the general API.
  */
 std::string Config::base_url(
     bool realtime

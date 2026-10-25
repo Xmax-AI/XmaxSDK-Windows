@@ -35,7 +35,23 @@ def validate(root: Path) -> None:
     core = root / 'Sources/XmaxSDK/Core/Realtime/XmaxRealtimeManager.hpp'
     manager = core.read_text(encoding='utf-8')
     assert 'RealtimeTiming timing_;' in manager, 'Startup timing must have an independent owner'
-    assert 'RealtimeErrorHandler errors_;' in manager, 'State error details must have an independent owner'
+    assert 'XmaxRealtimeErrorManager errors_;' in manager, 'State error details must have an independent owner'
+    assert 'XmaxRealtimeLifecycleManager lifecycle_;' in manager, 'Lifecycle admission and termination must have an independent owner'
+    assert 'generation_request_' not in manager, 'Generation replacement belongs to lifecycle admission'
+    realtime = root / 'Sources/XmaxSDK/Service/Realtime'
+    for filename in ['RealtimeModel.hpp', 'RealtimeState.hpp', 'RealtimeTiming.hpp']:
+        assert (realtime / filename).is_file(), f'Realtime service definition is missing: {filename}'
+    foundation = root / 'Sources/XmaxSDK/Foundation'
+    for path in foundation.rglob('*'):
+        if path.suffix in {'.hpp', '.cpp', '.mm'}:
+            assert not re.search(r'#include\s*["<](Core|Service|Media|Stream|Render)/', path.read_text(encoding='utf-8')), f'Upward foundation dependency: {path}'
+    client = (root / 'Sources/XmaxSDK/Core/XmaxClient.hpp').read_text(encoding='utf-8')
+    assert 'XmaxRealtimeFactory::make(' in client, 'Realtime component creation belongs to its factory'
+    media = (root / 'Sources/XmaxSDK/Media/MediaController.hpp').read_text(encoding='utf-8')
+    assert 'InteractionController interaction;' in media, 'Local interaction ownership belongs to MediaController'
+    generation = (core.parent / 'XmaxRealtimeGenerationManager.hpp').read_text(encoding='utf-8')
+    assert 'InteractionController& interaction_;' in generation, 'Generation must borrow the media interaction channel'
+
     stream = (root / 'Sources/XmaxSDK/Stream/StreamController.hpp').read_text(encoding='utf-8')
     room = (root / 'Sources/XmaxSDK/Stream/Room/RoomController.hpp').read_text(encoding='utf-8')
     assert 'std::shared_ptr<Rtc> rtc_;' not in stream, 'RTC room resources belong to RoomController'

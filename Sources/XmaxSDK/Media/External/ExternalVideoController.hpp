@@ -10,6 +10,7 @@
 
 #pragma once
 #include "Foundation/Media/VideoFrame.hpp"
+#include "Media/Audio/ExternalAudioConverter.hpp"
 #include <mutex>
 
 namespace xmax::detail {
@@ -31,19 +32,23 @@ class ExternalVideoController {
      *
      * @param[in] format The input dimensions and frame rate; see xmax_video_format for limits.
      * @param[in] binding The source revision; zero reserves the channel for unversioned camera delivery.
+     * @param[in] has_audio Whether this external source supplies PCM instead of microphone input.
      */
     void prepare(
         xmax_video_format format,
-        uint64_t binding = 0
+        uint64_t binding = 0,
+        bool has_audio = false
     );
 
     /**
      * Installs a publication receiver and starts requesting input frames.
      *
      * @param[in] sink The synchronous frame receiver, invoked on the submitting media thread.
+     * @param[in] audio The synchronous receiver for converted audio packets.
      */
     void start(
-        VideoFrameSink sink
+        VideoFrameSink sink,
+        ExternalAudioConverter::Receiver audio = {}
     );
 
     /**
@@ -67,6 +72,22 @@ class ExternalVideoController {
         const xmax_video_frame& source,
         uint64_t binding = 0
     );
+
+    /**
+     * Converts source-bound PCM only while publication is active, without queuing for reconnection.
+     *
+     * @param[in] frame The borrowed interleaved PCM samples and source timestamp.
+     * @param[in] binding The source revision; stale or audio-disabled bindings ignore input.
+     */
+    void push_audio(
+        const xmax_external_audio_frame& frame,
+        uint64_t binding
+    );
+
+    /**
+     * Reports whether this source declares external PCM upload.
+     */
+    bool has_audio() const;
 
     /**
      * Delivers camera frames at capture dimensions; RTC handles encoding dimensions and aspect ratio.
@@ -139,6 +160,21 @@ class ExternalVideoController {
      * The publication receiver, invoked synchronously on the submitting media thread.
      */
     VideoFrameSink sink_;
+
+    /**
+     * Whether this binding opted into PCM upload.
+     */
+    bool has_audio_ = false;
+
+    /**
+     * The binding's serialized PCM conversion and packetization state.
+     */
+    ExternalAudioConverter audio_converter_;
+
+    /**
+     * The publication receiver for converted audio packets.
+     */
+    ExternalAudioConverter::Receiver audio_;
 
     /**
      * The local preview receiver, invoked synchronously on the submitting media thread.

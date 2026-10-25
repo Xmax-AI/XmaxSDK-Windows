@@ -8,8 +8,9 @@
 //  Copyright (c) 2026 XMAX.AI PTE. LTD.
 //
 
-#include "Foundation/Logging/RtcStatsLogger.hpp"
+#include "Foundation/RTC/RtcStatsLogger.hpp"
 #include "Foundation/RTC/RtcPlatform.hpp"
+#include "Foundation/Text/Utf8.hpp"
 #include <IAgoraMediaEngine.h>
 #include <IAgoraRtcEngine.h>
 #include <algorithm>
@@ -77,6 +78,16 @@ class AgoraRtc final : public Rtc,
      * Whether this adapter holds the process-wide exclusive engine lease.
      */
     bool owns_lease_ = false;
+
+    /**
+     * Whether this room publishes custom PCM instead of microphone capture.
+     */
+    bool external_audio_ = false;
+
+    /**
+     * The custom direct-audio track, or the native invalid-track sentinel before allocation.
+     */
+    rtc::track_id_t audio_track_ = 0xffffffff;
 
     /**
      * The mutex protecting native engine calls and lifecycle.
@@ -237,10 +248,10 @@ class AgoraRtc final : public Rtc,
             XMAX_LOG_ERROR,
             [&](auto language) {
                 return XmaxLogger::localized(
-                    language,
-                    "RTC 失败 (RTC Failure)",
-                    "RTC Failure"
-                ) +
+                           language,
+                           "RTC 失败 (RTC Failure)",
+                           "RTC Failure"
+                       ) +
                        "\n└─ " + safe;
             }
         );
@@ -328,7 +339,7 @@ class AgoraRtc final : public Rtc,
             "enableLocalVideo"
         );
         check_rtc(
-            engine_->enableLocalAudio(mic),
+            engine_->enableLocalAudio(mic && !external_audio_),
             "enableLocalAudio"
         );
         check_rtc(
@@ -387,12 +398,30 @@ class AgoraRtc final : public Rtc,
             "adjustPlaybackSignalVolume"
         );
 
+        if (external_audio_) {
+            AudioTrackConfig audio_config;
+            audio_config.enableLocalPlayback = false;
+            audio_config.enableAudioProcessing = false;
+            audio_track_ = media_->createCustomAudioTrack(
+                AUDIO_TRACK_DIRECT,
+                audio_config
+            );
+            require(
+                audio_track_ != 0xffffffff,
+                XMAX_RTC_ERROR,
+                "Cannot create external audio track"
+            );
+        }
+
         ChannelMediaOptions options;
         options.channelProfile = CHANNEL_PROFILE_LIVE_BROADCASTING;
         options.clientRoleType = CLIENT_ROLE_BROADCASTER;
         options.publishCameraTrack = false;
         options.publishCustomVideoTrack = true;
-        options.publishMicrophoneTrack = mic;
+        options.publishMicrophoneTrack = mic && !external_audio_;
+        options.publishCustomAudioTrack = external_audio_;
+        if (external_audio_)
+            options.publishCustomAudioTrackId = int(audio_track_);
         options.autoSubscribeVideo = true;
         options.autoSubscribeAudio = false;
         check_rtc(
@@ -489,6 +518,57 @@ class AgoraRtc final : public Rtc,
         check_rtc(
             media_->pushVideoFrame(&frame),
             "pushVideoFrame"
+        );
+    }
+
+    /**
+     * Selects custom PCM before joining, without enabling microphone capture or local playback.
+     *
+     * @param[in] enabled Whether the bound source supplies PCM.
+     */
+    void external_audio(
+        bool enabled
+    ) override {
+        require(
+            !joined_,
+            XMAX_INVALID_STATE,
+            "Set external audio before joining"
+        );
+        external_audio_ = enabled;
+    }
+
+    /**
+     * Uploads one 10 ms mono PCM16 packet using the same RTC clock offset as external video.
+     *
+     * @param[in] source The 480 copied samples and shared source timestamp in microseconds.
+     */
+    void push_audio(
+        const ExternalAudioPacket& source
+    ) override {
+        std::lock_guard<std::mutex> lock(engine_mutex_);
+        if (!media_ || !engine_ || !joined_ || stopping_ || !external_audio_)
+            return;
+        require(
+            source.samples.size() == 480 && source.timestamp_us >= 0,
+            XMAX_MEDIA_ERROR,
+            "External RTC audio requires a timestamped 10 ms PCM packet"
+        );
+        const auto source_ms = source.timestamp_us / 1000;
+        if (!timestamp_offset_ms_)
+            timestamp_offset_ms_ = engine_->getCurrentMonotonicTimeInMs() - source_ms;
+        NativeAudioFrame frame;
+        frame.samplesPerChannel = 480;
+        frame.bytesPerSample = TWO_BYTES_PER_SAMPLE;
+        frame.channels = 1;
+        frame.samplesPerSec = 48000;
+        frame.buffer = const_cast<int16_t*>(source.samples.data());
+        frame.renderTimeMs = source_ms + *timestamp_offset_ms_;
+        check_rtc(
+            media_->pushAudioFrame(
+                &frame,
+                audio_track_
+            ),
+            "pushAudioFrame"
         );
     }
 
@@ -613,6 +693,12 @@ class AgoraRtc final : public Rtc,
         // Engine release waits for callback threads; do not hold application mutexes here.
         audio_observing_ = false;
         if (media) {
+            if (audio_track_ != 0xffffffff) {
+                if (engine)
+                    engine->leaveChannel();
+                media->destroyCustomAudioTrack(audio_track_);
+                audio_track_ = 0xffffffff;
+            }
             media->registerAudioFrameObserver(nullptr);
             media->registerVideoFrameObserver(nullptr);
             media->release();
@@ -720,6 +806,27 @@ class AgoraRtc final : public Rtc,
     }
 
     /**
+     * Clears downlink statistics when the result user leaves, without reusing its UID on reconnection.
+     *
+     * @param[in] uid The departing native user identifier.
+     * @param[in] reason The native user-offline reason.
+     */
+    void onUserOffline(
+        uid_t uid,
+        [[maybe_unused]] USER_OFFLINE_REASON_TYPE reason
+    ) override {
+        if (stopping_ || uid != bot_uid_)
+            return;
+        bot_uid_ = 0;
+        if (callbacks_.statistics) {
+            xmax_video_statistics value{};
+            value.struct_size = sizeof(value);
+            value.direction = 1;
+            callbacks_.statistics(value);
+        }
+    }
+
+    /**
      * Resolves the service result account to a UID for frame and statistics filtering.
      *
      * @param[in] uid The native numeric RTC user identifier used to identify and filter the result stream.
@@ -784,6 +891,21 @@ class AgoraRtc final : public Rtc,
         e.packet_loss_percent = stats.txPacketLossRate;
         e.quality = -1;
         e.e2e_ms = -1;
+        if (callbacks_.statistics) {
+            xmax_video_statistics value{};
+            value.struct_size = sizeof(value);
+            value.available = 1;
+            value.direction = 0;
+            value.width = stats.encodedFrameWidth;
+            value.height = stats.encodedFrameHeight;
+            value.capture_fps = stats.captureFrameRate;
+            value.encode_fps = stats.encoderOutputFrameRate;
+            value.send_fps = stats.sentFrameRate;
+            value.decode_fps = value.render_fps = value.e2e_ms = -1;
+            value.bitrate_kbps = stats.sentBitrate;
+            value.packet_loss_percent = stats.txPacketLossRate;
+            callbacks_.statistics(value);
+        }
         RtcStatsLogger::video(
             e,
             stats.captureFrameRate,
@@ -824,6 +946,26 @@ class AgoraRtc final : public Rtc,
         e.packet_loss_percent = stats.packetLossRate;
         e.e2e_ms = stats.e2eDelay;
         e.quality = -1;
+        if (callbacks_.statistics) {
+            xmax_video_statistics value{};
+            value.struct_size = sizeof(value);
+            value.available = 1;
+            value.direction = 1;
+            copy_utf8(
+                value.user_id,
+                sizeof(value.user_id),
+                bot_
+            );
+            value.width = stats.width;
+            value.height = stats.height;
+            value.capture_fps = value.encode_fps = value.send_fps = -1;
+            value.decode_fps = stats.decoderOutputFrameRate;
+            value.render_fps = stats.rendererOutputFrameRate;
+            value.bitrate_kbps = stats.receivedBitrate;
+            value.packet_loss_percent = stats.packetLossRate;
+            value.e2e_ms = stats.e2eDelay;
+            callbacks_.statistics(value);
+        }
         RtcStatsLogger::video(
             e,
             -1,

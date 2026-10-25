@@ -23,22 +23,22 @@ enum class RealtimeQualityLevel {
     l1 = 1,
 
     /**
-     * Targets approximately 80% of baseline width and height.
+     * Targets approximately 90% of baseline width and height.
      */
     l2 = 2,
 
     /**
-     * Targets approximately 65% of baseline width and height.
+     * Targets approximately 75% of baseline width and height.
      */
     l3 = 3,
 
     /**
-     * Targets approximately 50% of baseline width and height.
+     * Targets approximately 60% of baseline width and height.
      */
     l4 = 4,
 
     /**
-     * Uses level-4 dimensions and further reduces the uplink frame rate.
+     * Targets approximately 50% of baseline width and height and reduces the uplink frame rate.
      */
     l5 = 5
 };
