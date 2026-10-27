@@ -217,200 +217,49 @@ to your application.
 
 ## Quick Start
 
-### Configure permissions
-
-Enable camera access and desktop application camera access in Windows Settings.
-Enable microphone access when using the microphone. Packaged applications must
-also declare the capabilities used by the application in `Package.appxmanifest`:
-
-```xml
-<Capabilities>
-  <DeviceCapability Name="webcam" />
-  <DeviceCapability Name="microphone" />
-</Capabilities>
-```
-
-XmaxSDK uses Media Foundation for camera capture and reports an `XmaxException`
-when native operations fail. Unpackaged desktop applications use the system's
-desktop application privacy settings. See the
-[installation guide](./Materials/installation.md) for media components and runtime setup.
-
-<br>
-
-### Generate and display video
-
-The following WinUI 3 snippet creates a camera stream, starts real-time generation,
-and binds the output to a video view. Run this within an async context on the UI thread.
-Keep the client and realtime controller alive while the generation screen is in use.
+Use your front camera to turn yourself into a character from a reference image in real time.
 
 ```csharp
 using Xmax.SDK;
 using Xmax.SDK.WinUI;
 
-var client = new XmaxClient(new XmaxConfiguration
+// Initialize the client
+using var client = new XmaxClient(new XmaxConfiguration
 {
-    ApiKey = "YOUR_XMAX_API_KEY"
+    ApiKey = "<YOUR_XMAX_API_KEY>",
+    Environment = XmaxEnvironment.Global
 });
 
-var realtime = client.CreateRealtime(new RealtimeConfiguration
+// Initialize the realtime manager
+await using var realtime = client.CreateRealtime(new RealtimeConfiguration
 {
     Model = "x2.1"
 });
 
+// Create the video view
+var localView = new XmaxRealtimeVideoView();
+var remoteView = new XmaxRealtimeVideoView();
+// Add the views to the page’s local preview and generated video containers
+localContainer.Children.Add(localView);
+remoteContainer.Children.Add(remoteView);
+
+// Create a camera stream and bind the preview
 await realtime.PrepareCameraAsync(
-    format: XmaxClient.GetModelInfo().DefaultCameraFormat
+    format: new VideoFormat(1920, 1080, 30),
+    microphone: false
 );
+localView.VideoSource = realtime.LocalVideo;
+remoteView.VideoSource = realtime.RemoteVideo;
 
-var localVideoView = new XmaxRealtimeVideoView
-{
-    VideoSource = realtime.LocalVideo,
-    ContentMode = VideoContentMode.Fill
-};
-```
-
-Add the video view to your window. `PrepareCameraAsync` completes after the first
-camera frame is available and the input is `Ready`; then start generation:
-
-```csharp
+// Once the preview is ready, start generation and display the result
 await realtime.StartAsync(new GenerationContext(
-    "视频中角色替换成参考图中角色",
-    "https://platform.xmaxai.com/images/source/charx/chatx_image1.jpg"
+    Prompt: "视频中角色替换成参考图中角色",
+    ReferenceImage: "https://cdn.xmax.ai/images/playground/charx/charx_image1.png?v=26&presetVersion=20261022"
 ));
 
-var remoteVideoView = new XmaxRealtimeVideoView
-{
-    VideoSource = realtime.RemoteVideo,
-    ContentMode = VideoContentMode.Fill
-};
+// Run the following when generation is no longer needed
+await realtime.CloseAsync();
 ```
-
-Add the result view to your window alongside the local preview.
-`XmaxRealtimeVideoView` displays one local or remote video source, applies frame
-mirror metadata, and supports aspect-fit and aspect-fill layouts. The application
-owns the layout and any transition between local preview and generated results.
-See the [WinUI 3 guide](./Materials/winui.md) for XAML binding and the XLab demo.
-
-<br>
-
-### Using WPF
-
-Use `XmaxRealtimeVideoView` from **Xmax.SDK.Wpf** in your WPF application. Bind its
-`VideoSource` to `realtime.LocalVideo` or `realtime.RemoteVideo`:
-
-```xml
-<sdk:XmaxRealtimeVideoView
-    xmlns:sdk="clr-namespace:Xmax.SDK.Wpf;assembly=Xmax.SDK.Wpf"
-    VideoSource="{Binding RemoteVideo}"
-    ContentMode="Fill" />
-```
-
-See the [WPF guide](./Materials/wpf.md) for project setup and state binding.
-Both WPF and WinUI 3 use the same C# realtime controller and video source interfaces.
-
-<br>
-
-### Pointer trajectory interaction
-
-Once generation is confirmed and a result frame is ready, collect pointer samples
-from the remote video viewport and submit them to the SDK. The application owns
-pointer event handling and sampling; the SDK maps coordinates and sends interaction
-trajectories to the current generation task. Local previews do not send trajectories.
-
-```csharp
-void SendPointerSample(double x, double y)
-{
-    realtime.SubmitInteraction(
-        [new TrajectoryPoint(x, y)],
-        remoteVideoView.ActualWidth,
-        remoteVideoView.ActualHeight,
-        remoteVideoView.VideoWidth,
-        remoteVideoView.VideoHeight,
-        remoteVideoView.ContentMode
-    );
-}
-```
-
-Use the same units for pointer positions and viewport dimensions. Start sampling
-on a primary-button drag and stop on release, Escape, focus loss, resizing, source
-changes or generation shutdown. Use `GetTrajectory()` to obtain normalized points
-for a custom display overlay. Native HWND applications can use the SDK's
-`render_window` helper to draw video with the default trajectory effect.
-
-Trajectory coordinates follow the displayed video: the left edge is `x = 0` and the
-right edge is `x = 1`, regardless of display mirroring. Fit-mode black bars ignore clicks. Dragging beyond the viewport clamps to the
-visible video edge. Display overlays are not included in media frame callbacks.
-See the [interaction guide](./Materials/usage.md#轨迹交互) for coordinate mapping and native APIs.
-
-### Listen for events
-
-After creating `realtime`, register the listeners you need before preparing the
-input stream or starting generation.
-
-| Listener | Purpose |
-| --- | --- |
-| `EventReceived` (`State`, `Error`) | Observe pipeline states and termination reasons during real-time generation. |
-| `SetRemoteMediaListenerAsync` | Receive remote PCM and processed video with shared stream identity and timestamps. |
-| `EventReceived` (`Statistics`, `Quality`) | Monitor uplink and downlink network quality. |
-| `EventReceived` (`Performance`) | Detect device performance limitations or recovery. |
-
-For example, monitor state changes and errors:
-
-```csharp
-realtime.EventReceived += e =>
-{
-    if (e.Type == RealtimeEventType.State)
-        Console.WriteLine($"State: {e.State}");
-    if (e.Type == RealtimeEventType.Error || e.Reason == 2)
-        Console.WriteLine($"Error: {e.Code} {e.Message}");
-};
-```
-
-Handle errors thrown by async calls with `try/catch`. State snapshots from
-`GetStateAsync()` include the state reason and associated failure details.
-Events are delivered serially on a background thread; dispatch UI changes through
-your framework's dispatcher. Dispose or transfer ownership of every media packet
-received through `SetRemoteMediaListenerAsync`.
-
-For camera input, bind `realtime.LocalVideo` to a preview view. The SDK enters
-`Ready` after native camera capture produces its first frame; observe this through
-`EventReceived` or await `PrepareCameraAsync`. The Windows SDK delivers local
-preview frames through its latest-frame mailbox.
-
-<br>
-
-### Resource Cleanup
-
-- **`DisconnectAsync()` — Stop Remote Generation**
-
-  Stops remote generation and cancels billing while keeping the local camera stream
-  and preview active. Use this when ending the online session but staying on the
-  current screen. You can start a new session later using the same prepared media:
-
-  ```csharp
-  await realtime.DisconnectAsync();
-  ```
-
-- **`CloseAsync()` — Full Teardown & Release**
-
-  Ends the remote session, stops local media capture, and clears generation
-  conditions. Use this when leaving or dismissing the generation screen:
-
-  ```csharp
-  await realtime.CloseAsync();
-  ```
-
-> **Note:** These methods are alternatives, not sequential steps. When exiting a
-> screen, call `CloseAsync()` directly—there is no need to call `DisconnectAsync()` first.
-
-When the controller is no longer needed, call `await realtime.DisposeAsync()` to
-release its native handle and event worker, then `client.Dispose()`. An `await using`
-scope can manage the controller's lifetime and perform the full teardown directly.
-
-<br>
-
-> [!TIP]
-> For complete usage examples, including camera input, reference images,
-> and external video input, see the [usage guide](./Materials/usage.md).
 
 <br>
 
