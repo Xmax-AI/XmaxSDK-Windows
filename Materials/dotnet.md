@@ -58,7 +58,7 @@ await realtime.CloseAsync();      // 释放本地媒体并清除条件；句柄�
 
 三个 SDK NuGet 包均附带与程序集配套的 XML API 文档；Visual Studio 可据此显示类型、参数和方法提示。公开接口注释及参数名称由 SDK 编译检查，包验证会检查 XML 文件是否存在且属于对应程序集。
 
-摄像头目标尺寸从 `GetModelInfo()` 查询，不应在界面硬编码。当前支持 `x2.1.1-preview-cn` 和 `x2.1.1-preview-us`，`RealtimeConfiguration.Model` 默认为国内模型；默认摄像头格式为 `1920×1024 @ 30 fps`。WinUI、WPF 和 Qt Demo 均可在开始会话前切换模型。缺少 RTC 的构建仍可预览和处理外部帧；开始生成会明确报告不支持。
+摄像头支持的尺寸通过 `GetModelInfo()` 查询。与 iOS 对齐，`RealtimeConfiguration.Model` 仅支持 `x2.1`，五种规格为 `1920×1080`、`1080×1920`、`1408×1408`、`1152×1536`、`1536×1152`，SDK 默认 `1080×1920 @ 30 fps`。Windows 的 WinUI、WPF 和 Qt Example 显式采用 `1920×1080 @ 30 fps`，不改变 SDK 的模型默认值。缺少 RTC 的构建仍可预览和处理外部帧；开始生成会明确报告不支持。
 
 ## 线程、取消与所有权
 

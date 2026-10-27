@@ -254,7 +254,7 @@ var client = new XmaxClient(new XmaxConfiguration
 
 var realtime = client.CreateRealtime(new RealtimeConfiguration
 {
-    Model = "x2.1.1-preview-cn"
+    Model = "x2.1"
 });
 
 await realtime.PrepareCameraAsync(

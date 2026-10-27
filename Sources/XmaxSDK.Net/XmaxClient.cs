@@ -61,10 +61,10 @@ public sealed class XmaxClient : IDisposable
     /// <summary>
     /// Queries model formats, defaults, and input limits without creating a client or network session.
     /// </summary>
-    /// <param name="model">The supported service model identifier; x2.1.1-preview-cn or x2.1.1-preview-us; defaults to the domestic model.</param>
+    /// <param name="model">The supported service model identifier; x2.1 (default).</param>
     /// <returns>The model capability snapshot.</returns>
     public static unsafe ModelInfo GetModelInfo(
-        string model = "x2.1.1-preview-cn"
+        string model = "x2.1"
     )
     {
         NativeLibraryLoader.Initialize();

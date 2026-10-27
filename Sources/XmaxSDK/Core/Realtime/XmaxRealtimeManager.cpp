@@ -378,7 +378,7 @@ void XmaxRealtimeManager::prepare_camera(
                 XMAX_INVALID_STATE,
                 "Disconnect before replacing local media"
             );
-            const auto resolved = MediaService::camera_input(format);
+            const auto resolved = MediaService::camera_input(format, model_info());
             token.failure_scope(Scope::All);
             errors_.reset();
             change_state(XMAX_PREPARING);
@@ -534,7 +534,7 @@ void XmaxRealtimeManager::connect_impl(
         !media_.external().has_audio() && (microphone || camera_microphone_),
         std::move(callbacks),
         cancel,
-        MediaService::generation(media_.external().format())
+        MediaService::generation(media_.external().format(), model_info())
     );
     require(
         !cancel(),
@@ -1141,7 +1141,7 @@ void XmaxRealtimeManager::update_camera_format(
                 "Camera format can only be updated before connection"
             );
 
-            const auto resolved = MediaService::camera_input(format);
+            const auto resolved = MediaService::camera_input(format, model_info());
             errors_.reset();
             change_state(XMAX_PREPARING);
 

@@ -178,7 +178,7 @@ public partial class App : Application
                 throw new InvalidOperationException("The page did not follow the resized viewport.");
             if (layout.StageWidth + 56 > layout.PageWidth + 2 || layout.StageHeight <= 0)
                 throw new InvalidOperationException("The landing preview overflows the resized page.");
-            if (layout.StageWidth > 940.5 || Math.Abs(layout.StageWidth * 1024 / 1920 - layout.StageHeight) > .5)
+            if (layout.StageWidth > 940.5 || Math.Abs(layout.StageWidth * 1080 / 1920 - layout.StageHeight) > .5)
                 throw new InvalidOperationException("The landing preview no longer matches the Qt/macOS size cap and aspect ratio.");
             layouts.Add(new { size.Name, layout.Width, layout.PageWidth, layout.HeaderWidth, layout.StageWidth, layout.StageHeight });
             if (!string.IsNullOrEmpty(output)) window.SaveUiScreenshot(Path.Combine(output, "landing-" + size.Name + ".png"));

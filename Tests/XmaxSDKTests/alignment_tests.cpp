@@ -15,24 +15,32 @@ struct RecordingHttp : FakeHttp {
 };
 
 static void model_and_environment() {
-    for (const auto identifier : {"x2.1.1-preview-cn", "x2.1.1-preview-us"}) {
-        const auto model = RealtimeModelDefinition::info(RealtimeModelDefinition::parse(identifier));
-        CHECK(std::string(model.identifier) == identifier);
-        CHECK(std::string(model.display_name) == "X" + std::string(identifier).substr(1));
-        CHECK(model.format_count == 2 && model.default_camera_format.width == 1920);
-        CHECK(model.default_camera_format.height == 1024 && model.default_camera_format.fps == 30);
-        CHECK(model.minimum_input_pixels == 200000 && model.maximum_input_pixels == 2100000);
-        CHECK(model.input_size_alignment == 32);
-        CHECK(model.supported_formats[0].width == 1024 && model.supported_formats[0].height == 1920);
-        CHECK(model.supported_formats[1].width == 1920 && model.supported_formats[1].height == 1024);
+    const auto model = RealtimeModelDefinition::info(RealtimeModelDefinition::parse("x2.1"));
+    CHECK(std::string(model.identifier) == "x2.1" && std::string(model.display_name) == "X2.1");
+    CHECK(model.format_count == 5 && model.default_frame_rate == 30);
+    CHECK(model.default_camera_format.width == 1080 && model.default_camera_format.height == 1920);
+    CHECK(model.default_camera_format.fps == 30);
+    CHECK(model.minimum_input_pixels == 200000 && model.maximum_input_pixels == 2100000);
+    CHECK(model.input_size_alignment == 32);
+    const xmax_video_format expected[]{{1920,1080,30}, {1080,1920,30}, {1408,1408,30},
+                                       {1152,1536,30}, {1536,1152,30}};
+    for (uint32_t i = 0; i < model.format_count; ++i) {
+        CHECK(model.supported_formats[i].width == expected[i].width);
+        CHECK(model.supported_formats[i].height == expected[i].height);
+        CHECK(model.supported_formats[i].fps == expected[i].fps);
     }
-    for (int value : {-1, 2}) {
-        const auto removed = static_cast<xmax::RealtimeModel>(value);
-        CHECK(xmax::model_identifier(removed)[0] == 0);
-        expect_error(XMAX_INVALID_ARGUMENT, [&] { RealtimeModelDefinition::info(removed); });
+    for (const auto identifier : {"x2.0", "x2.1.1-preview-cn", "x2.1.1-preview-us", "unknown"})
+        expect_error(XMAX_INVALID_ARGUMENT, [&] { RealtimeModelDefinition::parse(identifier); });
+    for (int value : {-1, 1, 2}) {
+        const auto invalid = static_cast<xmax::RealtimeModel>(value);
+        CHECK(xmax::model_identifier(invalid)[0] == 0);
+        expect_error(XMAX_INVALID_ARGUMENT, [&] { RealtimeModelDefinition::info(invalid); });
     }
+    for (int value : {0, 6, 7})
+        expect_error(XMAX_INVALID_ARGUMENT, [&] {
+            RealtimeModelDefinition::preset_format(static_cast<xmax_camera_preset>(value), 30);
+        });
     Config config;
-    config.model = "x2.1.1-preview-cn";
     config.environment = XMAX_ENVIRONMENT_GLOBAL;
     CHECK(config.base_url() == "https://api.xmax.cloud/open/api/v1");
     CHECK(config.base_url(true) == "https://api.xmax.ai/open/api/v1");
@@ -44,15 +52,27 @@ static void model_and_environment() {
     session.create([] { return false; });
     CHECK(http->requests.front().url.find("api.xmax.cloud") != std::string::npos);
     CHECK(http->requests.back().url.find("api.xmax.ai") != std::string::npos);
-    CHECK(json::parse(http->requests.back().body)["model"] == "x2.1.1-preview-cn");
+    CHECK(json::parse(http->requests.back().body)["model"] == "x2.1");
     session.close();
-    config.model = "x2.1.1-preview-us";
-    RealtimeSessionService overseas(std::make_shared<ApiService>(config, http));
-    overseas.create([] { return false; });
-    CHECK(json::parse(http->requests.back().body)["model"] == "x2.1.1-preview-us");
-    overseas.close();
-    expect_error(XMAX_INVALID_ARGUMENT, [] { RealtimeModelDefinition::parse("x2.1"); });
-    expect_error(XMAX_INVALID_ARGUMENT, [] { RealtimeModelDefinition::parse("unknown"); });
+    for (const auto& format : expected) {
+        const auto requested = MediaService::camera_input(format);
+        const auto canvas = MediaService::generation(format);
+        CHECK(requested.width == format.width && requested.height == format.height);
+        CHECK(canvas.width == format.width && canvas.height == format.height);
+        const auto preset = RealtimeModelDefinition::preset(format);
+        CHECK(preset != XMAX_CAMERA_PRESET_NONE);
+        const auto restored = RealtimeModelDefinition::preset_format(preset, 24);
+        CHECK(restored.width == format.width && restored.height == format.height && restored.fps == 24);
+        auto rtc = std::make_shared<FakeRtc>();
+        XmaxRealtimeManager pipeline(api, [rtc] { return rtc; });
+        pipeline.adaptive(false);
+        pipeline.prepare(format);
+        pipeline.start("prompt", "", false, false);
+        const auto params = json::parse(rtc->messages.front())["params"];
+        CHECK(params["size"] == json::array({format.width, format.height}));
+        CHECK(params["target_size"] == json::array({format.width, format.height}));
+        CHECK(!params.contains("padding"));
+    }
     CHECK(MediaService::input({1280, 720, 30}).width == 1280);
     expect_error(XMAX_INVALID_ARGUMENT, [] { MediaService::camera_input({1280, 720, 30}); });
 }
@@ -125,9 +145,9 @@ static void camera_configuration() {
     CHECK(manager.camera_format().height == 1920 && manager.camera_format().fps == 24);
     CHECK(manager.acquire_local_frame()->width == 640);
     probe->fail_width = 1920;
-    expect_error(XMAX_MEDIA_ERROR, [&] { manager.update_camera_format({1920, 1024, 24}); });
+    expect_error(XMAX_MEDIA_ERROR, [&] { manager.update_camera_format({1920, 1080, 24}); });
     CHECK(manager.state_snapshot().state == XMAX_READY);
-    CHECK(manager.camera_format().width == 1024 && probe->current.width == 1024);
+    CHECK(manager.camera_format().width == 1080 && probe->current.width == 1080);
     CHECK(manager.acquire_local_frame());
     manager.stop_media();
     CHECK(manager.camera_format().width == 0);
@@ -328,18 +348,18 @@ static void public_configuration() {
     xmax_model_info info{};
     info.struct_size = sizeof(info);
     CHECK(xmax_model_get_info(nullptr, &info) == XMAX_OK);
-    CHECK(std::string(info.identifier) == "x2.1.1-preview-cn" && info.default_camera_format.width == 1920);
-    CHECK(xmax_model_get_info("x2.1.1-preview-us", &info) == XMAX_OK);
-    CHECK(std::string(info.identifier) == "x2.1.1-preview-us");
-    CHECK(xmax_model_get_info("x2.1", &info) == XMAX_INVALID_ARGUMENT);
+    CHECK(std::string(info.identifier) == "x2.1" && info.default_camera_format.width == 1080 && info.default_camera_format.height == 1920 && info.format_count == 5);
+    CHECK(xmax_model_get_info("x2.1", &info) == XMAX_OK);
+    CHECK(xmax_model_get_info("x2.1.1-preview-cn", &info) == XMAX_INVALID_ARGUMENT);
+    CHECK(xmax_model_get_info("x2.1.1-preview-us", &info) == XMAX_INVALID_ARGUMENT);
     CHECK(xmax_model_get_info("unknown", &info) == XMAX_INVALID_ARGUMENT);
     xmax_error_info error{};
     error.struct_size = sizeof(error);
     CHECK(xmax_last_error_info(&error) == XMAX_OK && error.code == XMAX_INVALID_ARGUMENT);
     CHECK(xmax_last_error_info(&error) == XMAX_OK && error.code == XMAX_INVALID_ARGUMENT);
     xmax::client client(xmax::XmaxConfiguration{"", xmax::XmaxEnvironment::global});
-    auto realtime = client.create_realtime(xmax::RealtimeConfiguration{xmax::RealtimeModel::x2_1_1_preview_cn});
-    auto overseas = client.create_realtime(xmax::RealtimeConfiguration{xmax::RealtimeModel::x2_1_1_preview_us});
+    auto realtime = client.create_realtime(xmax::RealtimeConfiguration{xmax::RealtimeModel::x2_1});
+    auto overseas = client.create_realtime(xmax::RealtimeConfiguration{xmax::RealtimeModel::x2_1});
     overseas.prepare({1280, 720, 30});
     CHECK(overseas.state_info().event.state == XMAX_READY);
     CHECK(realtime.camera_preset() == xmax::RealtimeCameraPreset::none);

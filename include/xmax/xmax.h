@@ -421,7 +421,7 @@ typedef struct xmax_client_config {
     const char* api_key;
 
     /**
-     * The realtime model identifier; x2.1.1-preview-cn and x2.1.1-preview-us are supported and NULL selects the default.
+     * The realtime model identifier; only x2.1 is supported and NULL selects the default.
      */
     const char* model;
 
@@ -435,9 +435,10 @@ typedef struct xmax_client_config {
 /**
  * Video dimensions and frame rate for external input or a camera's RTC encoding target.
  *
- * Camera targets support 1024x1920 and 1920x1024 at [1, 60] fps. The 1080p landscape and portrait
- * presets remain accepted as compatibility aliases for these targets. External input accepts even
- * dimensions in [4, 8192] totaling at most 2100000 pixels, without restricting input to camera presets.
+ * X2.1 camera targets support 1920x1080, 1080x1920, 1408x1408, 1152x1536 and 1536x1152
+ * at [1, 60] fps; dimensions must match one target exactly.
+ * External input accepts even dimensions in [4, 8192] totaling at most 2100000 pixels,
+ * without restricting input to camera presets.
  * Capture preserves native frame dimensions; RTC handles target aspect ratio and resolution.
  */
 typedef struct xmax_video_format {
@@ -927,8 +928,8 @@ typedef struct xmax_camera_config {
     const char* device_id;
 
     /**
-     * The RTC encoding target; an all-zero format selects the model's camera default (1920x1024 at 30 fps
-     * for both preview models). Frame views report actual capture dimensions.
+     * The RTC encoding target; an all-zero format selects the model's camera default: 1080x1920 at 30 fps.
+     * Frame views report actual capture dimensions.
      */
     xmax_video_format format;
 
@@ -1191,39 +1192,29 @@ typedef enum xmax_camera_preset {
     XMAX_CAMERA_PRESET_NONE = 0,
 
     /**
-     * The 1080p landscape compatibility alias for the model's 1920x1024 target.
+     * A landscape 16:9 X2.1 frame.
      */
     XMAX_CAMERA_PRESET_1920_1080 = 1,
 
     /**
-     * The 1080p portrait compatibility alias for the model's 1024x1920 target.
+     * A portrait 9:16 X2.1 frame.
      */
     XMAX_CAMERA_PRESET_1080_1920 = 2,
 
     /**
-     * A reserved square preset; the current model rejects this value.
+     * A square X2.1 preset.
      */
     XMAX_CAMERA_PRESET_1408_1408 = 3,
 
     /**
-     * A reserved 3:4 preset; the current model rejects this value.
+     * A portrait 3:4 X2.1 preset.
      */
     XMAX_CAMERA_PRESET_1152_1536 = 4,
 
     /**
-     * A reserved 4:3 preset; the current model rejects this value.
+     * A landscape 4:3 X2.1 preset.
      */
-    XMAX_CAMERA_PRESET_1536_1152 = 5,
-
-    /**
-     * The model's 1920 by 1024 landscape camera target.
-     */
-    XMAX_CAMERA_PRESET_1920_1024 = 6,
-
-    /**
-     * The model's 1024 by 1920 portrait camera target.
-     */
-    XMAX_CAMERA_PRESET_1024_1920 = 7
+    XMAX_CAMERA_PRESET_1536_1152 = 5
 
 } xmax_camera_preset;
 
@@ -1356,7 +1347,7 @@ typedef struct xmax_realtime_config {
     uint32_t struct_size;
 
     /**
-     * The model identifier copied at creation; NULL selects x2.1.1-preview-cn.
+     * The model identifier copied at creation; NULL selects x2.1.
      */
     const char* model;
 
@@ -1373,7 +1364,7 @@ typedef struct xmax_realtime_options {
     uint32_t struct_size;
 
     /**
-     * The copied model identifier; NULL selects x2.1.1-preview-cn.
+     * The copied model identifier; NULL selects x2.1.
      */
     const char* model;
 
@@ -1693,7 +1684,7 @@ typedef struct xmax_interaction_frame {
 /**
  * Returns the model's supported formats, pixel limits, and defaults.
  *
- * @param[in] model The model identifier; NULL selects x2.1.1-preview-cn.
+ * @param[in] model The model identifier; NULL selects x2.1.
  * @param[in,out] info The destination structure, with struct_size initialized.
  *
  * @return XMAX_OK on success, or a negative error code on failure.

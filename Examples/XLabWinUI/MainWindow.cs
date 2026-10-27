@@ -47,7 +47,7 @@ public sealed partial class MainWindow : Window
     private readonly Pill previewBadge = new() { Text = "UI Preview · camera off", Accent = true, Margin = new(16, 0, 0, 0), IsHitTestVisible = false };
     internal readonly Pill StartButton = new() { Text = "Start Camera", Glyph = "camera", Primary = true, Height = 52, FontSize = 16, HorizontalAlignment = HorizontalAlignment.Center };
     private readonly Pill cameraButton = new() { Text = "Select Camera", Glyph = "camera", MaxWidth = 218, FontSize = 12 };
-    private readonly Pill modelButton = new() { Text = "X2.1.1-preview-cn", Glyph = "chevron", TrailingGlyph = true, Padding = new(18, 0, 12, 0), ContentSpacing = 6 };
+    private readonly Pill modelButton = new() { Text = "X2.1", Glyph = "chevron", TrailingGlyph = true, Padding = new(18, 0, 12, 0), ContentSpacing = 6 };
     private readonly Pill sessionModelLabel = new() { Passive = true, IsHitTestVisible = false };
     private readonly Pill keyButton = new() { Glyph = "key", LabelVerticalOffset = 2.75 };
     private readonly Pill statisticsButton = new() { Glyph = "statistics", Secondary = true };
@@ -191,12 +191,13 @@ public sealed partial class MainWindow : Window
         title.FontSize = Math.Clamp(width * .01 + 18, 27, 45);
         landingStage.Margin = new(0, Math.Clamp(width * .011 + 17, 26, 40), 0, 0);
         landingStage.Width = Math.Min(width - 56, Math.Min(940, Math.Max(580, width * .45)));
-        landingStage.Height = landingStage.Width * 1024 / 1920;
+        double videoAspect = Model.SelectedFormat.Width > 0 ? (double)Model.SelectedFormat.Height / Model.SelectedFormat.Width : 1080d / 1920;
+        landingStage.Height = landingStage.Width * videoAspect;
         terms.Width = Math.Max(0, landingStage.Width - 40); terms.FontSize = Math.Clamp(width * .0028 + 9.5, 12, 15);
         StartButton.FontSize = Math.Clamp(width * .003 + 12, 15, 18);
         double padding = Math.Clamp(width * .0075 + 18, 25, 40); StartButton.Padding = new(padding, 0, padding, 0);
         StartButton.Height = Math.Max(20, Math.Ceiling(StartButton.FontSize * 1.3)) + Math.Clamp(width * .0028 + 9, 12, 16) * 2; StartButton.Refresh();
-        localPanel.Height = remotePanel.Height = Math.Max(0, (width - 80) / 2 * 1024 / 1920);
+        localPanel.Height = remotePanel.Height = Math.Max(0, (width - 80) / 2 * videoAspect);
         freePromptBox.Width = Math.Min(880, workspace.Width);
         double workspaceHeight = localPanel.Height + 34 + 42 + 28 + 190, workspaceTop = 24 + 60 + 8;
         page.Height = Math.Max(height, Model.Active ? workspaceTop + workspaceHeight + 32 : 760);

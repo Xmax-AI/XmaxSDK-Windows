@@ -87,7 +87,7 @@ public sealed partial class MainWindow
                 OpenModels();
                 var surface = (Border)popups.Single().Child;
                 var list = (StackPanel)surface.Child;
-                Check(list.Children.Count == 2, "The model menu must include domestic and overseas models.");
+                Check(list.Children.Count == 1, "The model menu must contain only X2.1.");
                 var option = list.Children.OfType<Button>().Single(button => Microsoft.UI.Xaml.Automation.AutomationProperties.GetName(button) == identifier);
                 await UntilAsync(() => option.IsLoaded);
                 if (identifier.EndsWith("-us")) await SaveScreenshotAsync("model-menu", surface);
@@ -96,6 +96,7 @@ public sealed partial class MainWindow
                 await UntilAsync(() => Model.SelectedModel == identifier && popups.Count == 0);
                 Check(modelButton.Text == Model.ModelDisplayName && sessionModelLabel.Text == Model.ModelDisplayName, "Model labels did not follow selection.");
                 Check(Model.Session is null, "Selecting a model started a session.");
+                Check(Model.SelectedFormat == new VideoFormat(1920, 1080, 30), "The example must use 1920x1080 capture independently of the SDK default.");
             }
         }
         finally { ClosePopups(); Model.SelectedModel = original; }
@@ -131,7 +132,7 @@ public sealed partial class MainWindow
                 foreach (var (width, height, name) in new[] { (1920,1080,"wide"), (1180,800,"minimum") })
                 {
                     ResizeWindow(width,height); await Task.Delay(250); ArrangePage();
-                    Check(landingStage.Width <= 940 && Math.Abs(landingStage.Width * 1024 / 1920 - landingStage.Height) < .5, "Landing proportions changed.");
+                    Check(landingStage.Width <= 940 && Math.Abs(landingStage.Width * 1080 / 1920 - landingStage.Height) < .5, "Landing proportions changed.");
                     await SaveScreenshotAsync("landing-" + name);
                 }
                 ResizeWindow(1360,890); await Task.Delay(200);

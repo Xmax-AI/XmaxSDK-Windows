@@ -24,38 +24,28 @@ enum class RealtimeCameraPreset {
     none = XMAX_CAMERA_PRESET_NONE,
 
     /**
-     * The 1080p landscape compatibility alias for the model's 1920x1024 target.
+     * A landscape 16:9 X2.1 frame.
      */
     resolution1920x1080 = XMAX_CAMERA_PRESET_1920_1080,
 
     /**
-     * The 1080p portrait compatibility alias for the model's 1024x1920 target.
+     * A portrait 9:16 X2.1 frame.
      */
     resolution1080x1920 = XMAX_CAMERA_PRESET_1080_1920,
 
     /**
-     * A reserved square preset; the current model rejects this value.
+     * A square X2.1 frame.
      */
     resolution1408x1408 = XMAX_CAMERA_PRESET_1408_1408,
 
     /**
-     * A reserved 3:4 preset; the current model rejects this value.
+     * A portrait 3:4 X2.1 frame.
      */
     resolution1152x1536 = XMAX_CAMERA_PRESET_1152_1536,
 
     /**
-     * A reserved 4:3 preset; the current model rejects this value.
+     * A landscape 4:3 X2.1 frame.
      */
-    resolution1536x1152 = XMAX_CAMERA_PRESET_1536_1152,
-
-    /**
-     * The supported landscape camera target.
-     */
-    resolution1920x1024 = XMAX_CAMERA_PRESET_1920_1024,
-
-    /**
-     * The supported portrait camera target.
-     */
-    resolution1024x1920 = XMAX_CAMERA_PRESET_1024_1920
+    resolution1536x1152 = XMAX_CAMERA_PRESET_1536_1152
 };
 } // namespace xmax

@@ -58,7 +58,7 @@ ApplicationWindow {
                             background: Rectangle { color: "white"; radius: 12; border.color: "#e5e7eb" }
                             contentItem: Column {
                                 Repeater {
-                                    model: ["x2.1.1-preview-cn", "x2.1.1-preview-us"]
+                                    model: ["x2.1"]
                                     delegate: ItemDelegate {
                                         required property string modelData
                                         width: 224; height: 36; text: modelData.replace("x2", "X2")
@@ -161,7 +161,7 @@ ApplicationWindow {
                     id: stage
                     objectName: "landingStage"
                     width: Math.min(window.width - 56, Math.min(940, Math.max(580, window.width * 0.45)))
-                    height: width * 1024 / 1920; radius: 24; color: "transparent"
+                    height: width * 1080 / 1920; radius: 24; color: "transparent"
                     anchors.horizontalCenter: parent.horizontalCenter
                     Checkerboard { anchors.fill: parent }
                     Column {
@@ -219,8 +219,8 @@ ApplicationWindow {
                 spacing: 0
                 Row {
                     width: parent.width; spacing: 24
-                    VideoPanel { id: localVideo; objectName: "localPanel"; width: (parent.width - 24) / 2; height: width * 1024 / 1920; controller: window.controller; title: controller.cameraName ? "Local · " + controller.cameraName : "Local"; Component.onCompleted: controller.localSink = sink }
-                    VideoPanel { id: remoteVideo; width: (parent.width - 24) / 2; height: width * 1024 / 1920; controller: window.controller; title: "Result"; result: true; Component.onCompleted: controller.remoteSink = sink }
+                    VideoPanel { id: localVideo; objectName: "localPanel"; width: (parent.width - 24) / 2; height: width * 1080 / 1920; controller: window.controller; title: controller.cameraName ? "Local · " + controller.cameraName : "Local"; Component.onCompleted: controller.localSink = sink }
+                    VideoPanel { id: remoteVideo; width: (parent.width - 24) / 2; height: width * 1080 / 1920; controller: window.controller; title: "Result"; result: true; Component.onCompleted: controller.remoteSink = sink }
                 }
                 Item { width: 1; height: 34 }
                 Rectangle {

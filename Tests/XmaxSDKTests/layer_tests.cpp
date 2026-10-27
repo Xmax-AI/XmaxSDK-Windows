@@ -20,7 +20,7 @@ static void api_transport_boundary() {
     auto http = std::make_shared<ByteHttp>();
     Config config;
     config.key = "test-key";
-    config.model = "x2.1.1-preview-cn";
+    config.model = "x2.1";
     config.environment = XMAX_ENVIRONMENT_GLOBAL;
     config.timeout_ms = 2345;
     ApiService api(config, http);

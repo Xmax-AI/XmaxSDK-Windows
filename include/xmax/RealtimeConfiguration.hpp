@@ -21,7 +21,7 @@ struct RealtimeConfiguration {
     /**
      * The model used by this realtime controller.
      */
-    RealtimeModel model = RealtimeModel::x2_1_1_preview_cn;
+    RealtimeModel model = RealtimeModel::x2_1;
 
     /**
      * Whether connections adapt uplink and downlink quality automatically. Disabled connections start at

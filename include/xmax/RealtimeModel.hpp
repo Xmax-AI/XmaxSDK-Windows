@@ -19,14 +19,9 @@ namespace xmax {
 enum class RealtimeModel {
 
     /**
-     * The domestic Agora realtime generation model.
+     * The X2.1 Agora model with five standard aspect ratios.
      */
-    x2_1_1_preview_cn,
-
-    /**
-     * The overseas Agora realtime generation model.
-     */
-    x2_1_1_preview_us
+    x2_1
 };
 
 /**
@@ -39,13 +34,7 @@ enum class RealtimeModel {
 inline constexpr const char* model_identifier(
     RealtimeModel model
 ) noexcept {
-    switch (model) {
-    case RealtimeModel::x2_1_1_preview_cn:
-        return "x2.1.1-preview-cn";
-    case RealtimeModel::x2_1_1_preview_us:
-        return "x2.1.1-preview-us";
-    }
-    return "";
+    return model == RealtimeModel::x2_1 ? "x2.1" : "";
 }
 
 /**
@@ -62,19 +51,15 @@ inline constexpr xmax_model_info model_capabilities(
     info.struct_size = sizeof(info);
     info.identifier = model_identifier(model);
     info.display_name = "";
-    switch (model) {
-    case RealtimeModel::x2_1_1_preview_cn:
-        info.display_name = "X2.1.1-preview-cn";
-        break;
-    case RealtimeModel::x2_1_1_preview_us:
-        info.display_name = "X2.1.1-preview-us";
-        break;
-    default:
+    if (model != RealtimeModel::x2_1)
         return info;
-    }
-    info.supported_formats[0] = {1024, 1920, 30};
-    info.supported_formats[1] = {1920, 1024, 30};
-    info.format_count = 2;
+    info.display_name = "X2.1";
+    info.supported_formats[0] = {1920, 1080, 30};
+    info.supported_formats[1] = {1080, 1920, 30};
+    info.supported_formats[2] = {1408, 1408, 30};
+    info.supported_formats[3] = {1152, 1536, 30};
+    info.supported_formats[4] = {1536, 1152, 30};
+    info.format_count = 5;
     info.minimum_input_pixels = 200000;
     info.maximum_input_pixels = 2100000;
     info.input_size_alignment = 32;

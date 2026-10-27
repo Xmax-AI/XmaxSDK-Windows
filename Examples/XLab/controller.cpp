@@ -94,7 +94,7 @@ void XLabController::setApiKey(const QString& key) {
     emit changed();
 }
 void XLabController::setModel(const QString& model) {
-    if (active || busy || (model != "x2.1.1-preview-cn" && model != "x2.1.1-preview-us"))
+    if (active || busy || model != "x2.1")
         return;
     model_ = model;
     emit changed();
@@ -293,7 +293,7 @@ void XLabController::start() {
             auto error = sdkError(xmax_realtime_set_video_mirror(handles->realtime, &mirror));
             if (!error.isEmpty())
                 return error;
-            const xmax_camera_config config{sizeof(config), camera.constData(), {1920, 1024, 30}, mic};
+            const xmax_camera_config config{sizeof(config), camera.constData(), {1920, 1080, 30}, mic};
             return sdkError(xmax_realtime_prepare_camera(handles->realtime, &config));
         },
         [this, epoch](QString message) {

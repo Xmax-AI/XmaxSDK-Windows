@@ -24,9 +24,9 @@ struct Config {
     std::string key;
 
     /**
-     * The realtime model identifier; x2.1.1-preview-cn and x2.1.1-preview-us are supported.
+     * The realtime model identifier; only x2.1 is supported.
      */
-    std::string model = "x2.1.1-preview-cn";
+    std::string model = "x2.1";
 
     /**
      * The HTTP request timeout, in milliseconds.

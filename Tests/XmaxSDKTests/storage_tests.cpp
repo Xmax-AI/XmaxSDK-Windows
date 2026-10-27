@@ -134,18 +134,18 @@ static void upload_file_and_atomic_download() {
 static void quality_history() {
     Folder folder;
     auto store = make_preference_store(folder.path);
-    QualityHistory current("x2.1.1-preview-cn", store), isolated("test-model", store);
+    QualityHistory current("x2.1", store), isolated("test-model", store);
     CHECK(current.read(false, 1000) == 2);
     current.write(4, false, 1000);
     current.write(3, true, 1001);
     CHECK(current.read(false, 1002) == 4 && current.read(true, 1002) == 3);
     CHECK(isolated.read(false, 1002) == 2);
-    QualityHistory restarted("x2.1.1-preview-cn", make_preference_store(folder.path));
+    QualityHistory restarted("x2.1", make_preference_store(folder.path));
     CHECK(restarted.read(false, 1002) == 4);
     CHECK(restarted.read(false, 999) == 2 && restarted.read(false, 4600) == 2);
-    store->write("quality-agora-x2.1.1-preview-cn-uplink", "{corrupt");
+    store->write("quality-agora-x2.1-uplink", "{corrupt");
     CHECK(restarted.read(false, 1002) == 2);
-    store->write("quality-agora-x2.1.1-preview-cn-uplink", R"({"level":99,"time":1000})");
+    store->write("quality-agora-x2.1-uplink", R"({"level":99,"time":1000})");
     CHECK(restarted.read(false, 1002) == 2);
     store->write("../escape", "invalid");
     CHECK(!store->read("../escape"));

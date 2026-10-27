@@ -87,18 +87,17 @@ public partial class MainWindow : Window
             ModelClicked(ModelButton, new RoutedEventArgs());
             await Task.Delay(180);
             if (!string.IsNullOrEmpty(output)) SaveElementScreenshot((FrameworkElement)ModelPopup.Child, System.IO.Path.Combine(output, "model-menu.png"));
-            if (ModelOptions.Children.Count != 2) throw new InvalidOperationException("The model menu must include domestic and overseas models.");
+            if (ModelOptions.Children.Count != 1) throw new InvalidOperationException("The model menu must contain only X2.1.");
             var selectedRow = (Grid)((Border)((Button)ModelOptions.Children[0]).Content).Child;
             var label = (TextBlock)selectedRow.Children[0];
             var check = (TextBlock)selectedRow.Children[1];
             if (label.TranslatePoint(new Point(label.ActualWidth, 0), selectedRow).X > check.TranslatePoint(new Point(), selectedRow).X)
                 throw new InvalidOperationException("The model name overlaps its selection indicator.");
-            ((Button)ModelOptions.Children[1]).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-            if (ModelPopup.IsOpen || Model.SelectedModel != "x2.1.1-preview-us" || ModelButton.Text != "X2.1.1-preview-us")
-                throw new InvalidOperationException("Model selection did not update the session configuration and header.");
-            ModelClicked(ModelButton, new RoutedEventArgs());
             ((Button)ModelOptions.Children[0]).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-            if (Model.SelectedModel != "x2.1.1-preview-cn") throw new InvalidOperationException("The domestic model could not be selected.");
+            if (ModelPopup.IsOpen || Model.SelectedModel != "x2.1" || ModelButton.Text != "X2.1")
+                throw new InvalidOperationException("Selecting X2.1 did not close the menu and retain its label.");
+            if (Model.SelectedFormat != new Xmax.SDK.VideoFormat(1920, 1080, 30))
+                throw new InvalidOperationException("The example must use 1920x1080 capture independently of the SDK default.");
             if (Model.Session is not null) throw new InvalidOperationException("Opening the device menu started a camera session.");
             if (CameraList.Items.Count > 1)
             {
@@ -258,14 +257,15 @@ public partial class MainWindow : Window
         LandingTitle.FontSize = Math.Clamp(width * .01 + 18, 27, 45);
         LandingStage.Margin = new Thickness(0, Math.Clamp(width * .011 + 17, 26, 40), 0, 0);
         LandingStage.Width = Math.Min(width - 56, Math.Min(940, Math.Max(580, width * .45)));
-        LandingStage.Height = LandingStage.Width * 1024 / 1920;
+        double videoAspect = Model.SelectedFormat.Width > 0 ? (double)Model.SelectedFormat.Height / Model.SelectedFormat.Width : 1080d / 1920;
+        LandingStage.Height = LandingStage.Width * videoAspect;
         LandingTerms.Width = Math.Max(0, LandingStage.Width - 40);
         LandingTerms.FontSize = Math.Clamp(width * .0028 + 9.5, 12, 15);
         StartButton.FontSize = Math.Clamp(width * .003 + 12, 15, 18);
         double buttonPadding = Math.Clamp(width * .0075 + 18, 25, 40);
         StartButton.Padding = new Thickness(buttonPadding, 0, buttonPadding, 0);
         StartButton.Height = Math.Max(20, Math.Ceiling(StartButton.FontSize * 1.3)) + Math.Clamp(width * .0028 + 9, 12, 16) * 2;
-        LocalPanel.Height = RemotePanel.Height = Math.Max(0, (width - 80) / 2 * 1024 / 1920);
+        LocalPanel.Height = RemotePanel.Height = Math.Max(0, (width - 80) / 2 * videoAspect);
         FreePromptBox.Width = Math.Min(880, Workspace.Width);
         Workspace.Measure(new Size(Workspace.Width, double.PositiveInfinity));
         double workspaceHeight = LocalPanel.Height + 34 + 42 + 28 + 190;

@@ -27,13 +27,14 @@ class RealtimeModelDefinition {
     /**
      * The model's encoding targets and generation canvases, ordered by camera preset.
      */
-    inline static constexpr auto capabilities = model_capabilities(RealtimeModel::x2_1_1_preview_cn);
+    inline static constexpr auto capabilities = model_capabilities(RealtimeModel::x2_1);
 
     /**
      * The model's encoding targets, read from its public description.
      */
-    inline static constexpr std::array<xmax_video_format, 2> formats{
-        {capabilities.supported_formats[0], capabilities.supported_formats[1]}
+    inline static constexpr std::array<xmax_video_format, 5> formats{
+        {capabilities.supported_formats[0], capabilities.supported_formats[1], capabilities.supported_formats[2],
+         capabilities.supported_formats[3], capabilities.supported_formats[4]}
     };
 
     /**
@@ -51,10 +52,8 @@ class RealtimeModelDefinition {
     static RealtimeModel parse(
         std::string_view identifier
     ) {
-        if (identifier == model_identifier(RealtimeModel::x2_1_1_preview_cn))
-            return RealtimeModel::x2_1_1_preview_cn;
-        if (identifier == model_identifier(RealtimeModel::x2_1_1_preview_us))
-            return RealtimeModel::x2_1_1_preview_us;
+        if (identifier == model_identifier(RealtimeModel::x2_1))
+            return RealtimeModel::x2_1;
         throw Error(
             XMAX_INVALID_ARGUMENT,
             "Unsupported realtime model"
@@ -72,7 +71,7 @@ class RealtimeModelDefinition {
         RealtimeModel model
     ) {
         require(
-            model == RealtimeModel::x2_1_1_preview_cn || model == RealtimeModel::x2_1_1_preview_us,
+            model == RealtimeModel::x2_1,
             XMAX_INVALID_ARGUMENT,
             "Unsupported realtime model"
         );
@@ -94,12 +93,19 @@ class RealtimeModelDefinition {
         xmax_video_format format{};
         switch (preset) {
         case XMAX_CAMERA_PRESET_1920_1080:
-        case XMAX_CAMERA_PRESET_1920_1024:
-            format = {1920, 1024, fps};
+            format = {1920, 1080, fps};
             break;
         case XMAX_CAMERA_PRESET_1080_1920:
-        case XMAX_CAMERA_PRESET_1024_1920:
-            format = {1024, 1920, fps};
+            format = {1080, 1920, fps};
+            break;
+        case XMAX_CAMERA_PRESET_1408_1408:
+            format = {1408, 1408, fps};
+            break;
+        case XMAX_CAMERA_PRESET_1152_1536:
+            format = {1152, 1536, fps};
+            break;
+        case XMAX_CAMERA_PRESET_1536_1152:
+            format = {1536, 1152, fps};
             break;
         default:
             throw Error(
@@ -120,10 +126,16 @@ class RealtimeModelDefinition {
     static xmax_camera_preset preset(
         xmax_video_format format
     ) {
-        if (format.width == 1920 && format.height == 1024)
-            return XMAX_CAMERA_PRESET_1920_1024;
-        if (format.width == 1024 && format.height == 1920)
-            return XMAX_CAMERA_PRESET_1024_1920;
+        if (format.width == 1920 && format.height == 1080)
+            return XMAX_CAMERA_PRESET_1920_1080;
+        if (format.width == 1080 && format.height == 1920)
+            return XMAX_CAMERA_PRESET_1080_1920;
+        if (format.width == 1408 && format.height == 1408)
+            return XMAX_CAMERA_PRESET_1408_1408;
+        if (format.width == 1152 && format.height == 1536)
+            return XMAX_CAMERA_PRESET_1152_1536;
+        if (format.width == 1536 && format.height == 1152)
+            return XMAX_CAMERA_PRESET_1536_1152;
         return XMAX_CAMERA_PRESET_NONE;
     }
 };

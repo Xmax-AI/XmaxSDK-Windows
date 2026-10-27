@@ -53,26 +53,26 @@ class MediaService {
     }
 
     /**
-     * Validates camera targets, mapping 1080p compatibility presets to the supported format of the same orientation.
+     * Validates camera targets against the five X2.1 formats without substituting dimensions.
      *
      * @param[in] format The requested camera encoding dimensions and frame rate; capture may use other
      * device-supported dimensions.
+     * @param[in] model The selected model capability snapshot.
      */
     static xmax_video_format camera_input(
-        xmax_video_format format
+        xmax_video_format format,
+        xmax_model_info model = RealtimeModelDefinition::capabilities
     ) {
-        auto result = input(format);
-        if (result.width == 1920 && result.height == 1080)
-            result.height = 1024;
-        else if (result.width == 1080 && result.height == 1920)
-            result.width = 1024;
+        const auto result = input(format);
         bool supported = false;
-        for (const auto& value : formats)
+        for (uint32_t i = 0; i < model.format_count; ++i) {
+            const auto& value = model.supported_formats[i];
             supported = supported || (value.width == result.width && value.height == result.height);
+        }
         require(
             supported,
             XMAX_INVALID_ARGUMENT,
-            "Supported camera targets: 1024x1920 and 1920x1024"
+            "Camera target is not supported by the selected model"
         );
         return result;
     }
@@ -81,18 +81,21 @@ class MediaService {
      * Selects the closest model canvas by aspect ratio while preserving local input dimensions.
      *
      * @param[in] format The local media dimensions and frame rate.
+     * @param[in] model The selected model capability snapshot.
      *
      * @return The closest-aspect model canvas with the input frame rate retained.
      */
     static xmax_video_format generation(
-        xmax_video_format format
+        xmax_video_format format,
+        xmax_model_info model = RealtimeModelDefinition::capabilities
     ) {
         validate_format(format);
         const double aspect = double(format.width) / format.height;
         double best_distance = std::numeric_limits<double>::infinity();
-        auto result = formats.front();
+        auto result = model.supported_formats[0];
 
-        for (const auto& candidate : formats) {
+        for (uint32_t i = 0; i < model.format_count; ++i) {
+            const auto& candidate = model.supported_formats[i];
             const double distance = std::abs(std::log(aspect / (double(candidate.width) / candidate.height)));
             if (distance < best_distance) {
                 result = candidate;

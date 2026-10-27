@@ -75,7 +75,7 @@ int main(void) {
     CHECK(xmax_realtime_get_video_mirror(realtime, &mirror) == XMAX_INVALID_ARGUMENT);
     /* New creation options and source-bound failures work through the shared-library C boundary. */
     xmax_realtime configured = NULL;
-    xmax_realtime_options realtime_options = {sizeof(realtime_options), "x2.1.1-preview-cn", 0};
+    xmax_realtime_options realtime_options = {sizeof(realtime_options), "x2.1", 0};
     CHECK(xmax_realtime_create_with_options(client, &realtime_options, &configured) == XMAX_OK);
     xmax_quality_status configured_quality = {0};
     configured_quality.struct_size = sizeof(configured_quality);

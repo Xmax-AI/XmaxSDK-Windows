@@ -17,9 +17,9 @@ public sealed record RealtimeConfiguration
 {
 
     /// <summary>
-    /// Gets the service model identifier: x2.1.1-preview-cn (default) or x2.1.1-preview-us.
+    /// Gets the service model identifier: x2.1 (default).
     /// </summary>
-    public string Model { get; init; } = "x2.1.1-preview-cn";
+    public string Model { get; init; } = "x2.1";
 
     /// <summary>
     /// Gets whether independent uplink and downlink adaptation is enabled; the default is true.

@@ -155,7 +155,7 @@ class XLabController final : public QObject {
     quint64 recording_id_ = 0;
     bool close_emitted_ = false;
     void checkCloseReady();
-    QString key_, model_ = "x2.1.1-preview-cn", mode_ = "charx";
+    QString key_, model_ = "x2.1", mode_ = "charx";
     float volume_ = 0;
     bool volume_updating_ = false, volume_ready_ = false;
     QVariantList presets_, uploads_;

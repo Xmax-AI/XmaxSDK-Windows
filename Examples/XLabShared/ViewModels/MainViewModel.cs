@@ -19,14 +19,15 @@ internal sealed partial class MainViewModel : INotifyPropertyChanged, IAsyncDisp
     private bool busy;
     private string status = "准备就绪 · 摄像头预览不需要 API Key", error = "", metrics = "等待视频统计";
     private CameraDevice? camera;
-    private VideoFormat format;
+    private static readonly VideoFormat ExampleCameraFormat = new(1920, 1080, 30);
+    private VideoFormat format = ExampleCameraFormat;
     private string sessionKey = "", sessionCamera = "", sessionModel = "";
     private const XmaxEnvironment ServiceEnvironment = XmaxEnvironment.China;
     private VideoFormat sessionFormat;
     private IXmaxVideoSource? local, remote;
     public ObservableCollection<CameraDevice> Cameras { get; } = [];
     public ObservableCollection<VideoFormat> Formats { get; } = [];
-    public static IReadOnlyList<string> Models { get; } = Array.AsReadOnly(new[] { "x2.1.1-preview-cn", "x2.1.1-preview-us" });
+    public static IReadOnlyList<string> Models { get; } = Array.AsReadOnly(new[] { "x2.1" });
     private string selectedModel = Models[0];
     public string SelectedModel
     {
@@ -34,7 +35,11 @@ internal sealed partial class MainViewModel : INotifyPropertyChanged, IAsyncDisp
         set
         {
             if (!CanEdit || Active || selectedModel == value || !Models.Contains(value)) return;
+            var info = XmaxClient.GetModelInfo(value);
             selectedModel = value;
+            Formats.Clear();
+            foreach (var item in info.SupportedFormats) Formats.Add(item);
+            SelectedFormat = ExampleCameraFormat;
             Changed(); Changed(nameof(ModelDisplayName));
         }
     }
@@ -82,7 +87,7 @@ internal sealed partial class MainViewModel : INotifyPropertyChanged, IAsyncDisp
             if (IsPreview) return;
             var model = XmaxClient.GetModelInfo(SelectedModel);
             foreach (var item in model.SupportedFormats) Formats.Add(item);
-            SelectedFormat = model.DefaultCameraFormat;
+            SelectedFormat = ExampleCameraFormat;
             await GuardAsync(RefreshCamerasAsync);
         }
         catch (Exception failure) { ReportError(failure); }

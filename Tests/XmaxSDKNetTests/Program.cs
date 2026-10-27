@@ -36,17 +36,17 @@ try
     {
         Check(XmaxRuntime.Version.Length > 0, "version");
         var model = XmaxClient.GetModelInfo();
-        Check(model.Identifier == "x2.1.1-preview-cn", "default model");
-        foreach (string identifier in new[] { "x2.1.1-preview-cn", "x2.1.1-preview-us" })
+        Check(model.Identifier == "x2.1", "default model");
+        Check(model.DisplayName == "X2.1" && model.DefaultCameraFormat == new VideoFormat(1080, 1920), "iOS model default");
+        Check(model.SupportedFormats.SequenceEqual(new[] { new VideoFormat(1920,1080), new VideoFormat(1080,1920),
+            new VideoFormat(1408,1408), new VideoFormat(1152,1536), new VideoFormat(1536,1152) }), "five standard formats");
+        foreach (string identifier in new[] { "x2.0", "x2.1.1-preview-cn", "x2.1.1-preview-us", "unknown" })
+            await ThrowsAsync<XmaxException>(() => { XmaxClient.GetModelInfo(identifier); return Task.CompletedTask; });
+        using (var owner = new XmaxClient())
         {
-            var info = XmaxClient.GetModelInfo(identifier);
-            Check(info.Identifier == identifier && info.DisplayName == "X" + identifier[1..], "model identifiers");
-            Check(info.SupportedFormats.Count == 2 && info.DefaultCameraFormat == new VideoFormat(1920, 1024), "model sizes");
-            using var owner = new XmaxClient();
-            await using var selected = owner.CreateRealtime(new() { Model = identifier });
+            await using var selected = owner.CreateRealtime(new() { Model = "x2.1" });
             await selected.PrepareExternalAsync(new(16, 8));
         }
-        await ThrowsAsync<XmaxException>(() => { XmaxClient.GetModelInfo("x2.1"); return Task.CompletedTask; });
         var client = new XmaxClient();
         Check(client.GetCapabilities().HasFlag(XmaxCapabilities.Storage), "storage capability");
         var realtime = client.CreateRealtime();

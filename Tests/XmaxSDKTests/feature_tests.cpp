@@ -14,7 +14,7 @@ struct CaptureProbe {
 static Frame captured(int64_t timestamp) {
     Frame frame;
     frame.width = 1920;
-    frame.height = 1024;
+    frame.height = 1080;
     frame.timestamp_us = timestamp;
     frame.strides[0] = frame.width * 4;
     frame.planes[0].assign(frame.strides[0] * frame.height, 42);
@@ -56,9 +56,9 @@ static void camera_lifecycle() {
     XmaxRealtimeManager sdk(
         std::make_shared<ApiService>(config, http), [rtc] { return rtc; }, std::chrono::seconds(10),
         [capture] { return std::make_unique<FakeCamera>(capture); });
-    sdk.prepare_camera("one", {1920, 1024, 30}, true);
+    sdk.prepare_camera("one", {1920, 1080, 30}, true);
     CHECK(sdk.state_snapshot().state == XMAX_READY && http->calls.empty());
-    CHECK(sdk.format().width == 1920 && sdk.format().height == 1024);
+    CHECK(sdk.format().width == 1920 && sdk.format().height == 1080);
     auto held = sdk.acquire_local_frame();
     CHECK(held && held->planes[0][0] == 42);
     CHECK(!sdk.requesting());
@@ -66,7 +66,7 @@ static void camera_lifecycle() {
     CHECK(rtc->microphone && rtc->joins == 1);
     CHECK(sdk.state_snapshot().state == XMAX_CONNECTED);
     sdk.start("first", "https://ref", true, false);
-    CHECK(json::parse(rtc->messages.front())["params"]["size"] == json::array({1920, 1024}));
+    CHECK(json::parse(rtc->messages.front())["params"]["size"] == json::array({1920, 1080}));
     const auto first_task = std::string(sdk.state_snapshot().task_id);
     capture->callbacks.frame(captured(2));
     CHECK(rtc->pushes == 1);
@@ -97,12 +97,12 @@ static void camera_rollback_and_cancel() {
         std::make_shared<ApiService>(config, http), [] { return std::make_shared<FakeRtc>(); },
         std::chrono::seconds(10), [capture] { return std::make_unique<FakeCamera>(capture); });
     capture->fail = true;
-    expect_error(XMAX_MEDIA_ERROR, [&] { sdk.prepare_camera("one", {1920, 1024, 30}, false); });
+    expect_error(XMAX_MEDIA_ERROR, [&] { sdk.prepare_camera("one", {1920, 1080, 30}, false); });
     CHECK(sdk.state_snapshot().state == XMAX_IDLE && capture->stops == 1 && http->calls.empty());
     capture->fail = false;
     capture->block = true;
     auto start = std::async(std::launch::async, [&] {
-        expect_error(XMAX_CANCELLED, [&] { sdk.prepare_camera("one", {1920, 1024, 30}, false); });
+        expect_error(XMAX_CANCELLED, [&] { sdk.prepare_camera("one", {1920, 1080, 30}, false); });
     });
     const auto deadline = Clock::now() + std::chrono::seconds(2);
     while (capture->starts < 2 && Clock::now() < deadline)

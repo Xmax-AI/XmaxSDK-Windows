@@ -228,11 +228,11 @@ static void restores_previous_format(
     auto script = std::make_shared<CaptureScript>();
     script->attempts = {CaptureAttempt::Ready, attempt, CaptureAttempt::Ready};
     auto manager = camera_manager(script);
-    manager->prepare_camera("scripted", {1024, 1920, 24}, false);
+    manager->prepare_camera("scripted", {1080, 1920, 24}, false);
 
     const auto expected = attempt == CaptureAttempt::InvalidFrame ? XMAX_MEDIA_ERROR
                                                                  : XMAX_CAMERA_PERMISSION_DENIED;
-    expect_error(expected, [&] { manager->update_camera_format({1920, 1024, 30}); });
+    expect_error(expected, [&] { manager->update_camera_format({1920, 1080, 30}); });
 
     const auto state = manager->state_info();
     const auto format = manager->camera_format();
@@ -240,7 +240,7 @@ static void restores_previous_format(
     CHECK(state.error.code == expected);
     if (attempt != CaptureAttempt::InvalidFrame)
         CHECK(std::string(state.error.message) == "Capture attempt 1 rejected");
-    CHECK(format.width == 1024 && format.height == 1920 && format.fps == 24);
+    CHECK(format.width == 1080 && format.height == 1920 && format.fps == 24);
     CHECK(script->starts == 3);
     CHECK(manager->acquire_local_frame()->width == 640);
 
@@ -268,10 +268,10 @@ static void failed_recovery_closes_preview() {
     auto script = std::make_shared<CaptureScript>();
     script->attempts = {CaptureAttempt::Ready, CaptureAttempt::AsyncFailure, CaptureAttempt::AsyncFailure};
     auto manager = camera_manager(script);
-    manager->prepare_camera("scripted", {1024, 1920, 24}, false);
+    manager->prepare_camera("scripted", {1080, 1920, 24}, false);
 
     expect_error(XMAX_CAMERA_PERMISSION_DENIED, [&] {
-        manager->update_camera_format({1920, 1024, 30});
+        manager->update_camera_format({1920, 1080, 30});
     });
 
     const auto state = manager->state_info();
@@ -290,7 +290,7 @@ static void initial_failure_closes_preview() {
     auto manager = camera_manager(script);
 
     expect_error(XMAX_CAMERA_PERMISSION_DENIED, [&] {
-        manager->prepare_camera("scripted", {1024, 1920, 24}, false);
+        manager->prepare_camera("scripted", {1080, 1920, 24}, false);
     });
 
     CHECK(manager->state_info().event.state == XMAX_IDLE);
@@ -305,10 +305,10 @@ static void cancelled_update_does_not_restore() {
     auto script = std::make_shared<CaptureScript>();
     script->attempts = {CaptureAttempt::Ready, CaptureAttempt::Wait};
     auto manager = camera_manager(script);
-    manager->prepare_camera("scripted", {1024, 1920, 24}, false);
+    manager->prepare_camera("scripted", {1080, 1920, 24}, false);
 
     auto update = std::async(std::launch::async, [&] {
-        manager->update_camera_format({1920, 1024, 30});
+        manager->update_camera_format({1920, 1080, 30});
     });
     bool started;
     {
