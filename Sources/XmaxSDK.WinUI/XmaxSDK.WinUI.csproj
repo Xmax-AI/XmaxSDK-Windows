@@ -15,7 +15,7 @@
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.5.1" />
     <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.28000.2705" PrivateAssets="all" />
     <ProjectReference Include="../XmaxSDK.Net/XmaxSDK.Net.csproj" />
-    <None Include="../../Materials/winui.md" Pack="true" PackagePath="README.md" />
+    <None Include="../../README.md" Pack="true" PackagePath="README.md" />
     <InternalsVisibleTo Include="XLabWinUI" />
   </ItemGroup>
 </Project>

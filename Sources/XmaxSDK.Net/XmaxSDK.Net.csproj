@@ -14,9 +14,9 @@
     <InternalsVisibleTo Include="Xmax.SDK.WinUI" />
   </ItemGroup>
   <ItemGroup>
-    <None Include="../../Materials/dotnet.md" Pack="true" PackagePath="README.md" />
+    <None Include="../../README.md" Pack="true" PackagePath="README.md" />
     <None Include="../../LICENSE" Pack="true" PackagePath="licenses/" />
-    <None Include="../../Materials/dependencies.md" Pack="true" PackagePath="licenses/THIRD_PARTY.md" />
+    <None Include="../../THIRD_PARTY_NOTICES.txt" Pack="true" PackagePath="licenses/THIRD_PARTY.md" />
   </ItemGroup>
   <ItemGroup Condition="'$(XmaxNativeNoticesDir)' != ''">
     <None Include="$(XmaxNativeNoticesDir)/**/*" Pack="true" PackagePath="licenses/native/%(RecursiveDir)" />

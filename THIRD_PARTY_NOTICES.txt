@@ -8,6 +8,6 @@
 
 The Xmax wordmark and preset catalog originate from the user-supplied macOS XmaxSDK project. Reference image URLs remain the same as that project's catalog.
 
-`Materials/images/` and `Materials/videos/` reuse the shared branding and model demonstration media from that project. `Materials/images/xlab/` contains iOS example references; it does not depict the Windows runtime. Windows installation and usage guides are maintained separately in `Materials/`.
+`Materials/images/` and `Materials/videos/` reuse the shared branding and model demonstration media from that project. `Materials/images/xlab/` contains iOS example references; it does not depict the Windows runtime.
 
 Qt 6.8.3 Demo packages retain the upstream qtbase, qtdeclarative, qtmultimedia, qtimageformats and qtsvg license texts and corresponding source references. The local packaging tools cache these notices outside the tracked source tree. CMake installation also includes the downloaded nlohmann/json MIT license in `licenses/nlohmann-json-MIT.txt`.

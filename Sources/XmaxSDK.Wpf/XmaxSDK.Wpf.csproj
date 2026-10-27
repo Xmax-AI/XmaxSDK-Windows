@@ -9,7 +9,7 @@
     <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
   <ItemGroup>
-    <None Include="../../Materials/wpf.md" Pack="true" PackagePath="README.md" />
+    <None Include="../../README.md" Pack="true" PackagePath="README.md" />
     <ProjectReference Include="../XmaxSDK.Net/XmaxSDK.Net.csproj" />
     <InternalsVisibleTo Include="XmaxSDKWpfTests" />
   </ItemGroup>
