@@ -13,7 +13,6 @@
 We introduce XmaxSDK, a native Windows SDK designed for real-time interactive video generation via Xmax models. XmaxSDK implements an end-to-end pipeline covering media acquisition, video streaming, frame-by-frame generation, and on-device rendering, enabling developers to seamlessly integrate low-latency, high-fidelity video transformations into creative applications at a much lower cost than alternative solutions.
 
 <p align="center"><img src="./Materials/images/xlab/generation-demo.gif" alt="X-Lab realtime generation demo" width="33%" /><img src="./Materials/images/xlab/index-demo.gif" alt="X-Lab index demo" width="33%" /><img src="./Materials/images/xlab/storage-demo.gif" alt="X-Lab storage demo" width="33%" /></p>
-<p align="center"><sub>iOS X-Lab demos</sub></p>
 
 <br>
 
@@ -162,56 +161,28 @@ We introduce XmaxSDK, a native Windows SDK designed for real-time interactive vi
 
 ## Installation
 
-XmaxSDK supports [**CMake**](#cmake), [**NuGet**](#nuget),
-and [**manual integration**](#manual).
-
-当前开发版本为 `1.0.1`，C ABI 版本为 `1`。
-
-### CMake
-
-Extract the Windows SDK package and set `CMAKE_PREFIX_PATH` to its root directory.
-Add the **Xmax::SDK** target to your application:
-
-```cmake
-find_package(XmaxSDK CONFIG REQUIRED)
-add_executable(YourApp main.cpp)
-target_compile_features(YourApp PRIVATE cxx_std_17)
-target_link_libraries(YourApp PRIVATE Xmax::SDK)
-```
-
-The public C API is available through `<xmax/xmax.h>`; C++ applications can use
-`<xmax/xmax.hpp>` for the RAII wrappers. See the
-[installation guide](./Materials/installation.md) for source builds and runtime deployment.
-
 ### NuGet
 
-Use the packages produced by the [local packaging workflow](./Materials/installation.md#本地打包)
-as a local NuGet source, then add **Xmax.SDK** to your C# application:
-
-```powershell
-dotnet add package Xmax.SDK --source C:/path/to/packages
-```
-
-For WinUI 3 or WPF video controls, add the corresponding package:
+Use your local package folder as the NuGet source. For the WinUI quick start:
 
 ```powershell
 dotnet add package Xmax.SDK.WinUI --source C:/path/to/packages
-# Or, for WPF:
-dotnet add package Xmax.SDK.Wpf --source C:/path/to/packages
 ```
 
-Target an x64 process. The UI packages reference the common C# SDK; the native SDK
-runs independently of WinUI, WPF and Qt. See the [C# integration guide](./Materials/dotnet.md)
-for project configuration.
+Use `Xmax.SDK.Wpf` for WPF, or `Xmax.SDK` without UI controls. Target x64.
+See the [installation guide](./Materials/installation.md) to build the packages.
 
-### Manual
+### CMake
 
-Download the Windows SDK archive from
-[GitHub Releases](https://github.com/Xmax-AI/XmaxSDK-Windows/releases),
-or build it with the [local packaging workflow](./Materials/installation.md#本地打包).
-Follow the [manual integration guide](./Materials/installation.md#接入-windows-二进制包)
-to add the headers, import library, native DLLs and required runtime dependencies
-to your application.
+Download and extract the SDK from [GitHub Releases](https://github.com/Xmax-AI/XmaxSDK-Windows/releases).
+Set `CMAKE_PREFIX_PATH` to the extracted folder, then link your target:
+
+```cmake
+find_package(XmaxSDK CONFIG REQUIRED)
+target_link_libraries(YourApp PRIVATE Xmax::SDK)
+```
+
+See the [installation guide](./Materials/installation.md) for manual integration and runtime setup.
 
 <br>
 
@@ -265,7 +236,7 @@ await realtime.CloseAsync();
 
 ## Dependencies
 
-- <ins><strong>Agora RTC SDK for Windows</strong></ins> enables low-latency, real-time audio and video communication.
+- <ins><strong>Agora RTC SDK</strong></ins> enables low-latency, real-time audio and video communication.
 - <ins><strong>Tencent Cloud COS integration</strong></ins> handles media upload and download via object storage, using SDK-managed HTTPS requests and HMAC signing through WinHTTP and BCrypt.
 
 <br>
