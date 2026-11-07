@@ -11,8 +11,11 @@
 #pragma once
 #include "Foundation/Media/Camera/CameraCapture.hpp"
 #include <condition_variable>
+#include <deque>
+#include <future>
 #include <mutex>
 #include <optional>
+#include <thread>
 
 namespace xmax::detail {
 
@@ -35,9 +38,7 @@ class CameraController {
     /**
      * Stops camera capture, drains callbacks, and releases owned media resources.
      */
-    ~CameraController() {
-        stop();
-    }
+    ~CameraController();
 
     /**
      * Enumerates camera identifiers and names without starting capture.
@@ -72,7 +73,19 @@ class CameraController {
      */
     void stop() noexcept;
 
+    /** Requests capture stop without waiting for the camera thread. */
+    std::future<void> stop_async();
+
   private:
+
+    /** Queues native camera work, starting the camera thread only when capture is requested. */
+    std::future<void> queue_capture(std::packaged_task<void()> work, bool start_worker);
+
+    /** Runs native start and stop on the same thread to preserve Media Foundation's COM ownership. */
+    void capture_loop();
+
+    /** Releases the native adapter on the camera thread. */
+    void stop_capture() noexcept;
 
     /**
      * Retains the first capture failure and forwards it only after startup has committed.
@@ -94,6 +107,13 @@ class CameraController {
      * The exclusively owned native camera adapter.
      */
     std::unique_ptr<CameraCapture> capture_;
+
+    /** Serializes camera commands independently of the realtime lifecycle worker. */
+    std::mutex capture_mutex_;
+    std::condition_variable capture_changed_;
+    std::deque<std::packaged_task<void()>> capture_work_;
+    std::thread capture_worker_;
+    bool capture_exiting_ = false;
 
     /**
      * The mutex protecting readiness, failure reason, and the latest timestamp.

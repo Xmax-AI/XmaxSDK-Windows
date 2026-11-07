@@ -8,6 +8,7 @@
 //  Copyright (c) 2026 XMAX.AI PTE. LTD.
 //
 
+#include "Foundation/Media/Camera/CameraPositions.hpp"
 #include "Foundation/Logging/XmaxLogger.hpp"
 #include "Foundation/Media/Camera/CameraCapture.hpp"
 #include <algorithm>
@@ -759,6 +760,7 @@ class MfCamera final : public CameraCapture {
                  i == 0}
             );
 
+        annotate_camera_positions(result);
         return result;
     }
 

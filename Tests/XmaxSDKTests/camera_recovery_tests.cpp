@@ -74,6 +74,8 @@ struct CaptureScript {
      * The number of native startup attempts, including recovery attempts.
      */
     size_t starts = 0;
+    std::thread::id start_thread;
+    std::thread::id stop_thread;
 
     /**
      * The callbacks belonging to the currently open native camera.
@@ -156,6 +158,7 @@ class ScriptedCamera final : public CameraCapture {
         {
             std::lock_guard<std::mutex> lock(script_->mutex);
             index = script_->starts++;
+            script_->start_thread = std::this_thread::get_id();
             attempt = script_->attempts.at(index);
             script_->callbacks = callbacks;
         }
@@ -194,8 +197,12 @@ class ScriptedCamera final : public CameraCapture {
         if (worker_.joinable())
             worker_.join();
 
-        std::lock_guard<std::mutex> lock(script_->mutex);
-        script_->callbacks = {};
+        {
+            std::lock_guard<std::mutex> lock(script_->mutex);
+            script_->callbacks = {};
+            script_->stop_thread = std::this_thread::get_id();
+        }
+        script_->changed.notify_all();
     }
 };
 
@@ -228,7 +235,7 @@ static void restores_previous_format(
     auto script = std::make_shared<CaptureScript>();
     script->attempts = {CaptureAttempt::Ready, attempt, CaptureAttempt::Ready};
     auto manager = camera_manager(script);
-    manager->prepare_camera("scripted", {1080, 1920, 24}, false);
+    manager->create_local_camera_stream("scripted", {1080, 1920, 24}, false);
 
     const auto expected = attempt == CaptureAttempt::InvalidFrame ? XMAX_MEDIA_ERROR
                                                                  : XMAX_CAMERA_PERMISSION_DENIED;
@@ -236,10 +243,7 @@ static void restores_previous_format(
 
     const auto state = manager->state_info();
     const auto format = manager->camera_format();
-    CHECK(state.event.state == XMAX_READY && state.reason == XMAX_REASON_FAILURE);
-    CHECK(state.error.code == expected);
-    if (attempt != CaptureAttempt::InvalidFrame)
-        CHECK(std::string(state.error.message) == "Capture attempt 1 rejected");
+    CHECK(state.event.state == XMAX_READY && state.reason == XMAX_REASON_NONE);
     CHECK(format.width == 1080 && format.height == 1920 && format.fps == 24);
     CHECK(script->starts == 3);
     CHECK(manager->acquire_local_frame()->width == 640);
@@ -256,8 +260,8 @@ static void restores_previous_format(
 
     // A restored camera must still report runtime device failures through normal cleanup.
     callbacks.failure(Error(XMAX_MEDIA_ERROR, "Camera disconnected after recovery"));
-    CHECK(manager->state_info().event.state == XMAX_IDLE);
     CHECK(manager->camera_format().width == 0);
+    CHECK(manager->state_info().event.state == XMAX_IDLE);
     CHECK(!manager->acquire_local_frame());
 }
 
@@ -268,7 +272,7 @@ static void failed_recovery_closes_preview() {
     auto script = std::make_shared<CaptureScript>();
     script->attempts = {CaptureAttempt::Ready, CaptureAttempt::AsyncFailure, CaptureAttempt::AsyncFailure};
     auto manager = camera_manager(script);
-    manager->prepare_camera("scripted", {1080, 1920, 24}, false);
+    manager->create_local_camera_stream("scripted", {1080, 1920, 24}, false);
 
     expect_error(XMAX_CAMERA_PERMISSION_DENIED, [&] {
         manager->update_camera_format({1920, 1080, 30});
@@ -290,7 +294,7 @@ static void initial_failure_closes_preview() {
     auto manager = camera_manager(script);
 
     expect_error(XMAX_CAMERA_PERMISSION_DENIED, [&] {
-        manager->prepare_camera("scripted", {1080, 1920, 24}, false);
+        manager->create_local_camera_stream("scripted", {1080, 1920, 24}, false);
     });
 
     CHECK(manager->state_info().event.state == XMAX_IDLE);
@@ -305,7 +309,7 @@ static void cancelled_update_does_not_restore() {
     auto script = std::make_shared<CaptureScript>();
     script->attempts = {CaptureAttempt::Ready, CaptureAttempt::Wait};
     auto manager = camera_manager(script);
-    manager->prepare_camera("scripted", {1080, 1920, 24}, false);
+    manager->create_local_camera_stream("scripted", {1080, 1920, 24}, false);
 
     auto update = std::async(std::launch::async, [&] {
         manager->update_camera_format({1920, 1080, 30});
@@ -326,6 +330,56 @@ static void cancelled_update_does_not_restore() {
     CHECK(!manager->acquire_local_frame());
 }
 
+static void close_releases_camera_during_remote_cleanup() {
+    struct BlockingCloseHttp : FakeHttp {
+        std::promise<void> entered;
+        std::promise<void> release;
+
+        HttpResponse request(const HttpRequest& input, const Cancel& cancel) override {
+            if (input.method == "DELETE") {
+                entered.set_value();
+                release.get_future().wait_for(std::chrono::seconds(5));
+            }
+            return FakeHttp::request(input, cancel);
+        }
+    };
+
+    auto http = std::make_shared<BlockingCloseHttp>();
+    auto entered = http->entered.get_future();
+    auto script = std::make_shared<CaptureScript>();
+    script->attempts = {CaptureAttempt::Ready};
+    Config config;
+    config.key = "offline-test";
+    XmaxRealtimeManager manager(
+        std::make_shared<ApiService>(config, http),
+        [] { return std::make_shared<FakeRtc>(); },
+        std::chrono::seconds(10),
+        [script] { return std::make_unique<ScriptedCamera>(script); }
+    );
+    manager.create_local_camera_stream("scripted", {1080, 1920, 24}, false);
+    manager.connect(false);
+    auto disconnect = std::async(std::launch::async, [&] { manager.disconnect(false); });
+    CHECK(entered.wait_for(std::chrono::seconds(2)) == std::future_status::ready);
+    {
+        std::lock_guard<std::mutex> lock(script->mutex);
+        CHECK(script->callbacks.frame);
+    }
+    auto close = std::async(std::launch::async, [&] { manager.disconnect(true); });
+    bool capture_released;
+    {
+        std::unique_lock<std::mutex> lock(script->mutex);
+        capture_released = script->changed.wait_for(lock, std::chrono::seconds(2), [&] {
+            return !script->callbacks.frame && script->stop_thread == script->start_thread;
+        });
+    }
+    const auto closing = manager.state_info();
+    http->release.set_value();
+    disconnect.get();
+    close.get();
+    CHECK(capture_released && closing.event.state == XMAX_DISCONNECTING && closing.reason == XMAX_REASON_NONE);
+    CHECK(manager.state_info().event.state == XMAX_IDLE);
+}
+
 /**
  * Runs deterministic capture recovery, runtime failure, and cancellation contracts.
  *
@@ -340,6 +394,7 @@ int main() {
         failed_recovery_closes_preview();
         initial_failure_closes_preview();
         cancelled_update_does_not_restore();
+        close_releases_camera_during_remote_cleanup();
         std::cout << "Camera recovery, original errors, runtime failure, and cancellation passed\n";
         return 0;
     } catch (const std::exception& error) {

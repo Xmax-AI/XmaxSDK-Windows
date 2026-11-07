@@ -1,3 +1,13 @@
+//
+//  MainViewModel.cs
+//  XmaxSDK
+//
+//  Author: 翁跃庭 (Yueting Weng)
+//  GitHub: https://github.com/Xmax-AI/XmaxSDK-Windows
+//
+//  Copyright (c) 2026 XMAX.AI PTE. LTD.
+//
+
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
@@ -12,6 +22,7 @@ internal sealed partial class MainViewModel : INotifyPropertyChanged, IAsyncDisp
     private readonly IUiDispatcher dispatcher;
     private readonly IThumbnailLoader thumbnails;
     private XmaxRealtime? session;
+    private RealtimeMediaStream? localStream;
     internal XmaxRealtime? Session => session;
     private CancellationTokenSource? operationCancellation;
     private int revision;
@@ -19,17 +30,18 @@ internal sealed partial class MainViewModel : INotifyPropertyChanged, IAsyncDisp
     private bool busy;
     private string status = "准备就绪 · 摄像头预览不需要 API Key", error = "", metrics = "等待视频统计";
     private CameraDevice? camera;
-    private static readonly VideoFormat ExampleCameraFormat = new(1920, 1080, 30);
-    private VideoFormat format = ExampleCameraFormat;
-    private string sessionKey = "", sessionCamera = "", sessionModel = "";
+    private VideoFormat format;
+    private string sessionKey = "", sessionCamera = "";
+    private RealtimeModel sessionModel;
     private const XmaxEnvironment ServiceEnvironment = XmaxEnvironment.China;
     private VideoFormat sessionFormat;
-    private IXmaxVideoSource? local, remote;
+    private RealtimeVideoTrack? local, remote;
     public ObservableCollection<CameraDevice> Cameras { get; } = [];
     public ObservableCollection<VideoFormat> Formats { get; } = [];
-    public static IReadOnlyList<string> Models { get; } = Array.AsReadOnly(new[] { "x2.1" });
-    private string selectedModel = Models[0];
-    public string SelectedModel
+    public static IReadOnlyList<RealtimeModel> Models { get; } = Array.AsReadOnly(Enum.GetValues<RealtimeModel>());
+    private RealtimeModel selectedModel = RealtimeModel.X2_1;
+    private string modelDisplayName = "X2.1";
+    public RealtimeModel SelectedModel
     {
         get => selectedModel;
         set
@@ -37,13 +49,14 @@ internal sealed partial class MainViewModel : INotifyPropertyChanged, IAsyncDisp
             if (!CanEdit || Active || selectedModel == value || !Models.Contains(value)) return;
             var info = XmaxClient.GetModelInfo(value);
             selectedModel = value;
+            modelDisplayName = info.DisplayName;
             Formats.Clear();
             foreach (var item in info.SupportedFormats) Formats.Add(item);
-            SelectedFormat = ExampleCameraFormat;
+            SelectedFormat = info.DefaultCameraFormat;
             Changed(); Changed(nameof(ModelDisplayName));
         }
     }
-    public string ModelDisplayName => "X" + SelectedModel[1..];
+    public string ModelDisplayName => modelDisplayName;
     private string apiKey = "";
     public string ApiKey { get => apiKey; set { apiKey = value; Changed(); Changed(nameof(KeyLabel)); } }
     public string Prompt { get; set; } = "";
@@ -60,19 +73,19 @@ internal sealed partial class MainViewModel : INotifyPropertyChanged, IAsyncDisp
     public string Status { get => status; private set { status = value; Changed(); } }
     public string Error { get => error; private set { error = value; Changed(); } }
     public string Metrics { get => metrics; private set { metrics = value; Changed(); } }
-    public IXmaxVideoSource? LocalVideo { get => local; private set { local = value; Changed(); } }
-    public IXmaxVideoSource? RemoteVideo { get => remote; private set { remote = value; Changed(); } }
+    public RealtimeVideoTrack? LocalVideo { get => local; private set { local = value; Changed(); } }
+    public RealtimeVideoTrack? RemoteVideo { get => remote; private set { if (remote == value) return; remote = value; Changed(); } }
     public AsyncCommand RefreshCommand { get; }
     public AsyncCommand PreviewCommand { get; }
     public AsyncCommand GenerateCommand { get; }
     public AsyncCommand StopCommand { get; }
-    public RealtimeState State { get; private set; }
     public event PropertyChangedEventHandler? PropertyChanged;
 
-    public MainViewModel(IUiDispatcher dispatcher, IThumbnailLoader thumbnails)
+    public MainViewModel(IUiDispatcher dispatcher, IThumbnailLoader thumbnails, string? beautyPreferencesPath = null)
     {
         this.dispatcher = dispatcher;
         this.thumbnails = thumbnails;
+        InitializeBeauty(beautyPreferencesPath);
         elapsedTimer = dispatcher.CreateTimer(TimeSpan.FromSeconds(1));
         RefreshCommand = new(() => GuardAsync(RefreshCamerasAsync), () => !Busy);
         PreviewCommand = new(() => GuardAsync(PreviewAsync), () => !Busy && Cameras.Count > 0);
@@ -84,11 +97,10 @@ internal sealed partial class MainViewModel : INotifyPropertyChanged, IAsyncDisp
     {
         try
         {
-            if (IsPreview) return;
             var model = XmaxClient.GetModelInfo(SelectedModel);
             foreach (var item in model.SupportedFormats) Formats.Add(item);
-            SelectedFormat = ExampleCameraFormat;
-            await GuardAsync(RefreshCamerasAsync);
+            SelectedFormat = model.DefaultCameraFormat;
+            if (!IsPreview) await GuardAsync(RefreshCamerasAsync);
         }
         catch (Exception failure) { ReportError(failure); }
     }
@@ -113,8 +125,8 @@ internal sealed partial class MainViewModel : INotifyPropertyChanged, IAsyncDisp
     private async Task EnsureSessionAsync()
     {
         if (SelectedCamera is null) { RequireCamera(); throw new InvalidOperationException("Select a camera before starting. Choose your physical camera for live video."); }
-        if (session is not null && sessionKey == ApiKey &&
-            sessionCamera == SelectedCamera.Id && sessionFormat == SelectedFormat && sessionModel == SelectedModel && State != RealtimeState.Idle)
+        if (session is not null && localStream is not null && sessionKey == ApiKey &&
+            sessionCamera == SelectedCamera.Id && sessionFormat == SelectedFormat && sessionModel == SelectedModel)
             return;
         await StopAsync();
         int current = ++revision;
@@ -122,8 +134,18 @@ internal sealed partial class MainViewModel : INotifyPropertyChanged, IAsyncDisp
         var next = client.CreateRealtime(new() { Model = SelectedModel });
         session = next;
         sessionKey = ApiKey; sessionCamera = SelectedCamera.Id; sessionFormat = SelectedFormat; sessionModel = SelectedModel;
-        LocalVideo = next.LocalVideo; RemoteVideo = next.RemoteVideo;
+        LocalVideo = RemoteVideo = null;
         foreach (var row in TimingRows.Concat(UplinkRows).Concat(UplinkNetworkRows).Concat(DownlinkRows).Concat(DownlinkNetworkRows)) row.Value = "—";
+        var previewReady = new TaskCompletionSource<RealtimeState>(TaskCreationOptions.RunContinuationsAsynchronously);
+        await next.SetStateListenerAsync(state =>
+        {
+            if (current != revision) return;
+            if (state.ConnectionState == RealtimeConnectionState.Ready || state.Reason is RealtimeReason.Failure)
+                previewReady.TrySetResult(state);
+            ReceiveState(state);
+        });
+        await next.SetUplinkVideoStatisticsListenerAsync(stats => { if (current == revision) ReceiveUplinkStatistics(stats); });
+        await next.SetDownlinkVideoStatisticsListenerAsync(stats => { if (current == revision) ReceiveDownlinkStatistics(stats); });
         next.EventReceived += item => dispatcher.InvokeAsync(() => { if (current == revision) Receive(item); });
         next.CallbackFaulted += failure => dispatcher.InvokeAsync(() => { if (current == revision) ReportError(failure); });
         RefreshCommands();
@@ -133,12 +155,21 @@ internal sealed partial class MainViewModel : INotifyPropertyChanged, IAsyncDisp
         var preparationToken = preparation.Token;
         try
         {
-            await next.SetVideoMirrorAsync(new(true, true, false));
+            await BindBeautyAsync(next, current);
             preparationToken.ThrowIfCancellationRequested();
-            await next.PrepareCameraAsync(SelectedCamera.Id, SelectedFormat, Microphone, preparationToken);
+            var cameraStream = await next.CreateLocalCameraStreamAsync(
+                videoFormat: SelectedFormat,
+                deviceId: SelectedCamera.Id,
+                mirror: true,
+                microphone: Microphone ? RealtimeMicrophone.SystemDefault : RealtimeMicrophone.Disabled,
+                cancellationToken: preparationToken
+            );
             if (current != revision) throw new OperationCanceledException(preparationToken);
-            State = RealtimeState.Ready;
-            Status = "摄像头已就绪 · 本地预览中";
+            LocalVideo = cameraStream.VideoTrack;
+            var ready = await previewReady.Task.WaitAsync(preparationToken);
+            if (ready.Reason is RealtimeReason.Failure failure) throw failure.Error;
+            if (current != revision) throw new OperationCanceledException(preparationToken);
+            localStream = cameraStream;
         }
         catch (Exception failure) when (current != revision)
         { throw new OperationCanceledException("Camera preparation was stopped.", failure, preparationToken); }
@@ -149,68 +180,55 @@ internal sealed partial class MainViewModel : INotifyPropertyChanged, IAsyncDisp
         }
         finally { if (current == revision) { operationCancellation?.Dispose(); operationCancellation = null; } }
     }
-    public async Task GenerateAsync()
-    {
-        if (string.IsNullOrWhiteSpace(ApiKey)) throw new InvalidOperationException("实时生成需要 Xmax API Key；摄像头预览可以单独使用。");
-        if (string.IsNullOrWhiteSpace(Prompt)) throw new InvalidOperationException("请输入生成提示词。");
-        await EnsureSessionAsync();
-        var currentSession = session ?? throw new OperationCanceledException();
-        int current = revision;
-        Status = State == RealtimeState.Generating ? "正在更新生成条件…" : "正在连接服务并等待首张结果帧…";
-        operationCancellation = new();
-        try
-        {
-            await currentSession.StartAsync(new(Prompt, string.IsNullOrWhiteSpace(ReferenceImage) ? null : ReferenceImage,
-                FaceRestoration), Microphone, operationCancellation.Token);
-            if (current == revision) { State = RealtimeState.Generating; Status = "实时生成中"; Active = true; RemoteReady = true; BeginElapsed(); }
-        }
-        finally { if (current == revision) { operationCancellation?.Dispose(); operationCancellation = null; } }
-    }
     public async Task StopAsync()
     {
-        Active = false;
-        RemoteReady = false;
-        pendingConditions = null;
-        ++intent;
-        elapsedTimer.Stop();
-        foreach (var upload in uploadCancellations.Values.ToArray()) upload.Cancel();
-        ++revision;
-        var previous = session;
-        session = null;
-        var cancellation = operationCancellation;
-        operationCancellation = null;
-        if (cancellation is not null) await cancellation.CancelAsync();
-        await StopRecordingAsync();
-        LocalVideo = RemoteVideo = null;
-        State = RealtimeState.Idle;
-        Status = previous is null ? "准备就绪" : "正在关闭会话…";
-        RefreshCommands();
-        try { if (previous is not null) await previous.DisposeAsync(); }
-        finally { cancellation?.Dispose(); Status = "会话已关闭"; }
+        if (closingSession is { } closing)
+        {
+            await closing.Task;
+            return;
+        }
+        var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        closingSession = completion;
+        try
+        {
+            BeginBeautyStop();
+            Active = false;
+            pendingConditions = null;
+            ++intent;
+            elapsedTimer.Stop();
+            foreach (var upload in uploadCancellations.Values.ToArray()) upload.Cancel();
+            ++revision;
+            var previous = session;
+            session = null;
+            localStream = null;
+            var cancellation = operationCancellation;
+            operationCancellation = null;
+            if (cancellation is not null) await cancellation.CancelAsync();
+            await StopRecordingAsync();
+            LocalVideo = RemoteVideo = null;
+            Status = previous is null ? "准备就绪" : "正在关闭会话…";
+            RefreshCommands();
+            try { if (previous is not null) await CloseRealtimeAsync(previous); }
+            finally { cancellation?.Dispose(); Status = "会话已关闭"; }
+        }
+        catch (Exception failure) { completion.TrySetException(failure); }
+        finally
+        {
+            EndBeautyStop();
+            closingSession = null;
+            completion.TrySetResult();
+        }
+        await completion.Task;
     }
+
     private void Receive(RealtimeEvent item)
     {
+        if (item.Type == RealtimeEventType.State) return;
         UpdateMetricRows(item);
-        if (item.Type == RealtimeEventType.State)
-        {
-            State = item.State;
-            RemoteReady = item.State == RealtimeState.Generating;
-            // Match macOS: keep the landing page visible until RTC is connected.
-            if (!Active && item.State is RealtimeState.Connected or RealtimeState.Generating)
-            {
-                Active = true;
-                BeginElapsed();
-            }
-            Status = $"状态：{item.State}";
-            if (!RemoteReady && IsRecording) _ = FinishInterruptedRecordingAsync();
-        }
-        else if (item.Type == RealtimeEventType.Error) Error = $"{item.Message} ({item.Code}, HTTP {item.HttpStatus})";
-        else if (item.Type == RealtimeEventType.Statistics && item.Width > 0 && item.Height > 0)
-            Metrics = $"{(item.Direction == 0 ? "上行" : "下行")}  {item.Width} × {item.Height}  ·  {Available(item.FramesPerSecond)} fps  ·  {Available(item.BitrateKbps)} kbps  ·  延迟 {Available(item.EndToEndMilliseconds)} ms";
+        if (item.Type == RealtimeEventType.Error) Error = $"{item.Message} ({item.Code}, HTTP {item.HttpStatus})";
         else if (item.Type == RealtimeEventType.Timing && item.Code >= 0)
             Metrics = $"首帧 {item.FirstFrameMilliseconds:F0} ms  ·  总启动 {item.TotalMilliseconds:F0} ms";
     }
-    private static string Available(int value) => value >= 0 ? value.ToString() : "—";
     private async Task GuardAsync(Func<Task> operation)
     {
         Busy = ++foregroundOperations > 0;

@@ -67,6 +67,20 @@ class EncodingController {
         int level,
         Rtc* rtc
     ) {
+        validate(value);
+        const auto previous = value_;
+        value_ = value;
+        try {
+            if (rtc)
+                rtc->configure_encoding(resolve(baseline, level));
+        } catch (...) {
+            value_ = previous;
+            throw;
+        }
+    }
+
+    /** Checks encoding limits before a media binding is changed. */
+    static void validate(xmax_encoding_config value) {
         require(
             value.minimum_bitrate_kbps >= -1 && value.minimum_bitrate_kbps <= 100000 &&
                 value.maximum_bitrate_kbps >= 0 && value.maximum_bitrate_kbps <= 100000 &&
@@ -77,19 +91,10 @@ class EncodingController {
             "Invalid video encoding configuration"
         );
 
-        const auto previous = value_;
-        value_ = value;
-        try {
-            if (rtc)
-                rtc->configure_encoding(resolve(
-                    baseline,
-                    level
-                ));
-        } catch (...) {
-            value_ = previous;
-            throw;
-        }
     }
+
+    /** Returns the current encoder overrides. */
+    xmax_encoding_config config() const { return value_; }
 
     /**
      * Applies uplink encoding mirroring, restoring the previous value if native updates fail.

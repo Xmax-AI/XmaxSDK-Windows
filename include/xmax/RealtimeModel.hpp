@@ -64,7 +64,7 @@ inline constexpr xmax_model_info model_capabilities(
     info.maximum_input_pixels = 2100000;
     info.input_size_alignment = 32;
     info.default_frame_rate = 30;
-    info.default_camera_format = info.supported_formats[1];
+    info.default_camera_format = info.supported_formats[0];
     return info;
 }
 } // namespace xmax

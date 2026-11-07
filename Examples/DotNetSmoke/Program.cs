@@ -1,3 +1,13 @@
+//
+//  Program.cs
+//  XmaxSDK
+//
+//  Author: 翁跃庭 (Yueting Weng)
+//  GitHub: https://github.com/Xmax-AI/XmaxSDK-Windows
+//
+//  Copyright (c) 2026 XMAX.AI PTE. LTD.
+//
+
 using System.Runtime.InteropServices;
 
 // A minimal C ABI consumer, also usable as a WPF P/Invoke reference. No camera/network is used.
@@ -40,11 +50,11 @@ internal static unsafe class Program
         {
             if (IntPtr.Size != 8 || sizeof(Config) != 32 || sizeof(Event) != 856 || sizeof(Capabilities) != 16)
                 throw new InvalidOperationException("C ABI layout mismatch");
-            var config = new Config { Size = (uint)sizeof(Config), Abi = 1, Key = key, Timeout = 15000 };
+            var config = new Config { Size = (uint)sizeof(Config), Abi = 2, Key = key, Timeout = 15000 };
             Check(xmax_client_create(in config, out client));
             var caps = new Capabilities { Size = (uint)sizeof(Capabilities) };
             Check(xmax_client_get_capabilities(client, ref caps));
-            if (caps.Abi != 1 || (caps.Flags & 8) == 0) throw new InvalidOperationException("Capability mismatch");
+            if (caps.Abi != 2 || (caps.Flags & 8) == 0) throw new InvalidOperationException("Capability mismatch");
             Check(xmax_realtime_create(client, out realtime));
             xmax_client_destroy(client); client = 0; // Child ownership is independent.
             var format = new VideoFormat { Width = 1920, Height = 1024, Fps = 30 };

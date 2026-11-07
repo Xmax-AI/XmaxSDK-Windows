@@ -1,3 +1,13 @@
+//
+//  MainWindow.xaml.cs
+//  XmaxSDK
+//
+//  Author: 翁跃庭 (Yueting Weng)
+//  GitHub: https://github.com/Xmax-AI/XmaxSDK-Windows
+//
+//  Copyright (c) 2026 XMAX.AI PTE. LTD.
+//
+
 using XLab.Shared.Services;
 using System.ComponentModel;
 using System.Diagnostics;
@@ -14,6 +24,8 @@ using XLabWpf.Controls;
 using XLabWpf.Services;
 using XLab.Shared.ViewModels;
 using Xmax.SDK.Wpf;
+
+using Xmax.SDK;
 
 namespace XLabWpf.Views;
 
@@ -45,7 +57,7 @@ public partial class MainWindow : Window
     internal async Task VerifyMenusAsync(string? output)
     {
         var original = Model.SelectedCamera;
-        string originalModel = Model.SelectedModel;
+        RealtimeModel originalModel = Model.SelectedModel;
         string originalKey = Model.ApiKey;
         string? remembered = CameraSelectionStore.Load();
         try
@@ -94,7 +106,7 @@ public partial class MainWindow : Window
             if (label.TranslatePoint(new Point(label.ActualWidth, 0), selectedRow).X > check.TranslatePoint(new Point(), selectedRow).X)
                 throw new InvalidOperationException("The model name overlaps its selection indicator.");
             ((Button)ModelOptions.Children[0]).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-            if (ModelPopup.IsOpen || Model.SelectedModel != "x2.1" || ModelButton.Text != "X2.1")
+            if (ModelPopup.IsOpen || Model.SelectedModel != RealtimeModel.X2_1 || ModelButton.Text != "X2.1")
                 throw new InvalidOperationException("Selecting X2.1 did not close the menu and retain its label.");
             if (Model.SelectedFormat != new Xmax.SDK.VideoFormat(1920, 1080, 30))
                 throw new InvalidOperationException("The example must use 1920x1080 capture independently of the SDK default.");
@@ -251,7 +263,7 @@ public partial class MainWindow : Window
         Page.Width = width;
         Header.Width = Footer.Width = Workspace.Width = Math.Max(0, width - 56);
         Landing.Width = width;
-        // Keep the same visual scale as Qt/macOS XLab; viewport growth must not stretch the hero.
+        // Cap the landing preview width so larger viewports keep its visual scale.
         BrandLogo.Height = Math.Clamp(width * .008 + 24, 34, 52);
         BrandLogo.Width = BrandLogo.Height * 552 / 172;
         LandingTitle.FontSize = Math.Clamp(width * .01 + 18, 27, 45);
@@ -285,19 +297,19 @@ public partial class MainWindow : Window
     private void ModelClicked(object sender, RoutedEventArgs e)
     {
         ModelOptions.Children.Clear();
-        foreach (string identifier in MainViewModel.Models)
+        foreach (RealtimeModel model in MainViewModel.Models)
         {
-            bool selected = Model.SelectedModel == identifier;
+            bool selected = Model.SelectedModel == model;
             var row = new Grid();
             row.ColumnDefinitions.Add(new()); row.ColumnDefinitions.Add(new() { Width = new(22) });
             var color = (Brush)new BrushConverter().ConvertFromString(selected ? "#2F46E2" : "#111318")!;
-            row.Children.Add(new TextBlock { Text = "X" + identifier[1..], VerticalAlignment = VerticalAlignment.Center, Foreground = color });
+            row.Children.Add(new TextBlock { Text = XmaxClient.GetModelInfo(model).DisplayName, VerticalAlignment = VerticalAlignment.Center, Foreground = color });
             if (selected)
             {
                 var check = new TextBlock { Text = "✓", FontFamily = new("Segoe UI Symbol"), HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Center, Foreground = color };
                 Grid.SetColumn(check, 1); row.Children.Add(check);
             }
-            var option = new Button { Style = (Style)FindResource("LinkButton"), Height = 36, Tag = identifier, HorizontalContentAlignment = HorizontalAlignment.Stretch,
+            var option = new Button { Style = (Style)FindResource("LinkButton"), Height = 36, Tag = model, HorizontalContentAlignment = HorizontalAlignment.Stretch,
                 Content = new Border { Background = (Brush)new BrushConverter().ConvertFromString(selected ? "#EEF1FF" : "#00FFFFFF")!, CornerRadius = new(8), Width = 240, Height = 36, Padding = new(10, 0, 10, 0), Child = row } };
             option.Click += ModelSelected;
             ModelOptions.Children.Add(option);
@@ -330,9 +342,10 @@ public partial class MainWindow : Window
     }
     private void ModelSelected(object sender, RoutedEventArgs e)
     {
-        if (sender is Button { Tag: string identifier }) Model.SelectedModel = identifier;
+        if (sender is Button { Tag: RealtimeModel model }) Model.SelectedModel = model;
         ModelPopup.IsOpen = false;
     }
+    private void BeautyClicked(object sender, RoutedEventArgs e) => Model.BeautyEnabled = !Model.BeautyEnabled;
     private void StatisticsClicked(object sender, RoutedEventArgs e) => Model.StatisticsVisible = !Model.StatisticsVisible;
     private async void StopClicked(object sender, RoutedEventArgs e)
     { try { await Model.StopAsync(); } catch (Exception error) { Model.ReportError(error); } }

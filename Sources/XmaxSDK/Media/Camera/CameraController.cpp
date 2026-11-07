@@ -126,6 +126,50 @@ struct CameraMetrics {
 };
 } // namespace
 
+CameraController::~CameraController() {
+    stop();
+    {
+        std::lock_guard<std::mutex> lock(capture_mutex_);
+        capture_exiting_ = true;
+    }
+    capture_changed_.notify_one();
+    if (capture_worker_.joinable())
+        capture_worker_.join();
+}
+
+std::future<void> CameraController::queue_capture(
+    std::packaged_task<void()> work,
+    bool start_worker
+) {
+    auto result = work.get_future();
+    {
+        std::lock_guard<std::mutex> lock(capture_mutex_);
+        if (!capture_worker_.joinable()) {
+            if (!start_worker)
+                return {};
+            capture_worker_ = std::thread([this] { capture_loop(); });
+        }
+        capture_work_.push_back(std::move(work));
+    }
+    capture_changed_.notify_one();
+    return result;
+}
+
+void CameraController::capture_loop() {
+    for (;;) {
+        std::packaged_task<void()> work;
+        {
+            std::unique_lock<std::mutex> lock(capture_mutex_);
+            capture_changed_.wait(lock, [this] { return capture_exiting_ || !capture_work_.empty(); });
+            if (capture_work_.empty())
+                return;
+            work = std::move(capture_work_.front());
+            capture_work_.pop_front();
+        }
+        work();
+    }
+}
+
 /**
  * Starts native capture and delivers frames at their original dimensions, waiting for the first frame,
  * failure, or cancellation. Startup failures are thrown to the caller; only failures after successful
@@ -158,7 +202,6 @@ void CameraController::start(
                    std::to_string(format.fps) + " fps";
         }
     );
-    capture_ = factory_();
     {
         std::lock_guard<std::mutex> lock(mutex_);
         ready_ = false;
@@ -218,12 +261,11 @@ void CameraController::start(
     };
 
     try {
-        capture_->start(
-            device,
-            format,
-            std::move(callbacks),
-            cancel
-        );
+        queue_capture(std::packaged_task<void()>([&, callbacks = std::move(callbacks)]() mutable {
+            require(!cancel(), XMAX_CANCELLED, "Camera startup cancelled");
+            capture_ = factory_();
+            capture_->start(device, format, std::move(callbacks), cancel);
+        }), true).get();
 
         const auto deadline = Clock::now() + std::chrono::seconds(12);
         std::unique_lock<std::mutex> lock(mutex_);
@@ -300,6 +342,16 @@ void CameraController::report_failure(
  * Stops camera capture and drains frame and failure callbacks before returning.
  */
 void CameraController::stop() noexcept {
+    auto stopped = stop_async();
+    if (stopped.valid())
+        stopped.wait();
+}
+
+std::future<void> CameraController::stop_async() {
+    return queue_capture(std::packaged_task<void()>([this] { stop_capture(); }), false);
+}
+
+void CameraController::stop_capture() noexcept {
     {
         std::lock_guard<std::mutex> lock(mutex_);
         running_ = false;

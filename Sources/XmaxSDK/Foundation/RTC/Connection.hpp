@@ -13,6 +13,9 @@
 
 namespace xmax::detail {
 
+/** The Agora application configured for realtime generation rooms. */
+inline constexpr char realtime_rtc_app_id[] = "5588dfe2e7874bd08ea28f4968ec2d40";
+
 /**
  * The app, account, token, and result-stream identity required to join the generation RTC room.
  */

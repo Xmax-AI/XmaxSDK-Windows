@@ -1,3 +1,13 @@
+//
+//  feature_tests.cpp
+//  XmaxSDK
+//
+//  Author: 翁跃庭 (Yueting Weng)
+//  GitHub: https://github.com/Xmax-AI/XmaxSDK-Windows
+//
+//  Copyright (c) 2026 XMAX.AI PTE. LTD.
+//
+
 #include "Core/Realtime/XmaxRealtimeManager.hpp"
 #include "Foundation/Media/FrameConverter.hpp"
 #include "Stream/Quality/QualityController.hpp"
@@ -47,6 +57,30 @@ struct FakeCamera : CameraCapture {
         }
     }
 };
+static void camera_creation_options() {
+    auto http = std::make_shared<FakeHttp>();
+    auto rtc = std::make_shared<FakeRtc>();
+    auto probe = std::make_shared<CaptureProbe>();
+    Config config; config.key = "test";
+    XmaxRealtimeManager sdk(std::make_shared<ApiService>(config, http), [rtc] { return rtc; },
+        std::chrono::seconds(10), [probe] { return std::make_unique<FakeCamera>(probe); });
+    sdk.video_mirror({sizeof(xmax_video_mirror_config), 0, 1, 0});
+    sdk.create_local_camera_stream("one", {1920,1080,30}, true, true, "recording-endpoint");
+    auto mirror = sdk.video_mirror();
+    CHECK(mirror.local_preview == 1 && mirror.published_video == 1 && mirror.remote_view == 1);
+    CHECK(http->count("POST /session") == 0);
+    auto preview = sdk.acquire_local_frame();
+    CHECK(preview && preview->presentation_mirrored);
+    sdk.connect(false);
+    CHECK(rtc->microphone && rtc->selected_microphone == "recording-endpoint" && rtc->encoding.mirrored);
+    sdk.disconnect(true);
+    sdk.create_local_camera_stream("two", {1920,1080,30}, false, false);
+    mirror = sdk.video_mirror();
+    CHECK(mirror.local_preview == 0 && mirror.published_video == 0 && mirror.remote_view == 1);
+    sdk.connect(false);
+    CHECK(!rtc->microphone && rtc->selected_microphone.empty());
+    sdk.disconnect(true);
+}
 static void camera_lifecycle() {
     auto http = std::make_shared<FakeHttp>();
     auto rtc = std::make_shared<FakeRtc>();
@@ -56,7 +90,7 @@ static void camera_lifecycle() {
     XmaxRealtimeManager sdk(
         std::make_shared<ApiService>(config, http), [rtc] { return rtc; }, std::chrono::seconds(10),
         [capture] { return std::make_unique<FakeCamera>(capture); });
-    sdk.prepare_camera("one", {1920, 1080, 30}, true);
+    sdk.create_local_camera_stream("one", {1920, 1080, 30}, true);
     CHECK(sdk.state_snapshot().state == XMAX_READY && http->calls.empty());
     CHECK(sdk.format().width == 1920 && sdk.format().height == 1080);
     auto held = sdk.acquire_local_frame();
@@ -82,7 +116,8 @@ static void camera_lifecycle() {
     CHECK(capture->stops == 1 && sdk.state_snapshot().state == XMAX_READY);
     capture->callbacks.frame(captured(3));
     CHECK(sdk.acquire_local_frame());
-    sdk.generate(nullptr);
+    expect_error(XMAX_INVALID_ARGUMENT, [&] { sdk.generate(nullptr); });
+    sdk.start("first", "https://ref", true, false);
     CHECK(http->count("POST /session") == 2);
     sdk.disconnect(true);
     CHECK(capture->stops == 2 && !sdk.acquire_local_frame());
@@ -97,12 +132,12 @@ static void camera_rollback_and_cancel() {
         std::make_shared<ApiService>(config, http), [] { return std::make_shared<FakeRtc>(); },
         std::chrono::seconds(10), [capture] { return std::make_unique<FakeCamera>(capture); });
     capture->fail = true;
-    expect_error(XMAX_MEDIA_ERROR, [&] { sdk.prepare_camera("one", {1920, 1080, 30}, false); });
+    expect_error(XMAX_MEDIA_ERROR, [&] { sdk.create_local_camera_stream("one", {1920, 1080, 30}, false); });
     CHECK(sdk.state_snapshot().state == XMAX_IDLE && capture->stops == 1 && http->calls.empty());
     capture->fail = false;
     capture->block = true;
     auto start = std::async(std::launch::async, [&] {
-        expect_error(XMAX_CANCELLED, [&] { sdk.prepare_camera("one", {1920, 1080, 30}, false); });
+        expect_error(XMAX_CANCELLED, [&] { sdk.create_local_camera_stream("one", {1920, 1080, 30}, false); });
     });
     const auto deadline = Clock::now() + std::chrono::seconds(2);
     while (capture->starts < 2 && Clock::now() < deadline)
@@ -289,15 +324,13 @@ static void playback_volume_during_first_frame_wait() {
          * @param[in] keepalive The room and server maintenance callback.
          */
         void wait_remote(
-            const Cancel& cancel,
-            const std::function<void()>& keepalive
+            const Cancel& cancel, Clock::time_point deadline
         ) override {
             waiting = true;
             while (held && !cancel()) {
-                keepalive();
                 std::this_thread::sleep_for(std::chrono::milliseconds(1));
             }
-            FakeRtc::wait_remote(cancel, keepalive);
+            FakeRtc::wait_remote(cancel, deadline);
         }
     };
     auto http = std::make_shared<FakeHttp>();
@@ -452,19 +485,53 @@ static void playback_volume_failure_preserves_generation() {
     sdk.disconnect(true);
 }
 static void long_signaling_keepalive() {
+    struct DroppedHeartbeat : FakeRtc {
+        std::atomic<int> heartbeat_attempts{0};
+        std::atomic<bool> waiting_for_result{false}, release_result{false};
+        void send(const std::string& value) override {
+            if (json::parse(value).value("event", "") == "heartbeat" && ++heartbeat_attempts == 1)
+                throw Error(XMAX_RTC_ERROR, "First room heartbeat was dropped");
+            FakeRtc::send(value);
+        }
+        void wait_remote(const Cancel& cancel, Clock::time_point deadline) override {
+            waiting_for_result = true;
+            while (!release_result && !cancel())
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            FakeRtc::wait_remote(cancel, deadline);
+        }
+    };
     auto http = std::make_shared<FakeHttp>();
-    auto rtc = std::make_shared<FakeRtc>();
+    auto rtc = std::make_shared<DroppedHeartbeat>();
     Config config;
     config.key = "test";
     XmaxRealtimeManager sdk(
         std::make_shared<ApiService>(config, http), [rtc] { return rtc; }, std::chrono::milliseconds(100));
     sdk.prepare({1920, 1024, 30});
-    sdk.start(std::string(10000, 'p'), "", false, false);
-    CHECK(http->count("PUT /session/session-1/heartbeat") >= 2);
+    auto startup = std::async(std::launch::async, [&] { sdk.start(std::string(50000, 'p'), "", false, false); });
+    auto independent_deadline = Clock::now() + std::chrono::seconds(5);
+    while (!rtc->waiting_for_result && Clock::now() < independent_deadline)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    const int previous_attempts = rtc->heartbeat_attempts;
+    independent_deadline = Clock::now() + std::chrono::seconds(2);
+    while (rtc->heartbeat_attempts <= previous_attempts && Clock::now() < independent_deadline)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    const bool independent = rtc->waiting_for_result && rtc->heartbeat_attempts > previous_attempts &&
+        http->count("PUT /session/session-1/heartbeat") == 0;
+    rtc->release_result = true;
+    startup.get();
+    CHECK(independent);
+    const auto heartbeat_deadline = Clock::now() + std::chrono::seconds(2);
+    while ((http->count("PUT /session/session-1/heartbeat") == 0 || rtc->heartbeat_attempts < 2) &&
+           Clock::now() < heartbeat_deadline)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    CHECK(http->count("PUT /session/session-1/heartbeat") >= 1);
     bool room_heartbeat = false;
-    for (const auto& packet : rtc->messages)
-        if (json::parse(packet).value("event", "") == "heartbeat")
-            room_heartbeat = true;
+    {
+        std::lock_guard<std::mutex> lock(rtc->mutex);
+        for (const auto& packet : rtc->messages)
+            if (json::parse(packet).value("event", "") == "heartbeat")
+                room_heartbeat = true;
+    }
     CHECK(room_heartbeat && sdk.state_snapshot().state == XMAX_GENERATING);
     sdk.disconnect(true);
 }
@@ -498,7 +565,7 @@ static void publication_timing() {
     sdk.state_snapshot();
     CHECK(!sdk.poll(event));
     sdk.disconnect(false);
-    sdk.generate(nullptr);
+    sdk.start("test", "", false, false);
     old_publication();
     sdk.state_snapshot();
     bool restarted = false;
@@ -512,8 +579,7 @@ static void publication_timing() {
 }
 static void async_exception_boundary() {
     std::atomic<int> failures{0};
-    XmaxRealtimeLifecycleManager coordinator([] {},
-                                    [&](Error error) {
+    XmaxRealtimeLifecycleManager coordinator([&](Error error) {
                                         CHECK(error.code == XMAX_INTERNAL_ERROR);
                                         ++failures;
                                     });
@@ -526,6 +592,7 @@ static void async_exception_boundary() {
 int main() {
     int failures = 0;
     for (auto test : std::vector<std::pair<const char*, void (*)()>>{
+             {"camera creation options", camera_creation_options},
              {"SDK camera lifecycle", camera_lifecycle},
              {"camera rollback and cancellation", camera_rollback_and_cancel},
              {"separate connection and generation", separate_connect_and_generation},

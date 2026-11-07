@@ -10,6 +10,7 @@
 
 #pragma once
 #include "Foundation/Media/VideoFrame.hpp"
+#include <condition_variable>
 #include <mutex>
 
 namespace xmax::detail {
@@ -70,7 +71,10 @@ class RemoteVideoFramePipeline {
      *
      * @return An independently owned latest frame, or nullptr if none is pending.
      */
-    std::shared_ptr<Frame> acquire();
+    std::shared_ptr<Frame> acquire(uint64_t revision = 0);
+
+    /** Waits for a displayable frame, ending immediately when the binding is cleared. */
+    void wait_ready(uint64_t token, Clock::time_point deadline, const Cancel& cancel);
 
   private:
 
@@ -78,6 +82,9 @@ class RemoteVideoFramePipeline {
      * The mutex protecting frame revision, reception state, and the pending frame.
      */
     std::mutex mutex_;
+
+    /** Wakes first-frame waits after delivery or binding invalidation. */
+    std::condition_variable changed_;
 
     /**
      * The revision of currently accepted frames.
@@ -88,6 +95,7 @@ class RemoteVideoFramePipeline {
      * Whether frames for the current revision are accepted.
      */
     bool active_ = false;
+    bool received_ = false;
 
     /**
      * The latest pending frame; new frames replace it and acquisition clears it.

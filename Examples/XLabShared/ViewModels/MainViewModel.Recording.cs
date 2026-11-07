@@ -39,7 +39,7 @@ internal sealed partial class MainViewModel
         RecordingChanged();
         try
         {
-            recordingRegistration = target.SetRemoteMediaListenerAsync(started.Append);
+            recordingRegistration = target.SetRemoteMediaFrameListenerAsync(started.Append);
             await recordingRegistration;
         }
         catch (Exception error)
@@ -78,7 +78,7 @@ internal sealed partial class MainViewModel
         {
             try { if (registration is not null) await registration; }
             catch { /* A failed registration may still require listener cleanup. */ }
-            try { if (target is not null) await target.SetRemoteMediaListenerAsync(null); }
+            try { if (target is not null) await target.SetRemoteMediaFrameListenerAsync(null); }
             catch (Exception error) { stopped.Fail(error.Message); }
             var result = await stopped.FinishAsync();
             if (result.Path is not null) { completedRecording = stopped; recordingPath = result.Path; }

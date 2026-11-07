@@ -76,7 +76,7 @@ struct Frame {
 /**
  * Validates video layout dimensions and frame rate independently of generation model limits.
  *
- * @param[in] f Even dimensions in [2, 8192] and a frame rate in [1, 60].
+ * @param[in] f Even dimensions in [2, 8192] and a positive nominal frame rate.
  */
 void validate_format(
     xmax_video_format f

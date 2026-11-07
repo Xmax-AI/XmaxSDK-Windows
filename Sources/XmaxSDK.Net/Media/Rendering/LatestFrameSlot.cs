@@ -1,3 +1,13 @@
+//
+//  LatestFrameSlot.cs
+//  XmaxSDK
+//
+//  Author: 翁跃庭 (Yueting Weng)
+//  GitHub: https://github.com/Xmax-AI/XmaxSDK-Windows
+//
+//  Copyright (c) 2026 XMAX.AI PTE. LTD.
+//
+
 namespace Xmax.SDK.Rendering;
 
 internal sealed class LatestFrameSlot : IDisposable
@@ -5,18 +15,32 @@ internal sealed class LatestFrameSlot : IDisposable
     private readonly object gate = new();
     private XmaxVideoFrame? latest;
     private bool stopped;
-    internal void Replace(XmaxVideoFrame frame)
+    private ulong revision;
+    internal void Publish(XmaxVideoFrame? frame, ulong contentRevision)
     {
         XmaxVideoFrame? old;
         lock (gate)
         {
+            if (!stopped && frame is null && revision == contentRevision) return;
             old = stopped ? frame : latest;
-            if (!stopped) latest = frame;
+            if (!stopped)
+            {
+                latest = frame;
+                revision = contentRevision;
+            }
         }
         old?.Dispose();
     }
-    internal XmaxVideoFrame? Take()
-    { lock (gate) { var frame = latest; latest = null; return frame; } }
+    internal XmaxVideoFrame? Take(out ulong contentRevision)
+    {
+        lock (gate)
+        {
+            contentRevision = revision;
+            var frame = latest;
+            latest = null;
+            return frame;
+        }
+    }
     public void Dispose()
     {
         XmaxVideoFrame? old;

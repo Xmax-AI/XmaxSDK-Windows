@@ -118,7 +118,7 @@ class XmaxRealtimeErrorManager {
      * @param[in] reason A state-transition reason, such as normal stop or display-orientation change.
      */
     void reset(
-        xmax_realtime_reason reason = XMAX_REASON_NORMAL
+        xmax_realtime_reason reason = XMAX_REASON_NONE
     ) {
         reason_ = reason;
         error_.reset();
@@ -201,7 +201,7 @@ class XmaxRealtimeErrorManager {
     /**
      * The state-transition reason for the latest valid operation.
      */
-    xmax_realtime_reason reason_ = XMAX_REASON_NORMAL;
+    xmax_realtime_reason reason_ = XMAX_REASON_NONE;
 
     /**
      * The original error associated with the current state.

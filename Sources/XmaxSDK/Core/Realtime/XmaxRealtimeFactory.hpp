@@ -46,17 +46,20 @@ class XmaxRealtimeFactory {
      * @param[in,out] errors The failure manager shared by media and connection producers.
      * @param[in] cleanup The handler releasing resources on the lifecycle worker.
      * @param[in] state_handler The resource bookkeeping performed after state commitment.
+     * @param[in] stop_capture Optional nonblocking request to stop local capture on full termination.
      */
     static void assemble(
         XmaxRealtimeLifecycleManager& lifecycle,
         XmaxRealtimeErrorManager& errors,
         XmaxRealtimeLifecycleManager::CleanupHandler cleanup,
-        XmaxRealtimeLifecycleManager::StateHandler state_handler
+        XmaxRealtimeLifecycleManager::StateHandler state_handler,
+        XmaxRealtimeLifecycleManager::StopCaptureHandler stop_capture = {}
     ) {
         lifecycle.configure(
             errors,
             std::move(cleanup),
-            std::move(state_handler)
+            std::move(state_handler),
+            std::move(stop_capture)
         );
         errors.failure_handler([&lifecycle](Error error, RealtimeTerminationScope scope, Cancel current) {
             lifecycle.terminate_failure(

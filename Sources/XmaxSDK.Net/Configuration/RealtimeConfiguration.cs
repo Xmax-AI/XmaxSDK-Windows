@@ -17,9 +17,9 @@ public sealed record RealtimeConfiguration
 {
 
     /// <summary>
-    /// Gets the service model identifier: x2.1 (default).
+    /// Gets the realtime service model. The default is X2.1.
     /// </summary>
-    public string Model { get; init; } = "x2.1";
+    public RealtimeModel Model { get; init; } = RealtimeModel.X2_1;
 
     /// <summary>
     /// Gets whether independent uplink and downlink adaptation is enabled; the default is true.

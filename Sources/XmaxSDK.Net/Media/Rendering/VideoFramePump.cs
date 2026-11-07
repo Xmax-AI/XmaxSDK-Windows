@@ -1,3 +1,13 @@
+//
+//  VideoFramePump.cs
+//  XmaxSDK
+//
+//  Author: 翁跃庭 (Yueting Weng)
+//  GitHub: https://github.com/Xmax-AI/XmaxSDK-Windows
+//
+//  Copyright (c) 2026 XMAX.AI PTE. LTD.
+//
+
 namespace Xmax.SDK.Rendering;
 
 internal sealed class VideoFramePump : IAsyncDisposable
@@ -13,8 +23,11 @@ internal sealed class VideoFramePump : IAsyncDisposable
             {
                 while (!stop.IsCancellationRequested)
                 {
-                    var frame = source.TryAcquireFrame();
-                    if (frame is not null) Frames.Replace(frame);
+                    ulong revision = 0;
+                    var frame = source is RealtimeVideoTrack track
+                        ? track.TryAcquireFrame(out revision)
+                        : source.TryAcquireFrame();
+                    Frames.Publish(frame, revision);
                     await Task.Delay(8, stop.Token).ConfigureAwait(false);
                 }
             }

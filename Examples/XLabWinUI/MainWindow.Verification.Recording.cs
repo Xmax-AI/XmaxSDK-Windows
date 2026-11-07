@@ -1,3 +1,13 @@
+//
+//  MainWindow.Verification.Recording.cs
+//  XmaxSDK
+//
+//  Author: 翁跃庭 (Yueting Weng)
+//  GitHub: https://github.com/Xmax-AI/XmaxSDK-Windows
+//
+//  Copyright (c) 2026 XMAX.AI PTE. LTD.
+//
+
 using System.Reflection;
 using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Automation.Provider;
@@ -24,7 +34,7 @@ public sealed partial class MainWindow
         var native = client.CreateRealtime();
         typeof(MainViewModel).GetField("session", BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(Model, native);
         typeof(MainViewModel).GetProperty(nameof(Model.IsPreview))!.SetValue(Model, false);
-        typeof(MainViewModel).GetProperty(nameof(Model.RemoteReady))!.SetValue(Model, true);
+        typeof(MainViewModel).GetProperty(nameof(Model.State))!.SetValue(Model, RealtimeConnectionState.Generating);
         RefreshUi();
         string? path = null;
         try

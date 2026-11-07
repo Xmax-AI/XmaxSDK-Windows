@@ -44,6 +44,7 @@ class ApiService {
      * @param[in] body An optional JSON request body; a null pointer omits it.
      * @param[in] cancelled A cooperative cancellation predicate; true requests termination of the operation.
      * @param[in] realtime Whether to use the realtime-session API endpoint.
+     * @param[out] http_status Optional destination for the HTTP status received from transport.
      *
      * @return The data payload of a successfully validated service response.
      */
@@ -52,7 +53,8 @@ class ApiService {
         const std::string& path,
         const json* body,
         const Cancel& cancelled,
-        bool realtime = false
+        bool realtime = false,
+        int32_t* http_status = nullptr
     ) const;
 
     /**

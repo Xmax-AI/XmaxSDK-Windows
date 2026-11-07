@@ -1,3 +1,13 @@
+//
+//  layer_tests.cpp
+//  XmaxSDK
+//
+//  Author: 翁跃庭 (Yueting Weng)
+//  GitHub: https://github.com/Xmax-AI/XmaxSDK-Windows
+//
+//  Copyright (c) 2026 XMAX.AI PTE. LTD.
+//
+
 #include "Media/MediaController.hpp"
 #include "Render/RenderController.hpp"
 #include "Service/Realtime/RealtimeSessionService.hpp"
@@ -88,6 +98,21 @@ static void stream_without_core() {
     CHECK(json::parse(rtc->messages[3])["event"] == "stop");
     CHECK(stream.task().empty());
 }
+
+static void deadline_and_equal_downlink_dimensions() {
+    auto rtc = std::make_shared<FakeRtc>();
+    StreamController stream([rtc] { return rtc; });
+    stream.adaptive(false);
+    stream.allocate();
+    const auto cancel = [] { return false; };
+    stream.join({"app", "room", "user", "token", "bot"}, {1920, 240, 90}, false, {}, cancel);
+    expect_error(XMAX_TIMEOUT, [&] { stream.start("p", "", false, cancel, Clock::now()); });
+    CHECK(rtc->messages_count() == 0);
+    stream.start("p", "", false, cancel);
+    const auto level = stream.set_quality(1, 5, cancel);
+    CHECK(level.quality == 5 && level.width == 1920 && level.height == 240);
+    CHECK(rtc->messages_count() == 1);
+}
 static Frame small_frame(int64_t timestamp) {
     Frame frame;
     frame.width = frame.height = 4;
@@ -144,6 +169,7 @@ static void media_stop_drains_delivery() {
 }
 static void render_rejects_stale_streams() {
     RenderController render;
+    render.beauty(std::nullopt);
     render.mirror(true, false);
     render.bind_local(1);
     render.receive_local(small_frame(0), 1);
@@ -152,7 +178,11 @@ static void render_rejects_stale_streams() {
     render.bind(10);
     render.receive(small_frame(1), 10);
     render.receive(small_frame(2), 10);
-    auto held = render.acquire_frame();
+    std::shared_ptr<Frame> held;
+    for (int i = 0; i < 1000 && (!held || held->timestamp_us != 2); ++i) {
+        if (auto next = render.acquire_frame()) held = next;
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
     CHECK(held && held->timestamp_us == 2 && !held->presentation_mirrored);
     render.mirror(false, true);
     CHECK(!render.acquire_frame());
@@ -163,7 +193,8 @@ static void render_rejects_stale_streams() {
     render.bind(11);
     render.receive(small_frame(4), 11);
     render.receive(small_frame(999), 10); // Old callbacks cannot overwrite the new generation.
-    auto mirrored = render.acquire_frame();
+    std::shared_ptr<Frame> mirrored;
+    for (int i = 0; i < 1000 && !mirrored; ++i) { mirrored = render.acquire_frame(); std::this_thread::sleep_for(std::chrono::milliseconds(1)); }
     CHECK(mirrored->timestamp_us == 4 && mirrored->presentation_mirrored);
     CHECK(!held->presentation_mirrored && local->presentation_mirrored);
     render.unbind(12);
@@ -175,6 +206,7 @@ int main() {
              {"API and byte transport boundary", api_transport_boundary},
              {"server allocation ownership", service_rollback_ownership},
              {"stream without Core", stream_without_core},
+             {"generation deadline and unchanged downlink dimensions", deadline_and_equal_downlink_dimensions},
              {"media without RTC", media_without_rtc},
              {"media delivery draining", media_stop_drains_delivery},
              {"render generation isolation", render_rejects_stale_streams}}) {

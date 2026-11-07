@@ -17,18 +17,17 @@
 namespace xmax::detail {
 
 /**
- * Starts the serial worker with heartbeat and asynchronous failure receivers.
+ * Starts the serial worker with an asynchronous failure receiver.
  *
- * @param[in] tick The due-heartbeat handler.
  * @param[in] failure The handler for unexpected asynchronous exceptions.
  */
 XmaxRealtimeLifecycleManager::XmaxRealtimeLifecycleManager(
-    std::function<void()> tick,
     std::function<void(Error)> failure
-) : tick_(std::move(tick)), failure_(std::move(failure)) {
+) : failure_(std::move(failure)) {
     snapshot_.struct_size = sizeof(snapshot_);
     snapshot_.event.struct_size = sizeof(snapshot_.event);
     snapshot_.event.type = XMAX_EVENT_STATE;
+    snapshot_.reason = XMAX_REASON_NONE;
     snapshot_.error.struct_size = sizeof(snapshot_.error);
     worker_ = std::thread([this] { worker_loop(); });
 }
@@ -46,15 +45,18 @@ XmaxRealtimeLifecycleManager::~XmaxRealtimeLifecycleManager() {
  * @param[in] errors The error manager, which outlives this lifecycle manager.
  * @param[in] cleanup The resource-release handler; it must not submit blocking lifecycle work.
  * @param[in] state_handler Optional state bookkeeping performed before event delivery.
+ * @param[in] stop_capture Optional nonblocking request to stop local capture on full termination.
  */
 void XmaxRealtimeLifecycleManager::configure(
     XmaxRealtimeErrorManager& errors,
     CleanupHandler cleanup,
-    StateHandler state_handler
+    StateHandler state_handler,
+    StopCaptureHandler stop_capture
 ) {
     errors_ = &errors;
     cleanup_ = std::move(cleanup);
     state_handler_ = std::move(state_handler);
+    stop_capture_ = std::move(stop_capture);
 }
 
 /**
@@ -280,6 +282,7 @@ bool XmaxRealtimeLifecycleManager::affects(
  * @param[in] origin The failed operation, or an empty reference for explicit termination.
  * @param[in] schedule Whether to enqueue cleanup instead of executing it on the current worker.
  * @param[in] current Optional producer validation checked atomically with termination admission.
+ * @param[in] explicit_disconnect Whether to skip idle connections and treat the error as a caller reason.
  */
 std::shared_ptr<XmaxRealtimeLifecycleManager::Termination> XmaxRealtimeLifecycleManager::request_termination(
     TerminationScope scope,
@@ -287,7 +290,8 @@ std::shared_ptr<XmaxRealtimeLifecycleManager::Termination> XmaxRealtimeLifecycle
     std::optional<Error> error,
     std::shared_ptr<Lease> origin,
     bool schedule,
-    Cancel current
+    Cancel current,
+    bool explicit_disconnect
 ) {
     std::shared_ptr<Termination> pending;
     bool created = false;
@@ -295,7 +299,15 @@ std::shared_ptr<XmaxRealtimeLifecycleManager::Termination> XmaxRealtimeLifecycle
         std::lock_guard<std::mutex> lock(admission_mutex_);
         if (current && !current())
             return {};
-        if (error && !origin && termination_ && termination_->scope != TerminationScope::Generation && scope != TerminationScope::All)
+        if (explicit_disconnect && !termination_) {
+            const auto phase = state();
+            const bool connection_work =
+                (admitted_ && affects(scope, admitted_->kind)) ||
+                (executing_ && affects(scope, executing_->kind));
+            if (!connection_work && (phase == XMAX_IDLE || phase == XMAX_PREPARING || phase == XMAX_READY))
+                return {};
+        }
+        if (!explicit_disconnect && error && !origin && termination_ && termination_->scope != TerminationScope::Generation && scope != TerminationScope::All)
             return {};
         if (termination_) {
             pending = termination_;
@@ -306,10 +318,12 @@ std::shared_ptr<XmaxRealtimeLifecycleManager::Termination> XmaxRealtimeLifecycle
                 scope,
                 reason
             );
+            if (explicit_disconnect)
+                pending->reason_error = std::move(error);
             termination_ = pending;
             created = true;
         }
-        if (error && !pending->error) {
+        if (!explicit_disconnect && error && !pending->error) {
             pending->error = std::move(error);
             pending->reason = XMAX_REASON_FAILURE;
         }
@@ -326,8 +340,12 @@ std::shared_ptr<XmaxRealtimeLifecycleManager::Termination> XmaxRealtimeLifecycle
                               executing_->kind
                           ))
             invalidate_operation(executing_);
-        if (pending->scope != TerminationScope::Generation)
+        if (pending->scope != TerminationScope::Generation) {
             invalidate();
+            publish({XMAX_DISCONNECTING, snapshot().event.session_id, {}}, true);
+        }
+        if (pending->scope == TerminationScope::All && stop_capture_ && !pending->capture_stopped.valid())
+            pending->capture_stopped = stop_capture_().share();
     }
     if (created && schedule) {
         std::lock_guard<std::mutex> lock(work_mutex_);
@@ -364,6 +382,15 @@ bool XmaxRealtimeLifecycleManager::terminate(
                reason
     )
         ->result.get();
+}
+
+bool XmaxRealtimeLifecycleManager::disconnect(
+    xmax_realtime_reason reason,
+    std::optional<Error> reason_error
+) {
+    require(worker_.get_id() != std::this_thread::get_id(), XMAX_INVALID_STATE, "Reentrant lifecycle termination");
+    const auto pending = request_termination(TerminationScope::Connection, reason, std::move(reason_error), {}, true, {}, true);
+    return !pending || pending->result.get();
 }
 
 /**
@@ -427,26 +454,24 @@ void XmaxRealtimeLifecycleManager::perform_termination(
     bool success = true;
     for (;;) {
         TerminationScope scope;
-        xmax_realtime_reason reason;
         std::optional<Error> error;
+        std::shared_future<void> capture_stopped;
         {
             std::lock_guard<std::mutex> lock(admission_mutex_);
             if (termination_ != pending)
                 return;
             scope = pending->scope;
-            reason = pending->reason;
             error = pending->error;
+            capture_stopped = pending->capture_stopped;
         }
-        if (errors_) {
-            if (error)
-                errors_->record(*error);
-            else
-                errors_->reset(reason);
-        }
+        if (errors_)
+            errors_->reset();
         auto previous = snapshot();
-        if (scope != TerminationScope::Generation &&
-            (state() == XMAX_CONNECTING || state() == XMAX_CONNECTED || state() == XMAX_GENERATING))
-            publish({XMAX_DISCONNECTING, previous.event.session_id, {}});
+        if (scope != TerminationScope::Generation && previous.event.state != XMAX_DISCONNECTING)
+            publish({XMAX_DISCONNECTING, previous.event.session_id, {}}, true);
+
+        if (capture_stopped.valid())
+            capture_stopped.wait();
 
         CleanupResult result;
         try {
@@ -454,11 +479,11 @@ void XmaxRealtimeLifecycleManager::perform_termination(
                 result = cleanup_(scope);
         } catch (const Error& value) {
             result.success = false;
-            if (errors_ && !error)
+            if (errors_ && !error && scope != TerminationScope::Generation)
                 errors_->record(value);
         } catch (...) {
             result.success = false;
-            if (errors_ && !error)
+            if (errors_ && !error && scope != TerminationScope::Generation)
                 errors_->record(Error(
                     XMAX_INTERNAL_ERROR,
                     "Realtime resource cleanup failed"
@@ -471,23 +496,28 @@ void XmaxRealtimeLifecycleManager::perform_termination(
                 pending->error = *errors_->error();
                 pending->reason = XMAX_REASON_FAILURE;
             }
-            if (!result.success && scope == TerminationScope::Generation) {
-                pending->scope = std::max(pending->scope, TerminationScope::Connection);
-                invalidate();
-            }
             if (scope != pending->scope)
                 continue;
             error = pending->error;
-            if (error && errors_)
-                errors_->record(*error);
+            if (errors_) {
+                if (error)
+                    errors_->record(*error);
+                else if (pending->reason_error)
+                    errors_->record(*pending->reason_error);
+                else
+                    errors_->reset(scope == TerminationScope::Generation ? XMAX_REASON_NONE : pending->reason);
+            }
             if (admitted_ && !admitted_->valid && affects(scope, admitted_->kind))
                 admitted_.reset();
             // Keep admission closed until the final state and failure revision have been committed.
             if (errors_)
                 errors_->invalidate_pending_failures(scope);
-            const auto final_state = scope == TerminationScope::Generation
-                                         ? (previous.event.state == XMAX_CONNECTED || previous.event.state == XMAX_GENERATING ? XMAX_CONNECTED : previous.event.state)
-                                         : (scope == TerminationScope::All || !result.has_local_media ? XMAX_IDLE : XMAX_READY);
+            auto final_state = XMAX_IDLE;
+            if (scope == TerminationScope::Generation) {
+                final_state = previous.event.state == XMAX_GENERATING ? XMAX_CONNECTED : previous.event.state;
+            } else if (scope == TerminationScope::Connection && result.has_local_media) {
+                final_state = XMAX_READY;
+            }
             publish({final_state, result.session_id.empty() ? previous.event.session_id : result.session_id, {}});
             termination_.reset();
         }
@@ -559,19 +589,22 @@ void XmaxRealtimeLifecycleManager::complete(
  * Publishes state after current work or coordinated cleanup has committed its resources.
  *
  * @param[in] value The new phase and business identifiers.
+ * @param[in] transient A disconnecting state published at admission, before worker-side cleanup.
  */
 void XmaxRealtimeLifecycleManager::publish(
-    RealtimeState value
+    RealtimeState value,
+    bool transient
 ) {
     xmax_event_info info{};
     info.struct_size = sizeof(info);
     info.event.struct_size = sizeof(info.event);
     info.event.type = XMAX_EVENT_STATE;
     info.event.state = value.connection_state;
-    info.reason = errors_ ? errors_->reason() : XMAX_REASON_NORMAL;
+    const auto* errors = transient ? nullptr : errors_;
+    info.reason = errors ? errors->reason() : XMAX_REASON_NONE;
     info.error.struct_size = sizeof(info.error);
-    if (errors_) {
-        info.error = errors_->details();
+    if (errors) {
+        info.error = errors->details();
         info.event.code = info.error.code;
     }
     copy_utf8(
@@ -605,12 +638,12 @@ void XmaxRealtimeLifecycleManager::publish(
         snapshot_ = info;
         state_ = value.connection_state;
     }
-    if (state_handler_)
+    if (!transient && state_handler_)
         state_handler_(value);
     emit(
         info.event,
         info.reason,
-        errors_ ? errors_->error() : nullptr
+        errors ? errors->error() : nullptr
     );
     XmaxLogger::write(
         LogCategory::Realtime,
@@ -693,16 +726,15 @@ void XmaxRealtimeLifecycleManager::sync(
 }
 
 /**
- * Executes foreground work, low-priority adaptation, and due heartbeats.
+ * Executes foreground work and low-priority adaptation.
  */
 void XmaxRealtimeLifecycleManager::worker_loop() {
     for (;;) {
         std::function<void()> job;
         {
             std::unique_lock<std::mutex> lock(work_mutex_);
-            wake_.wait_until(
+            wake_.wait(
                 lock,
-                deadline_,
                 [this] { return exiting_ || !work_.empty() || !background_work_.empty(); }
             );
             if (exiting_ && work_.empty() && background_work_.empty())
@@ -716,10 +748,7 @@ void XmaxRealtimeLifecycleManager::worker_loop() {
         try {
             if (job)
                 job();
-            if (Clock::now() >= deadline_ && tick_)
-                tick_();
         } catch (...) {
-            deadline_ = Clock::time_point::max();
             try {
                 if (failure_)
                     failure_(Error(
@@ -782,12 +811,18 @@ void XmaxRealtimeLifecycleManager::emit(
 
     std::lock_guard<std::mutex> lock(event_mutex_);
 
+    if (event.type == XMAX_EVENT_MICROPHONE_LEVEL) {
+        events_.erase(std::remove_if(events_.begin(), events_.end(), [](const auto& pending) {
+            return pending.event.type == XMAX_EVENT_MICROPHONE_LEVEL;
+        }), events_.end());
+    }
+
     if (events_.size() >= 256) {
         auto old = std::find_if(
             events_.begin(),
             events_.end(),
             [](const auto& e) {
-                return e.event.type == XMAX_EVENT_STATISTICS;
+                return e.event.type == XMAX_EVENT_STATISTICS || e.event.type == XMAX_EVENT_NETWORK_QUALITY;
             }
         );
         if (old != events_.end())

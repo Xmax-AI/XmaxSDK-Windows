@@ -14,7 +14,7 @@
 namespace xmax::detail {
 
 /**
- * Generation conditions reusable after camera switching or reconnection.
+ * Generation conditions reusable by later requests on the current connection.
  */
 struct RealtimeContext {
 

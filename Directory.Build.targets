@@ -1,5 +1,9 @@
 <Project>
   <ItemGroup Condition="'$(XmaxNativeDir)' != '' and '$(MSBuildProjectName)' != 'DotNetSmoke' and '$(MSBuildProjectName)' != 'XmaxSDK.WinUI' and '$(MSBuildProjectName)' != 'XLabShared'">
+    <Content Include="$(XmaxNativeDir)/Xmax.VideoBeautyWorker.exe" Link="Xmax.VideoBeautyWorker.exe" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Pack="false" Condition="Exists('$(XmaxNativeDir)/Xmax.VideoBeautyWorker.exe')">
+      <Pack Condition="'$(MSBuildProjectName)' == 'XmaxSDK.Net'">true</Pack>
+      <PackagePath Condition="'$(MSBuildProjectName)' == 'XmaxSDK.Net'">runtimes/win-x64/native/</PackagePath>
+    </Content>
     <Content Include="$(XmaxNativeDir)/*.dll" Link="%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Pack="false">
       <Pack Condition="'$(MSBuildProjectName)' == 'XmaxSDK.Net'">true</Pack>
       <PackagePath Condition="'$(MSBuildProjectName)' == 'XmaxSDK.Net'">runtimes/win-x64/native/</PackagePath>

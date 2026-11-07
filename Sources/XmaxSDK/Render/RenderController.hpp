@@ -10,6 +10,7 @@
 
 #pragma once
 #include "Render/Video/RemoteVideoFramePipeline.hpp"
+#include "Render/Beauty/RemoteVideoBeautyPipeline.hpp"
 #include "Render/Video/RemoteMediaFrameDispatcher.hpp"
 #include "Render/Trajectory/TrajectoryRegistry.hpp"
 #include "Render/Trajectory/DefaultTrajectoryEffectRenderer.hpp"
@@ -22,6 +23,21 @@ namespace xmax::detail {
 class RenderController {
 
   public:
+
+    explicit RenderController(BeautyProcessorFactory factory = make_video_beauty_processor)
+        : beauty_([this](std::shared_ptr<Frame> frame, uint64_t token) {
+              if (remote_.submit_owned(frame, token))
+                  output_.video(std::move(frame), token);
+          }, std::move(factory)) {}
+
+    void beauty(std::optional<BeautyOptions> options) { beauty_.configure(options); }
+    BeautyErrorListener beauty_listener(BeautyErrorListener listener) { return beauty_.listener(std::move(listener)); }
+    void close_beauty() { beauty_.reset(); }
+
+    /** Waits for a processed result frame after the remote video publication was confirmed. */
+    void wait_displayable_result(uint64_t token, const Cancel& cancel) {
+        remote_.wait_ready(token, Clock::now() + std::chrono::seconds(10), cancel);
+    }
 
     /**
      * The task trajectory cache shared by default effects and custom rendering.
@@ -36,8 +52,12 @@ class RenderController {
     void bind(
         uint64_t token
     ) {
+        std::lock_guard<std::mutex> lock(result_binding_);
+        result_token_ = token;
+        result_bound_ = true;
         remote_.activate(token);
         output_.bind(token);
+        beauty_.bind(token, true);
     }
 
     /**
@@ -48,8 +68,31 @@ class RenderController {
     void unbind(
         uint64_t token
     ) {
+        std::lock_guard<std::mutex> lock(result_binding_);
+        result_bound_ = false;
+        beauty_.bind(token, false);
         remote_.deactivate(token);
         output_.unbind(token);
+        ++result_revision_;
+    }
+
+    /** Discards the unpublished result and waits for a new generation binding. */
+    void clear_result(uint64_t token) {
+        std::lock_guard<std::mutex> lock(result_binding_);
+        if (!result_bound_ || token != result_token_)
+            return;
+        result_bound_ = false;
+        beauty_.bind(token, false);
+        remote_.deactivate(token);
+        output_.unbind(token);
+        ++result_revision_;
+    }
+
+    /** Acquires a result frame and its content revision under the same binding lock. */
+    std::shared_ptr<Frame> acquire_result(uint64_t track, uint64_t& content_revision) {
+        std::lock_guard<std::mutex> lock(result_binding_);
+        content_revision = result_revision_;
+        return acquire_frame(track);
     }
 
     /**
@@ -63,15 +106,7 @@ class RenderController {
         Frame frame,
         uint64_t token
     ) {
-        auto owned = std::make_shared<Frame>(std::move(frame));
-        if (remote_.submit_owned(
-                owned,
-                token
-            ))
-            output_.video(
-                std::move(owned),
-                token
-            );
+        beauty_.submit(std::make_shared<Frame>(std::move(frame)), token);
     }
 
     /**
@@ -107,6 +142,7 @@ class RenderController {
      * Drains application media delivery while the lifecycle executor still accepts callback reentry.
      */
     void shutdown_output() {
+        beauty_.shutdown();
         output_.shutdown();
     }
 
@@ -115,8 +151,8 @@ class RenderController {
      *
      * @return A frame that retains its pixels, or an empty object if no new frame is available.
      */
-    std::shared_ptr<Frame> acquire_frame() {
-        auto frame = remote_.acquire();
+    std::shared_ptr<Frame> acquire_frame(uint64_t revision = 0) {
+        auto frame = remote_.acquire(revision);
         if (frame)
             frame->presentation_mirrored = remote_mirrored_.load();
         return frame;
@@ -166,8 +202,8 @@ class RenderController {
      *
      * @return A frame that retains its pixels, or an empty object if no new frame is available.
      */
-    std::shared_ptr<Frame> acquire_local_frame() {
-        auto frame = local_.acquire();
+    std::shared_ptr<Frame> acquire_local_frame(uint64_t revision = 0) {
+        auto frame = local_.acquire(revision);
         if (frame)
             frame->presentation_mirrored = local_mirrored_.load();
         return frame;
@@ -185,6 +221,11 @@ class RenderController {
     ) {
         local_mirrored_ = local;
         remote_mirrored_ = remote;
+    }
+
+    /** Returns the configured mirror direction of the result display. */
+    bool remote_mirrored() const {
+        return remote_mirrored_.load();
     }
 
     /**
@@ -221,6 +262,15 @@ class RenderController {
 
   private:
 
+    /** Serializes result binding changes from the RTC and lifecycle threads. */
+    std::mutex result_binding_;
+    /** The active result connection token. */
+    uint64_t result_token_ = 0;
+    /** Whether the result binding can accept frames. */
+    bool result_bound_ = false;
+    /** The current result content revision, independent of the stable track identity. */
+    uint64_t result_revision_ = 0;
+
     /**
      * The display-mirror setting captured when acquiring a local frame.
      */
@@ -250,5 +300,8 @@ class RenderController {
      * The bounded serial audio/video output independent of latest-frame presentation mailboxes.
      */
     RemoteMediaFrameDispatcher output_;
+
+    // Declared last so its worker drains before the consumers are destroyed.
+    RemoteVideoBeautyPipeline beauty_;
 };
 } // namespace xmax::detail

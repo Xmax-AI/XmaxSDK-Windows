@@ -16,6 +16,7 @@
 #include "string.hpp"
 #include "camera_device.hpp"
 #include "XmaxConfiguration.hpp"
+#include "XmaxCreditBalance.hpp"
 #include "RealtimeConfiguration.hpp"
 #include <string>
 #include <vector>
@@ -76,6 +77,21 @@ class client : public detail::owner<xmax_client, xmax_client_destroy> {
             &options,
             &value_
         ));
+    }
+
+    /** Reads fresh account credits with optional cooperative cancellation; no realtime session is created. */
+    XmaxCreditBalance credit_balance(const std::function<bool()>& cancelled = {}) const {
+        xmax_credit_balance value{};
+        value.struct_size = sizeof(value);
+        const xmax_request_cancellation cancellation{
+            sizeof(cancellation),
+            [](void* context) -> int32_t {
+                try { return (*static_cast<const std::function<bool()>*>(context))() ? 1 : 0; }
+                catch (...) { return 1; }
+            }, const_cast<std::function<bool()>*>(&cancelled)
+        };
+        check(xmax_client_get_credit_balance(get(), &value, cancelled ? &cancellation : nullptr));
+        return {value.current_balance};
     }
 
     /**
@@ -228,7 +244,13 @@ class client : public detail::owner<xmax_client, xmax_client_destroy> {
                 i,
                 &info
             ));
-            result.push_back({info.id, info.name, info.is_default != 0});
+            xmax_camera_position position{};
+            check(xmax_camera_list_get_position(
+                value,
+                i,
+                &position
+            ));
+            result.push_back({info.id, info.name, info.is_default != 0, position});
         }
 
         return result;

@@ -201,29 +201,36 @@ using var client = new XmaxClient(new XmaxConfiguration
 // Initialize the realtime manager
 await using var realtime = client.CreateRealtime(new RealtimeConfiguration
 {
-    Model = "x2.1"
+    Model = RealtimeModel.X2_1
 });
 
 // Create the video view
-var localView = new XmaxRealtimeVideoView();
-var remoteView = new XmaxRealtimeVideoView();
-// Add the views to the page’s local preview and generated video containers
-localContainer.Children.Add(localView);
-remoteContainer.Children.Add(remoteView);
+var videoView = new XmaxRealtimeDualVideoView();
+videoContainer.Children.Add(videoView);
 
-// Create a camera stream and bind the preview
-await realtime.PrepareCameraAsync(
-    format: new VideoFormat(1920, 1080, 30),
-    microphone: false
+var previewReady = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+await realtime.SetStateListenerAsync(state =>
+{
+    if (state.Reason is RealtimeReason.Failure failure)
+        previewReady.TrySetException(failure.Error);
+    else if (state.ConnectionState == RealtimeConnectionState.Ready)
+        previewReady.TrySetResult();
+});
+
+var cameraStream = await realtime.CreateLocalCameraStreamAsync(
+    microphone: RealtimeMicrophone.Disabled
 );
-localView.VideoSource = realtime.LocalVideo;
-remoteView.VideoSource = realtime.RemoteVideo;
+videoView.LocalTrack = cameraStream.VideoTrack;
+await previewReady.Task.WaitAsync(TimeSpan.FromSeconds(15));
 
-// Once the preview is ready, start generation and display the result
-await realtime.StartAsync(new GenerationContext(
-    Prompt: "视频中角色替换成参考图中角色",
-    ReferenceImage: "https://cdn.xmax.ai/images/playground/charx/charx_image1.png?v=26&presetVersion=20261022"
-));
+var resultStream = await realtime.StartGenerationAsync(
+    cameraStream,
+    new GenerationContext(
+        prompt: "视频中角色替换成参考图中角色",
+        referencePath: "https://cdn.xmax.ai/images/playground/charx/charx_image1.png?v=26&presetVersion=20261022"
+    )
+);
+videoView.RemoteTrack = resultStream.VideoTrack;
 
 // Run the following when generation is no longer needed
 await realtime.CloseAsync();
@@ -246,6 +253,119 @@ assistance and technical support, contact us at [sdk@xmax.ai](mailto:sdk@xmax.ai
 
 <br>
 
+The stream overload of `StartGenerationAsync` opens a connection as needed. The overload that takes only
+generation conditions requires an open connection. A failed or cancelled condition update preserves the active
+session. SDK result views handle primary pointer gestures using the displayed frame's mirror state. Set
+`TrajectoryRenderer` on a WinUI or WPF result view to supply a custom effect while retaining SDK sampling.
+
 ## License
 
 XmaxSDK is available under the terms of the [MIT License](LICENSE).
+
+## Generated result beauty
+
+`XmaxRealtime.SetRemoteVideoBeautyAsync(new RealtimeVideoBeautyOptions(Smoothness: 0.5f, Lightening: 0.3f))`
+configures local beauty on generated result pixels. Pass `null` to disable. All four strengths
+(`Smoothness`, `Lightening`, `Sharpness`, `Redness`) are finite values in `0..1`, defaulting to zero;
+beauty is disabled by default. Configuration survives result replacement and reconnection. `CloseAsync`
+disables beauty and clears the beauty error listener.
+
+Register `SetRemoteVideoBeautyErrorListenerAsync(error => ...)` for recoverable frame-processing failures.
+The SDK disables beauty and restores original-frame delivery without stopping generation. Initialization
+and configuration errors are returned by the configuration method. Managed callbacks use the registration
+caller's synchronization context, or the thread pool if none exists. C/C++ callbacks run on a background
+worker: dispatch blocking SDK operations elsewhere. Preview and the remote media listener share the same
+processed pixels, with timestamps preserved. Camera input, upstream publication, audio and app watermarks
+are unchanged. No app-side frame processor is required.
+
+Windows builds with Agora require matching 4.6.2 low-level headers (including `IAgoraService.h`,
+`NGIAgora*` and `aosl`) through `-DXMAX_AGORA_LOW_LEVEL_INCLUDE_DIR=<include-directory>`.
+The SDK builds and installs `Xmax.VideoBeautyWorker.exe`; distribute it beside `XmaxSDK.dll` with the
+matching Agora runtime and ClearVision DLL. Native installation and .NET native payloads include this
+helper. It uses a current-user-only pipe/shared memory, bounded waits and a kill-on-close process job.
+It creates only a local media graph and never joins RTC or receives account credentials.
+
+The Qt, WPF and WinUI XLab generation toolbars include a **Beauty** toggle without a dropdown arrow or loading suffix. Its four strength sliders appear at the
+bottom-right of the result preview. Slider edits are coalesced before calling the SDK; strengths and
+the enabled preference are retained across launches. Disabling beauty hides the panel and passes null
+to the SDK. A recoverable beauty failure leaves generation running. The UI-only preview does not
+modify real preferences or open a camera/cloud session.
+
+
+## Account credit balance
+
+```csharp
+using var client = new XmaxClient(new() { ApiKey = "YOUR_API_KEY" });
+XmaxCreditBalance balance = await client.GetCreditBalanceAsync(cancellationToken);
+Console.WriteLine(balance.CurrentBalance);
+```
+
+The matching C++ method is `client.credit_balance()` and the C entry point is
+`xmax_client_get_credit_balance`. They query `GET /balance` with `X-Api-Key` under the client's general
+service environment: China uses `https://cloud.xmax.22duck.cn/open/api/v1/balance`; Global uses
+`https://api.xmax.cloud/open/api/v1/balance`. The realtime-session endpoint is not used.
+
+Each call reads the current server balance, preserving fractional credits and accepting zero. Missing,
+malformed, negative and nonfinite values fail explicitly. Structured API/HTTP errors are retained;
+request failure is never converted to a zero balance. Queries create no camera, RTC or generation
+session. The caller owns refresh timing and low-credit UI/policy. Cancellation is cooperative through
+`CancellationToken`, a C++ predicate, or `xmax_request_cancellation` in C. An active native HTTP phase
+may need to finish within its configured timeout before cancellation completes.
+
+## Command delivery and session heartbeats
+
+Generation start, condition changes, and return-size changes carry a frozen `xid`. The SDK sends the
+same command through RTC at 0, 300, 1000, 3000, 3300, and 4000 ms until a valid result-user
+`xid_ack` arrives. At 6000 ms it stops redundant RTC work and logs a warning. A receipt or the retry
+deadline does not finish the original send or confirm generation readiness; startup still waits for
+a real result frame. Task replacement, stop, and disconnect cancel obsolete queued controls.
+
+Each logical command also has one independent `POST /client-event/relay` copy using the realtime
+service environment and the session's `modelUid`. Missing model identifiers skip HTTP relay while
+retaining RTC delivery. Matching receipts with either `accepted: true` or `accepted: false` are valid.
+HTTP failure does not retract a successful RTC send, and RTC receipts do not cancel an HTTP copy;
+explicit task cleanup cancels both paths. Cancellation of a native HTTP phase may wait for its
+configured timeout before cleanup finishes.
+
+RTC room keepalives run while connected. HTTP session heartbeats begin only after `generating` is
+committed: the immediate first request includes `firstHeartbeatGraceSeconds`, the connection-start
+to generating duration rounded up to whole seconds. Subsequent requests omit the body. Updating
+generation does not restart this session heartbeat. Disconnect cancels it and submits server closure
+in parallel with local RTC cleanup; delayed heartbeat failures cannot terminate a replacement session.
+
+## Local camera streams
+
+```csharp
+var localStream = await realtime.CreateLocalCameraStreamAsync(
+    videoFormat: new VideoFormat(1920, 1080, 30),
+    deviceId: null,
+    mirror: true,
+    microphone: RealtimeMicrophone.SystemDefault
+);
+localView.VideoSource = localStream.VideoTrack;
+```
+
+The preset overload accepts `RealtimeCameraPreset`. Omitted microphone selection disables capture;
+`RealtimeMicrophone.Device(id)` selects a Windows recording endpoint. Mirroring applies to local
+preview and published camera video together, preserving the independent generated-result display
+setting. Creation starts no cloud session and returns after the first camera frame. You can pass
+the returned stream to connection or generation immediately. A bound preview can report Ready
+before connection starts. The controller owns capture lifetime. Use `StopMediaAsync` after
+disconnection, or `CloseAsync`, to release it.
+Windows checks microphone privacy and endpoint access when an enabled camera stream is created.
+Microphone capture and RTC publication begin on connection.
+`CreateLocalCameraStreamAsync` replaces camera preparation in ABI v2. Rebuild applications and
+deploy the matching managed SDK and native DLL together; ABI v1 binaries are incompatible.
+
+The stream's `VideoTrack` exposes its identity, current format, and camera device. Windows reports
+front or back position when it has enclosure metadata for the selected device. Set
+`MinimumBitrateKbps`, `MaximumBitrateKbps`, and `EncoderPreference` on `VideoFormat` to configure
+uplink encoding when creating or updating a camera stream or binding external video.
+
+## Media transfers
+
+`UploadImageAsync`, `UploadImageWithSafetyCheckAsync`, and `UploadVideoAsync` accept a file path or
+encoded bytes. `DownloadImageAsync` and `DownloadVideoAsync` return the destination and byte count.
+They replace an existing destination only after the transfer succeeds. Pass an
+`IProgress<TransferProgress>` to receive byte progress for an individual transfer. C++ exposes
+the same operations through `xmax::storage` and accepts per-transfer callbacks.

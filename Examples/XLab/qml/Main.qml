@@ -114,6 +114,13 @@ ApplicationWindow {
                         onClicked: controller.statisticsVisible = !controller.statisticsVisible
                     }
                     Pill {
+                        objectName: "beautyButton"; text: "Beauty"
+                        glyph: "sparkles"; accent: controller.beautyEnabled
+                        enabled: !controller.closing
+                        ToolTip.text: "Toggle beauty on generated results"
+                        onClicked: controller.beautyEnabled = !controller.beautyEnabled
+                    }
+                    Pill {
                         id: volumeButton; glyph: controller.volume > 0 ? "volume" : "muted"; ToolTip.text: "Remote volume"
                         secondaryForeground: true
                         onClicked: volumePopup.open()

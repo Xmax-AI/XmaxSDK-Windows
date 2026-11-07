@@ -28,8 +28,9 @@ int main(int argc, char** argv) {
     QQuickStyle::setStyle("Basic");
     QImageReader::setAllocationLimit(128);
     const auto args = app.arguments();
+    const bool beautySmoke = args.contains("--smoke-test-beauty");
     const bool keyGate = args.contains("--smoke-test-key-gate");
-    const bool smoke = args.contains("--smoke-test") || keyGate;
+    const bool smoke = args.contains("--smoke-test") || keyGate || beautySmoke;
     const bool preview =
         !keyGate && (smoke || args.contains("--preview") || args.contains("--preview-session"));
     QTemporaryDir testSettings;
@@ -51,7 +52,7 @@ int main(int argc, char** argv) {
         font.setPixelSize(13);
         app.setFont(font);
     }
-    XLabController controller(preview, args.contains("--preview-session"));
+    XLabController controller(preview, args.contains("--preview-session") || beautySmoke);
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty("xlab", &controller);
     engine.rootContext()->setContextProperty("softwareRendering",
@@ -102,6 +103,40 @@ int main(int argc, char** argv) {
                 QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, point.toPoint());
                 QTest::qWait(100);
             };
+            if (beautySmoke) {
+                auto panel = visualFind(window->contentItem(), "beautyPanel");
+                auto localPanel = visualFind(window->contentItem(), "localBeautyPanel");
+                auto button = visualFind(window->contentItem(), "beautyButton");
+                verify(button && button->isVisible(), "Generation header must show Beauty");
+                verify(panel && panel->isVisible() && panel->isEnabled(), "Result beauty panel must start visible");
+                verify(!localPanel || !localPanel->isVisible(), "Beauty controls belong only to generated results");
+                const auto initial = controller.beautyOptions();
+                for (const auto* key : {"smoothness", "lightening", "sharpness", "redness"}) {
+                    verify(initial.value(key).toFloat() == 0, "Default beauty strengths must be zero");
+                    auto slider = visualFind(window->contentItem(), "beautySlider_" + QString(key));
+                    verify(slider && slider->isVisible(), "All four beauty sliders must be visible");
+                    if (slider) {
+                        const auto point = slider->mapToScene(QPointF(slider->width() * .75, slider->height() / 2));
+                        QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, point.toPoint());
+                        QTest::qWait(20);
+                        verify(controller.beautyOptions().value(key).toFloat() > .5f, "Slider must update its SDK parameter");
+                    }
+                }
+                const auto edited = controller.beautyOptions();
+                click("beautyButton");
+                QTest::qWait(200);
+                verify(!controller.beautyEnabled() && panel && !panel->isVisible(), "Beauty toggle must hide controls and disable the effect");
+                click("beautyButton");
+                QTest::qWait(200);
+                verify(controller.beautyEnabled() && panel && panel->isVisible(), "Beauty toggle must reopen controls");
+                verify(controller.beautyOptions() == edited, "Toggling beauty must retain strengths");
+                verify(!QSettings().contains("xmax.xlab.beauty.enabled"), "UI preview must not overwrite real preferences");
+                controller.stop(); QTest::qWait(200);
+                verify(!controller.active && panel && !panel->isVisible(), "Leaving generation must hide beauty controls");
+                qInfo() << "Beauty UI check" << (ok ? "passed" : "failed") << "without camera, cloud or screenshots";
+                app.exit(ok ? 0 : 3);
+                return;
+            }
             auto checkReferences = [&] {
                 const auto prefix = "reference_" + controller.mode() + "_";
                 auto upload = visualFind(window->contentItem(), prefix + "0");
@@ -143,7 +178,7 @@ int main(int argc, char** argv) {
                 if (picker) {
                     const auto position = picker->mapToScene(QPointF());
                     verify(position.x() > window->width() / 2 && position.y() < 100,
-                           "Camera selector must stay in the top-right header like macOS XmaxCamera");
+                           "Camera selector must stay in the top-right header");
                 }
                 if (picker && !controller.cameras().isEmpty()) {
                     if (controller.cameras().size() > 1)
@@ -304,12 +339,12 @@ int main(int argc, char** argv) {
             verify(controller.mode() == "clothx", "Virtual Try-On tab did not switch");
             checkReferences();
             const auto refs = controller.references();
-            verify(refs.size() == 24, "Try-On preset count differs from macOS");
+            verify(refs.size() == 24, "Try-On must offer 24 presets");
             if (!refs.isEmpty())
                 controller.selectReference(refs.first().toMap()["id"].toString());
             click("mode_vibex");
             checkReferences();
-            verify(controller.references().size() == 12, "Style preset count differs from macOS");
+            verify(controller.references().size() == 12, "Style Transfer must offer 12 presets");
             click("mode_free");
             auto editor = window->findChild<QQuickItem*>("promptEditor");
             editor->setProperty("text", QStringLiteral("电影质感 cinematic light"));

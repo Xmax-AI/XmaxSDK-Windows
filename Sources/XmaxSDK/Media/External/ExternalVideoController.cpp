@@ -9,6 +9,7 @@
 //
 
 #include "Media/External/ExternalVideoController.hpp"
+#include "Media/External/ExternalVideoFrame.hpp"
 #include "Foundation/Logging/XmaxLogger.hpp"
 #include "Service/Media/MediaService.hpp"
 
@@ -20,13 +21,16 @@ namespace xmax::detail {
  * @param[in] format The input dimensions and frame rate; see xmax_video_format for limits.
  * @param[in] binding The source revision; zero reserves the channel for unversioned camera delivery.
  * @param[in] has_audio Whether this external source supplies PCM instead of microphone input.
+ * @param[in] processing_format The resolved processing format, if present.
  */
 void ExternalVideoController::prepare(
     xmax_video_format format,
     uint64_t binding,
-    bool has_audio
+    bool has_audio,
+    std::optional<xmax_video_format> processing_format
 ) {
-    MediaService::input(format);
+    validate_format(format);
+    MediaService::input(processing_format.value_or(format));
 
     std::lock_guard<std::mutex> lock(mutex_);
     require(
@@ -34,9 +38,11 @@ void ExternalVideoController::prepare(
         XMAX_INVALID_STATE,
         "Stop delivery before replacing an external source"
     );
-    format_ = format;
+    source_format_ = format;
+    format_ = processing_format.value_or(format);
     binding_ = binding;
     has_audio_ = has_audio;
+    app_owned_capture_ = processing_format.has_value();
     audio_converter_ = {};
     last_timestamp_ = -1;
     XmaxLogger::write(
@@ -100,8 +106,10 @@ void ExternalVideoController::close() {
     requesting_ = false;
     sink_ = {};
     format_ = {};
+    source_format_ = {};
     audio_ = {};
     has_audio_ = false;
+    app_owned_capture_ = false;
     audio_converter_ = {};
     binding_ = 0;
     last_timestamp_ = -1;
@@ -154,7 +162,7 @@ void ExternalVideoController::push(
     if (binding != 0 && (source.timestamp_us < 0 || source.timestamp_us <= last_timestamp_))
         return;
     require(
-        source.width == format_.width && source.height == format_.height,
+        source.width == source_format_.width && source.height == source_format_.height,
         XMAX_INVALID_ARGUMENT,
         "External frame does not match the negotiated format"
     );
@@ -164,7 +172,7 @@ void ExternalVideoController::push(
         "External frame timestamps must increase strictly"
     );
 
-    auto frame = Frame::copy(source);
+    auto frame = copy_external_video_frame(source, format_, app_owned_capture_);
     last_timestamp_ = source.timestamp_us;
 
     if (requesting_ && sink_)
@@ -226,6 +234,11 @@ void ExternalVideoController::push_owned(
 bool ExternalVideoController::has_audio() const {
     std::lock_guard<std::mutex> lock(mutex_);
     return has_audio_;
+}
+
+bool ExternalVideoController::allows_microphone() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return !app_owned_capture_ && !has_audio_;
 }
 
 /**

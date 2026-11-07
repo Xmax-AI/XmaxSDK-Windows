@@ -25,6 +25,7 @@ namespace xmax::detail {
  * @param[in] prompt The generation prompt, encoded as UTF-8.
  * @param[in] reference A reference image path or service-supported URL; empty omits the reference.
  * @param[in] face Whether to enable face restoration for generation.
+ * @param[in] target The return dimensions for startup. A zero width uses the generation canvas.
  */
 json generation_event(
     const std::string& event,
@@ -33,14 +34,14 @@ json generation_event(
     xmax_video_format format,
     const std::string& prompt,
     const std::string& reference,
-    bool face
+    bool face,
+    xmax_video_format target
 ) {
     validate_format(format);
 
     json params{
         {"model", "default"},
         {"size", json::array({format.width, format.height})},
-        {"target_size", json::array({format.width / 4 * 4, format.height / 4 * 4})},
         {"prompt", prompt},
         {"face_replace", face},
         {"padding", "contain"}
@@ -50,9 +51,13 @@ json generation_event(
         params["ref_image_path"] = reference;
 
     if (event == "start") {
+        if (!target.width)
+            target = {format.width / 4 * 4, format.height / 4 * 4, 24};
+        const auto [minimum, maximum] = downlink_bitrate(target);
+        params["target_size"] = json::array({target.width, target.height});
         params["mirror"] = false;
-        params["min_bitrate"] = 100;
-        params["max_bitrate"] = std::min(10000, bitrate({format.width, format.height, 24}).second);
+        params["min_bitrate"] = minimum;
+        params["max_bitrate"] = maximum;
     }
 
     return {

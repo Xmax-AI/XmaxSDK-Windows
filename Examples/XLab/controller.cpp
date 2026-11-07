@@ -1,3 +1,13 @@
+//
+//  controller.cpp
+//  XmaxSDK
+//
+//  Author: 翁跃庭 (Yueting Weng)
+//  GitHub: https://github.com/Xmax-AI/XmaxSDK-Windows
+//
+//  Copyright (c) 2026 XMAX.AI PTE. LTD.
+//
+
 #include "controller.hpp"
 #include <QDateTime>
 #include <QDir>
@@ -39,6 +49,16 @@ namespace {
 QString sdkError(xmax_result result) {
     return result < 0 ? QString::fromUtf8(xmax_last_error()) : QString();
 }
+xmax::frame acquireFrame(
+    const xmax::realtime& controller,
+    const std::shared_ptr<const xmax::realtime_media_stream>& stream
+) {
+    if (stream) {
+        try { return controller.acquire_stream_frame(*stream); }
+        catch (const xmax::error&) { }
+    }
+    return xmax::frame{};
+}
 QString modePrompt(const QString& mode) {
     return mode == "charx"    ? QStringLiteral("视频中角色替换成参考图中角色")
            : mode == "clothx" ? QStringLiteral("视频中人物衣服替换成参考图中衣服")
@@ -56,6 +76,21 @@ XLabController::XLabController(bool uiPreview, bool sessionPreview, QObject* par
     key_ = preview ? QString() : QSettings().value("xmax.xlab.apiKey").toString();
     camera_id_ = preview ? QString() : QSettings().value("xmax.xlab.cameraId").toString();
     video_mirrored_ = preview || QSettings().value("xmax.xlab.videoMirrored", true).toBool();
+    if (!preview) {
+        QSettings preferences;
+        beauty_enabled_ = preferences.value("xmax.xlab.beauty.enabled", true).toBool();
+        auto strength = [&](const char* key) {
+            const float value = preferences.value(QString("xmax.xlab.beauty.") + key, 0).toFloat();
+            return std::isfinite(value) && value >= 0 && value <= 1 ? value : 0.f;
+        };
+        beauty_options_.smoothness = strength("smoothness");
+        beauty_options_.lightening = strength("lightening");
+        beauty_options_.sharpness = strength("sharpness");
+        beauty_options_.redness = strength("redness");
+    }
+    beauty_debounce_.setSingleShot(true);
+    beauty_debounce_.setInterval(120);
+    connect(&beauty_debounce_, &QTimer::timeout, this, [this] { saveBeautyPreferences(); applyBeauty(); });
     if (!preview)
         refreshCameras();
     QFile f(":/qt/qml/XLab/assets/presets.json");
@@ -76,12 +111,14 @@ XLabController::XLabController(bool uiPreview, bool sessionPreview, QObject* par
 }
 XLabController::~XLabController() {
     poll_.stop();
+    beauty_debounce_.stop();
+    saveBeautyPreferences();
     if (recording_)
         recording_->stopAccepting();
     for (const auto& job : transfers_)
         job.second->cancel();
     if (handles_)
-        xmax_realtime_close(handles_->realtime);
+        xmax_realtime_close(handles_->realtime.get());
     QThreadPool::globalInstance()->waitForDone();
     handles_.reset();
 }
@@ -114,7 +151,7 @@ void XLabController::setVideoMirrored(bool mirrored) {
 
     if (handles_) {
         const xmax_video_mirror_config config{sizeof(config), mirrored, mirrored, 0};
-        error = sdkError(xmax_realtime_set_video_mirror(handles_->realtime, &config));
+        error = sdkError(xmax_realtime_set_video_mirror(handles_->realtime.get(), &config));
         if (!error.isEmpty()) {
             emit changed();
             return;
@@ -210,6 +247,8 @@ QFuture<QString> XLabController::async(std::function<QString()> work, std::funct
     auto future = QtConcurrent::run([work = std::move(work)] {
         try {
             return work();
+        } catch (const xmax::error& failure) {
+            return QString::fromUtf8(failure.what());
         } catch (const std::exception&) {
             return QString("Desktop operation failed.");
         }
@@ -237,7 +276,7 @@ void XLabController::start() {
     }
     auto handles = std::make_shared<SdkHandles>();
     const auto key = key_.toUtf8(), model = model_.toUtf8();
-    // Match the macOS XLab's opt-in business and performance diagnostics.
+    // Enable business and performance diagnostics only on request.
     error = sdkError(xmax_logger_configure(XMAX_LOG_ALL, XMAX_LOG_CHINESE));
     if (!error.isEmpty()) {
         emit changed();
@@ -246,7 +285,7 @@ void XLabController::start() {
     xmax_client_config config{sizeof(config), XMAX_ABI_VERSION, key.constData(), model.constData(), 15000};
     error = sdkError(xmax_client_create(&config, &handles->client));
     if (error.isEmpty())
-        error = sdkError(xmax_realtime_create(handles->client, &handles->realtime));
+        error = sdkError(handles->create_realtime());
     int32_t available = 0;
     if (error.isEmpty())
         error = sdkError(xmax_client_has_rtc(handles->client, &available));
@@ -273,8 +312,11 @@ void XLabController::start() {
         return;
     }
     handles_ = handles;
+    result_content_revision_ = 0;
     volume_updating_ = false;
     volume_ready_ = false;
+    beauty_updating_ = false;
+    beauty_ready_ = false;
     ++lifecycle_;
     ++intent_;
     busy = true;
@@ -287,16 +329,26 @@ void XLabController::start() {
     const bool mic = microphone;
     const auto camera = camera_id_.toUtf8();
     emit changed();
+    registerBeautyListener(epoch);
+    const auto beauty_setup_error = std::make_shared<QString>();
     async(
-        [handles, mic, camera, mirrored = video_mirrored_] {
-            const xmax_video_mirror_config mirror{sizeof(mirror), mirrored, mirrored, 0};
-            auto error = sdkError(xmax_realtime_set_video_mirror(handles->realtime, &mirror));
-            if (!error.isEmpty())
-                return error;
-            const xmax_camera_config config{sizeof(config), camera.constData(), {1920, 1080, 30}, mic};
-            return sdkError(xmax_realtime_prepare_camera(handles->realtime, &config));
+        [handles, mic, camera, mirrored = video_mirrored_, options = beauty_options_, enabled = beauty_enabled_, beauty_setup_error] {
+            *beauty_setup_error = sdkError(xmax_realtime_set_remote_video_beauty(handles->realtime.get(), enabled ? &options : nullptr));
+            if (!beauty_setup_error->isEmpty())
+                xmax_realtime_set_remote_video_beauty(handles->realtime.get(), nullptr);
+            const xmax_local_camera_options camera_options{
+                sizeof(camera_options),
+                camera.constData(),
+                {},
+                mirrored,
+                mic ? XMAX_MICROPHONE_SYSTEM_DEFAULT : XMAX_MICROPHONE_DISABLED,
+                nullptr
+            };
+            const auto local = handles->realtime.create_local_camera_stream(camera_options);
+            std::atomic_store(&handles->local_stream, std::make_shared<const xmax::realtime_media_stream>(local));
+            return QString{};
         },
-        [this, epoch](QString message) {
+        [this, epoch, beauty_setup_error](QString message) {
             if (epoch != lifecycle_)
                 return;
             if (!message.isEmpty()) {
@@ -305,25 +357,31 @@ void XLabController::start() {
                 return;
             }
             volume_ready_ = true;
-            beginGeneration();
+            beauty_ready_ = true;
+            if (!beauty_setup_error->isEmpty()) beautyFailed(epoch);
+            initial_generation_ = InitialGeneration::AttachPreview;
         });
 }
 void XLabController::beginGeneration() {
     const auto epoch = lifecycle_;
     const auto handles = handles_;
     const auto reference = presets_.first().toMap();
-    const bool mic = microphone;
-    error = sdkError(xmax_realtime_set_remote_volume(handles->realtime, volume_));
+    error = sdkError(xmax_realtime_set_remote_volume(handles->realtime.get(), volume_));
     if (!error.isEmpty()) {
         stop();
         return;
     }
     selected = reference["id"].toString();
     async(
-        [handles, reference, mic] {
-            const auto p = modePrompt("charx").toUtf8(), r = reference["reference"].toString().toUtf8();
-            xmax_generation_context c{sizeof(c), p.constData(), r.constData(), 0};
-            return sdkError(xmax_realtime_start(handles->realtime, &c, mic));
+        [handles, reference] {
+            const auto local = std::atomic_load(&handles->local_stream);
+            if (!local) return QString("No local camera stream is available.");
+            const xmax::realtime_context context{
+                modePrompt("charx").toStdString(), reference["reference"].toString().toStdString()
+            };
+            const auto remote = handles->realtime.start_generation(*local, context);
+            std::atomic_store(&handles->remote_stream, std::make_shared<const xmax::realtime_media_stream>(remote));
+            return QString{};
         },
         [this, epoch](QString message) {
             if (epoch != lifecycle_)
@@ -333,13 +391,13 @@ void XLabController::beginGeneration() {
                 error = message;
                 stop();
             } else {
-                active = true;
-                session_clock_.start();
                 emit changed();
             }
         });
 }
 void XLabController::stop() {
+    beauty_debounce_.stop();
+    saveBeautyPreferences();
     stopRecording();
     if (closing) {
         emit changed();
@@ -348,6 +406,9 @@ void XLabController::stop() {
     ++lifecycle_;
     volume_updating_ = false;
     volume_ready_ = false;
+    initial_generation_ = InitialGeneration::None;
+    beauty_updating_ = false;
+    beauty_ready_ = false;
     ++intent_;
     active = false;
     remoteReady = false;
@@ -369,7 +430,7 @@ void XLabController::stop() {
     emit changed();
     if (handles) {
         const auto epoch = lifecycle_;
-        async([handles] { return sdkError(xmax_realtime_close(handles->realtime)); },
+        async([handles] { handles->realtime.close(); return QString{}; },
               [this, epoch](QString message) {
                   if (epoch != lifecycle_)
                       return;
@@ -427,7 +488,7 @@ void XLabController::startRecording() {
             context,
             [](void* user) { delete static_cast<std::shared_ptr<RealtimeMediaRecorder>*>(user); }
         };
-        const auto result = xmax_realtime_set_remote_media_frame_listener(handles->realtime, &listener);
+        const auto result = xmax_realtime_set_remote_media_frame_listener(handles->realtime.get(), &listener);
         if (result != XMAX_OK)
             delete context;
         return sdkError(result);
@@ -453,7 +514,7 @@ void XLabController::stopRecording() {
         // Removal follows registration even when Stop is pressed before registration finishes.
         registration.waitForFinished();
         if (handles)
-            xmax_realtime_set_remote_media_frame_listener(handles->realtime, nullptr);
+            xmax_realtime_set_remote_media_frame_listener(handles->realtime.get(), nullptr);
         *result = recorder->finish().get();
         return result->error;
     }, [this, recorder, result](QString message) {
@@ -569,10 +630,20 @@ void XLabController::applyPending() {
     const auto epoch = lifecycle_, intent = intent_;
     async(
         [handles, entry] {
-            const auto p = entry["prompt"].toString().toUtf8(), r = entry["reference"].toString().toUtf8();
-            xmax_generation_context c{sizeof(c), p.constData(), r.isEmpty() ? nullptr : r.constData(),
-                                      entry["mode"] == "clothx"};
-            return sdkError(xmax_realtime_update(handles->realtime, &c));
+            const xmax::realtime_context context{
+                entry["prompt"].toString().trimmed().toStdString(),
+                entry["reference"].toString().trimmed().toStdString()
+            };
+            const bool restore_face = entry["mode"] == "clothx";
+            if (std::atomic_load(&handles->remote_stream)) {
+                handles->realtime.start_generation(context, restore_face);
+            } else {
+                const auto local = std::atomic_load(&handles->local_stream);
+                if (!local) return QString("No local camera stream is available.");
+                const auto remote = handles->realtime.start_generation(*local, context, restore_face);
+                std::atomic_store(&handles->remote_stream, std::make_shared<const xmax::realtime_media_stream>(remote));
+            }
+            return QString{};
         },
         [this, epoch, intent](QString message) {
             if (epoch != lifecycle_)
@@ -580,6 +651,8 @@ void XLabController::applyPending() {
             updating_ = false;
             if (intent == intent_ && !message.isEmpty())
                 error = message;
+            if (message.isEmpty())
+                emit trajectoryReset();
             applyPending();
             emit changed();
         });
@@ -598,7 +671,7 @@ void XLabController::applyVolume() {
     const auto handles = handles_;
     const auto epoch = lifecycle_;
     const auto value = volume_;
-    async([handles, value] { return sdkError(xmax_realtime_set_remote_volume(handles->realtime, value)); },
+    async([handles, value] { return sdkError(xmax_realtime_set_remote_volume(handles->realtime.get(), value)); },
           [this, epoch, value](QString message) {
               if (epoch != lifecycle_)
                   return;
@@ -616,14 +689,41 @@ void XLabController::applyVolume() {
 void XLabController::tick() {
     if (!handles_)
         return;
-    xmax_event e{};
-    e.struct_size = sizeof(e);
+    xmax_event_info info{};
+    info.struct_size = sizeof(info);
     bool updated = false;
-    while (xmax_realtime_poll_event(handles_->realtime, &e) == XMAX_OK) {
-        if (e.type == XMAX_EVENT_ERROR) {
+    while (handles_->realtime.poll(info)) {
+        const auto& e = info.event;
+        if (e.type == XMAX_EVENT_STATE) {
+            const auto state = xmax::realtime_state::from_event(info);
+            const auto* failure = state.reason ? std::get_if<xmax::error>(&*state.reason) : nullptr;
+            if (failure) {
+                error = QString::fromUtf8(failure->what());
+                stop();
+                return;
+            }
+            if (state.connection_state == xmax::realtime_connection_state::generating && !active) {
+                active = true;
+                session_clock_.start();
+                updated = true;
+            }
+            if (state.connection_state == xmax::realtime_connection_state::ready &&
+                initial_generation_ == InitialGeneration::AwaitReady) {
+                initial_generation_ = InitialGeneration::None;
+                beginGeneration();
+                if (!handles_)
+                    return;
+            }
+            if (state.connection_state == xmax::realtime_connection_state::idle ||
+                state.connection_state == xmax::realtime_connection_state::disconnecting) {
+                std::atomic_store(&handles_->remote_stream, std::shared_ptr<const xmax::realtime_media_stream>{});
+                if (remote_sink_) remote_sink_->setVideoFrame(QVideoFrame{});
+                remoteReady = false;
+                updated = true;
+            }
+        } else if (e.type == XMAX_EVENT_ERROR) {
             error = QString::fromUtf8(e.message);
-            stop();
-            return;
+            updated = true;
         }
         if (e.type == XMAX_EVENT_STATISTICS) {
             const QString prefix = e.direction ? "down" : "up";
@@ -653,51 +753,69 @@ void XLabController::tick() {
         }
     }
     for (auto& item : transfers_) {
-        xmax_transfer_progress progress{};
-        progress.struct_size = sizeof(progress);
-        if (xmax_storage_get_progress(item.second->storage, &progress) == XMAX_OK && progress.total) {
-            const double value = double(progress.transferred) / double(progress.total);
-            if (std::abs(value - item.second->shown_progress) >= 0.01) {
-                item.second->shown_progress = value;
-                patchUpload(item.first, {{"progress", value}});
-            }
+        const double value = item.second->progress.load();
+        if (value >= 0 && std::abs(value - item.second->shown_progress) >= 0.01) {
+            item.second->shown_progress = value;
+            patchUpload(item.first, {{"progress", value}});
         }
     }
-    xmax_frame local = nullptr;
-    if (xmax_realtime_acquire_local_frame(handles_->realtime, &local) == XMAX_OK) {
+    const auto local_track = std::atomic_load(&handles_->local_stream);
+    if (initial_generation_ == InitialGeneration::AttachPreview && local_sink_ && local_track) {
+        try {
+            handles_->realtime.attach_local_camera_preview(*local_track);
+            initial_generation_ = InitialGeneration::AwaitReady;
+        } catch (const xmax::error& failure) {
+            error = QString::fromUtf8(failure.what());
+            stop();
+            return;
+        }
+    }
+    if (auto local = acquireFrame(handles_->realtime, local_track)) {
         xmax_video_frame view{};
         view.struct_size = sizeof(view);
-        if (local_sink_ && xmax_frame_get_view(local, &view) == XMAX_OK && view.pixel_format == XMAX_BGRA) {
+        if (local_sink_ && xmax_frame_get_view(local.get(), &view) == XMAX_OK && view.pixel_format == XMAX_BGRA) {
             QImage image(view.planes[0], int(view.width), int(view.height), qsizetype(view.strides[0]),
                          QImage::Format_ARGB32);
             int32_t mirrored = 0;
-            if (xmax_frame_get_mirrored(local, &mirrored) == XMAX_OK) {
+            if (xmax_frame_get_mirrored(local.get(), &mirrored) == XMAX_OK) {
                 QVideoFrame frame(image.copy());
                 frame.setMirrored(mirrored != 0);
                 local_sink_->setVideoFrame(frame);
             }
         }
-        xmax_frame_release(local);
     }
-    xmax_frame frame = nullptr;
-    if (xmax_realtime_acquire_frame(handles_->realtime, &frame) == XMAX_OK) {
+    xmax::frame frame;
+    if (const auto track = std::atomic_load(&handles_->remote_stream)) {
+        uint64_t revision = 0;
+        frame = handles_->realtime.acquire_result_video_frame(*track, revision);
+        if (revision != result_content_revision_) {
+            result_content_revision_ = revision;
+            result_width_ = result_height_ = 0;
+            if (remote_sink_) remote_sink_->setVideoFrame({});
+            if (std::exchange(remoteReady, false))
+                emit changed();
+        }
+    }
+    if (frame) {
         xmax_video_frame view{};
         view.struct_size = sizeof(view);
-        if (remote_sink_ && xmax_frame_get_view(frame, &view) == XMAX_OK && view.pixel_format == XMAX_BGRA) {
+        if (remote_sink_ && xmax_frame_get_view(frame.get(), &view) == XMAX_OK && view.pixel_format == XMAX_BGRA) {
             QImage image(view.planes[0], int(view.width), int(view.height), qsizetype(view.strides[0]),
                          QImage::Format_ARGB32);
             int32_t mirrored = 0;
-            if (xmax_frame_get_mirrored(frame, &mirrored) == XMAX_OK) {
+            if (xmax_frame_get_mirrored(frame.get(), &mirrored) == XMAX_OK) {
                 QVideoFrame video(image.copy());
                 video.setMirrored(mirrored != 0);
+                result_width_ = view.width;
+                result_height_ = view.height;
+                result_mirrored_ = mirrored;
                 remote_sink_->setVideoFrame(video);
-            }
-            if (!remoteReady) {
-                remoteReady = true;
-                updated = true;
+                if (!remoteReady) {
+                    remoteReady = true;
+                    updated = true;
+                }
             }
         }
-        xmax_frame_release(frame);
     }
     if (updated)
         emit changed();
@@ -773,7 +891,16 @@ void XLabController::upload(const QString& id, const QUrl& file, const QString& 
                 return QStringLiteral("Upload cancelled.");
             const auto path = file.toLocalFile().toUtf8();
             xmax_uploaded_file uploaded = nullptr;
-            const auto result = xmax_storage_upload_file(job->storage, path.constData(), nullptr, &uploaded);
+            const xmax_upload_options options{sizeof(options), nullptr, nullptr, 0};
+            const auto result = xmax_storage_upload_media(
+                job->storage, path.constData(), nullptr, 0, &options, XMAX_STORAGE_MEDIA_IMAGE, &uploaded,
+                [](void* context, uint64_t done, uint64_t total) {
+                    if (total)
+                        static_cast<SdkUploadJob*>(context)->progress = double(done) / double(total);
+                },
+                [](void* context) -> int32_t { return static_cast<SdkUploadJob*>(context)->cancelled; },
+                job.get()
+            );
             if (result < 0)
                 return sdkError(result);
             xmax_uploaded_file_info info{};

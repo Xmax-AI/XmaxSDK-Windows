@@ -8,35 +8,17 @@
 //  Copyright (c) 2026 XMAX.AI PTE. LTD.
 //
 
-#include "Core/XmaxClient.hpp"
+#include "CAPI/ClientHandle.hpp"
+#include "CAPI/CallbackCancellation.hpp"
 #include "CAPI/RealtimeHandle.hpp"
 #include "Foundation/Logging/XmaxLogger.hpp"
+#include "Service/Media/MediaService.hpp"
+#include "Foundation/RTC/MicrophoneDevices.hpp"
+#include "Foundation/Text/Utf8.hpp"
 #include <algorithm>
-#include <cctype>
 #include <cstring>
+#include <filesystem>
 using namespace xmax::detail;
-
-/**
- * Owns the C client's configuration and service entry point; released by xmax_client_destroy.
- */
-struct xmax_client_impl {
-
-    /**
-     * The internal client exclusively owned by this C handle.
-     */
-    XmaxClient client;
-
-    /**
-     * Copies the client configuration into the handle's owned client.
-     *
-     * @param[in] config The copied API credentials, model identifier, and HTTP timeout.
-     */
-    explicit xmax_client_impl(
-        Config config
-    )
-        : client(std::move(config)) {
-    }
-};
 
 /**
  * Releases an adopted listener context only after all captured callback references have been released.
@@ -281,35 +263,6 @@ void handle(
     );
 }
 
-/**
- * Trims surrounding whitespace from a copied API credential.
- *
- * @param[in] s The copied API credential to trim.
- */
-std::string trim(
-    std::string s
-) {
-    auto ws = [](unsigned char c) { return std::isspace(c); };
-    s.erase(
-        s.begin(),
-        std::find_if_not(
-            s.begin(),
-            s.end(),
-            ws
-        )
-    );
-    s.erase(
-        std::find_if_not(
-            s.rbegin(),
-            s.rend(),
-            ws
-        )
-            .base(),
-        s.end()
-    );
-
-    return s;
-}
 } // namespace
 
 extern "C" {
@@ -354,7 +307,7 @@ xmax_result XMAX_CALL xmax_client_create_with_options(
                 "Unsupported C ABI version"
             );
             Config config;
-            config.key = trim(options->api_key ? options->api_key : "");
+            config.key = trim_utf8_whitespace(options->api_key ? options->api_key : "");
             config.model = "x2.1";
             config.environment = options->environment;
             config.timeout_ms = options->http_timeout_ms ? options->http_timeout_ms : 15000;
@@ -505,6 +458,21 @@ xmax_result XMAX_CALL xmax_realtime_disconnect_with_reason(
     );
 }
 
+/** @see xmax_realtime_disconnect_with_error in xmax.h for the public contract. */
+xmax_result XMAX_CALL xmax_realtime_disconnect_with_error(
+    xmax_realtime realtime,
+    xmax_result code,
+    const char* message,
+    int32_t api_code,
+    int32_t http_status
+) {
+    return protect(__func__, [&] {
+        handle(realtime);
+        require(code < 0 && message, XMAX_INVALID_ARGUMENT, "A negative error code and error message are required");
+        realtime->session->disconnect_reason(XMAX_REASON_FAILURE, Error(code, message, api_code, http_status));
+    });
+}
+
 /**
  * Updates a ready, disconnected camera's encoding format while retaining preview and device selection.
  *
@@ -629,6 +597,42 @@ xmax_result XMAX_CALL xmax_realtime_submit_interaction(
             realtime->session->submit_interaction(*frame);
         }
     );
+}
+
+xmax_result XMAX_CALL xmax_realtime_submit_interaction_view(
+    xmax_realtime realtime,
+    const xmax_interaction_frame* frame,
+    int32_t mirrored
+) {
+    return protect(
+        __func__,
+        [&] {
+            handle(realtime);
+            sized(frame);
+            require(mirrored == 0 || mirrored == 1, XMAX_INVALID_ARGUMENT, "Invalid viewport mirror flag");
+            realtime->session->submit_interaction(*frame, mirrored != 0);
+        }
+    );
+}
+
+/**
+ * Submits a sampled gesture to a revision-scoped result stream.
+ *
+ * @see xmax_realtime_submit_stream_interaction in xmax.h for the contract.
+ */
+xmax_result XMAX_CALL xmax_realtime_submit_stream_interaction(
+    xmax_realtime realtime,
+    uint64_t remote_revision,
+    const xmax_interaction_frame* frame,
+    int32_t mirrored
+) {
+    return protect(__func__, [&] {
+        handle(realtime);
+        sized(frame);
+        require(remote_revision != 0, XMAX_INVALID_ARGUMENT, "A result stream revision is required");
+        require(mirrored == 0 || mirrored == 1, XMAX_INVALID_ARGUMENT, "Invalid viewport mirror flag");
+        realtime->session->submit_interaction(*frame, mirrored != 0, remote_revision);
+    });
 }
 
 /**
@@ -801,7 +805,7 @@ xmax_result XMAX_CALL xmax_client_create(
             );
 
             Config config;
-            config.key = trim(c->api_key ? c->api_key : "");
+            config.key = trim_utf8_whitespace(c->api_key ? c->api_key : "");
             config.model = c->model ? c->model : "x2.1";
             config.timeout_ms = c->http_timeout_ms ? c->http_timeout_ms : 15000;
 
@@ -946,6 +950,31 @@ xmax_result XMAX_CALL xmax_camera_list_get(
 }
 
 /**
+ * Copies the enclosure position from a camera enumeration snapshot.
+ *
+ * @see xmax_camera_list_get_position
+ */
+xmax_result XMAX_CALL xmax_camera_list_get_position(
+    xmax_camera_list list,
+    size_t index,
+    xmax_camera_position* position
+) {
+    return protect(
+        __func__,
+        [&] {
+            handle(list);
+            handle(position);
+            require(
+                index < list->devices.size(),
+                XMAX_INVALID_ARGUMENT,
+                "Camera index is out of range"
+            );
+            *position = list->devices[index].position;
+        }
+    );
+}
+
+/**
  * Releases a camera enumeration snapshot and its device strings.
  *
  * @see xmax_camera_list_release in xmax.h for the public contract.
@@ -1021,41 +1050,135 @@ xmax_result XMAX_CALL xmax_realtime_prepare_external(
     );
 }
 
-/**
- * Starts SDK camera capture and waits for the first real video frame.
- *
- * @param[in] r A non-null realtime controller handle.
- * @param[in] config The camera configuration with struct_size initialized; an empty identifier selects the
- * default camera, and an all-zero video format selects the model's camera default.
- *
- * @return XMAX_OK on success, or a negative error code on failure. Use xmax_last_error for details.
- *
- * @note This call blocks; use a worker thread. Only local video is prepared; no server session is created.
- * Microphone capture follows the configuration when connecting.
- */
-xmax_result XMAX_CALL xmax_realtime_prepare_camera(
+static xmax_result create_local_camera_stream(
     xmax_realtime r,
-    const xmax_camera_config* config
+    const xmax_local_camera_options* options,
+    bool wait_for_preview,
+    const xmax_encoding_config* encoding = nullptr
 ) {
     return protect(
         __func__,
         [&] {
             handle(r);
-            sized(config);
-
-            auto format = config->format;
-
+            sized(options);
+            require(
+                options->mirror == 0 || options->mirror == 1,
+                XMAX_INVALID_ARGUMENT,
+                "Mirror must be zero or one"
+            );
+            require(
+                options->microphone >= XMAX_MICROPHONE_DISABLED &&
+                    options->microphone <= XMAX_MICROPHONE_DEVICE,
+                XMAX_INVALID_ARGUMENT,
+                "Invalid microphone selection"
+            );
+            if (encoding)
+                sized(encoding);
+            const std::string microphone = options->microphone_device_id ? options->microphone_device_id : "";
+            require(
+                options->microphone == XMAX_MICROPHONE_DEVICE ? !microphone.empty() : microphone.empty(),
+                XMAX_INVALID_ARGUMENT,
+                "Microphone endpoint must match its selection kind"
+            );
+            auto format = options->video_format;
             if (!format.width && !format.height && !format.fps)
                 format = r->session->model_info().default_camera_format;
-
-            r->session
-                ->prepare_camera(
-                    config->device_id ? config->device_id : "",
-                    format,
-                    config->use_microphone != 0
-                );
+            r->session->create_local_camera_stream(
+                options->device_id ? options->device_id : "",
+                format,
+                options->microphone != XMAX_MICROPHONE_DISABLED,
+                options->mirror != 0,
+                microphone,
+                wait_for_preview,
+                encoding ? std::optional{*encoding} : std::nullopt
+            );
         }
     );
+}
+
+xmax_result XMAX_CALL xmax_realtime_create_local_camera_stream(
+    xmax_realtime realtime,
+    const xmax_local_camera_options* options
+) {
+    return create_local_camera_stream(realtime, options, false);
+}
+
+xmax_result XMAX_CALL xmax_realtime_create_local_camera_preview_stream(
+    xmax_realtime realtime,
+    const xmax_local_camera_options* options
+) {
+    return create_local_camera_stream(realtime, options, true);
+}
+
+/**
+ * Binds a camera and its encoder overrides.
+ *
+ * @see xmax_realtime_create_local_camera_stream_with_encoding in xmax.h for the contract.
+ */
+xmax_result XMAX_CALL xmax_realtime_create_local_camera_stream_with_encoding(
+    xmax_realtime realtime,
+    const xmax_local_camera_options* options,
+    const xmax_encoding_config* encoding
+) {
+    return create_local_camera_stream(realtime, options, true, encoding);
+}
+
+/**
+ * Updates a camera binding and its encoder overrides.
+ *
+ * @see xmax_realtime_update_camera_format_with_encoding in xmax.h for the contract.
+ */
+xmax_result XMAX_CALL xmax_realtime_update_camera_format_with_encoding(
+    xmax_realtime realtime,
+    const xmax_video_format* format,
+    const xmax_encoding_config* encoding
+) {
+    return protect(__func__, [&] {
+        handle(realtime);
+        handle(format);
+        sized(encoding);
+        realtime->session->update_camera_format(*format, *encoding);
+    });
+}
+
+/**
+ * Copies the controller encoder configuration.
+ *
+ * @see xmax_realtime_get_encoding in xmax.h for the contract.
+ */
+xmax_result XMAX_CALL xmax_realtime_get_encoding(
+    xmax_realtime realtime,
+    xmax_encoding_config* encoding
+) {
+    return protect(__func__, [&] {
+        handle(realtime);
+        sized(encoding);
+        *encoding = realtime->session->encoding_config();
+        encoding->struct_size = sizeof(*encoding);
+    });
+}
+
+xmax_result XMAX_CALL xmax_realtime_complete_camera_preview(
+    xmax_realtime realtime,
+    uint64_t revision
+) {
+    return protect(__func__, [&] {
+        handle(realtime);
+        realtime->session->complete_camera_preview(revision);
+    });
+}
+
+xmax_result XMAX_CALL xmax_realtime_list_cameras(
+    xmax_realtime realtime,
+    xmax_camera_list* out
+) {
+    if (out)
+        *out = nullptr;
+    return protect(__func__, [&] {
+        handle(realtime);
+        handle(out);
+        *out = new xmax_camera_list_impl{make_camera_capture()->devices()};
+    });
 }
 
 /**
@@ -1066,8 +1189,7 @@ xmax_result XMAX_CALL xmax_realtime_prepare_camera(
  *
  * @return XMAX_OK on success, or a negative error code on failure. Use xmax_last_error for details.
  *
- * @note This call blocks; use a worker thread. It waits for the new camera; failure cleans up the connection
- * and local media.
+ * @see xmax_realtime_switch_camera in xmax.h for the recovery and connection contract.
  */
 xmax_result XMAX_CALL xmax_realtime_switch_camera(
     xmax_realtime r,
@@ -1440,7 +1562,7 @@ xmax_result XMAX_CALL xmax_realtime_update(
 }
 
 /**
- * Disconnects the server session and RTC while retaining local preview and cached conditions.
+ * Disconnects the server session and RTC, clears generation conditions, and retains local preview.
  *
  * @param[in] r A non-null realtime controller handle.
  *
@@ -1618,6 +1740,167 @@ xmax_result XMAX_CALL xmax_realtime_acquire_frame(
     return result == XMAX_OK && !found ? XMAX_NO_EVENT : result;
 }
 
+xmax_result XMAX_CALL xmax_realtime_get_local_stream_revision(
+    xmax_realtime realtime,
+    uint64_t* revision
+) {
+    return protect(__func__, [&] {
+        handle(realtime);
+        handle(revision);
+        *revision = realtime->session->local_stream_revision();
+    });
+}
+
+xmax_result XMAX_CALL xmax_realtime_connect_stream(
+    xmax_realtime realtime,
+    uint64_t local_revision,
+    uint64_t* remote_revision
+) {
+    return xmax_realtime_connect_stream_cancellable(realtime, local_revision, remote_revision, nullptr, nullptr);
+}
+
+xmax_result XMAX_CALL xmax_realtime_connect_stream_cancellable(
+    xmax_realtime realtime,
+    uint64_t local_revision,
+    uint64_t* remote_revision,
+    xmax_cancellation_fn cancel,
+    void* user_data
+) {
+    return protect(__func__, [&] {
+        handle(realtime);
+        handle(remote_revision);
+        require(local_revision != 0, XMAX_INVALID_ARGUMENT, "A local stream revision is required");
+        const CallbackCancellation cancellation(cancel, user_data);
+        *remote_revision = realtime->session->connect(false, local_revision, cancellation.predicate());
+    });
+}
+
+xmax_result XMAX_CALL xmax_realtime_start_generation_stream(
+    xmax_realtime realtime,
+    uint64_t local_revision,
+    const xmax_generation_context* context,
+    int32_t face_restoration,
+    uint64_t* remote_revision
+) {
+    return xmax_realtime_start_generation_cancellable(
+        realtime,
+        local_revision,
+        context,
+        face_restoration,
+        remote_revision,
+        0,
+        nullptr,
+        nullptr
+    );
+}
+
+/**
+ * Runs generation with an operation-scoped cancellation callback.
+ *
+ * @see xmax_realtime_start_generation_cancellable in xmax.h for the contract.
+ */
+xmax_result XMAX_CALL xmax_realtime_start_generation_cancellable(
+    xmax_realtime realtime,
+    uint64_t local_revision,
+    const xmax_generation_context* context,
+    int32_t face_restoration,
+    uint64_t* remote_revision,
+    int32_t update_only,
+    xmax_cancellation_fn cancel,
+    void* user_data
+) {
+    return protect(__func__, [&] {
+        handle(realtime);
+        handle(remote_revision);
+        require(
+            face_restoration >= -1 && face_restoration <= 1,
+            XMAX_INVALID_ARGUMENT,
+            "Invalid face restoration flag"
+        );
+        if (context) {
+            sized(context);
+            handle(context->prompt);
+        }
+        require(update_only == 0 || update_only == 1, XMAX_INVALID_ARGUMENT, "Invalid generation update flag");
+        const CallbackCancellation cancellation(cancel, user_data);
+        *remote_revision = realtime->session->generate(
+            context,
+            local_revision,
+            face_restoration == -1 ? std::nullopt : std::optional<bool>(face_restoration != 0),
+            local_revision != 0,
+            cancellation.predicate(),
+            update_only != 0
+        );
+    });
+}
+
+xmax_result XMAX_CALL xmax_realtime_acquire_stream_frame(
+    xmax_realtime realtime,
+    int32_t local,
+    uint64_t revision,
+    xmax_frame* out
+) {
+    if (out)
+        *out = nullptr;
+    const auto result = protect(__func__, [&] {
+        handle(realtime);
+        handle(out);
+        require(revision != 0, XMAX_INVALID_ARGUMENT, "A stream revision is required");
+        auto frame = local ? realtime->session->acquire_local_frame(revision)
+                           : realtime->session->acquire_frame(revision);
+        if (frame)
+            *out = new xmax_frame_impl{std::move(frame)};
+    });
+    return result == XMAX_OK && !*out ? XMAX_NO_EVENT : result;
+}
+
+xmax_result XMAX_CALL xmax_realtime_acquire_result_video_frame(
+    xmax_realtime realtime,
+    uint64_t track_revision,
+    uint64_t* content_revision,
+    xmax_frame* out
+) {
+    if (out)
+        *out = nullptr;
+    const auto result = protect(__func__, [&] {
+        handle(realtime);
+        handle(content_revision);
+        handle(out);
+        require(track_revision != 0, XMAX_INVALID_ARGUMENT, "A result stream revision is required");
+        auto frame = realtime->session->acquire_result(track_revision, *content_revision);
+        if (frame)
+            *out = new xmax_frame_impl{std::move(frame)};
+    });
+    return result == XMAX_OK && !*out ? XMAX_NO_EVENT : result;
+}
+
+xmax_result XMAX_CALL xmax_realtime_get_video_track_info(
+    xmax_realtime realtime,
+    int32_t local,
+    uint64_t revision,
+    xmax_video_format* format,
+    xmax_encoding_config* encoding,
+    xmax_camera_list* camera
+) {
+    if (camera)
+        *camera = nullptr;
+    if (format)
+        *format = {};
+    bool found = false;
+    const auto result = protect(__func__, [&] {
+        handle(realtime);
+        handle(format);
+        if (encoding)
+            sized(encoding);
+        require((local == 0 || local == 1) && revision != 0, XMAX_INVALID_ARGUMENT, "Invalid video track binding");
+        std::optional<CameraDevice> device;
+        found = realtime->session->read_video_track(revision, local != 0, *format, encoding, camera ? &device : nullptr);
+        if (camera && device)
+            *camera = new xmax_camera_list_impl{{std::move(*device)}};
+    });
+    return result == XMAX_OK && !found ? XMAX_NO_EVENT : result;
+}
+
 /**
  * Acquires the latest local preview frame without blocking.
  *
@@ -1773,7 +2056,7 @@ xmax_result XMAX_CALL xmax_storage_get_progress(
  *
  * @return XMAX_OK on success, or a negative error code on failure. Use xmax_last_error for details.
  *
- * @note This call blocks; use a worker thread. Images are limited to 20 MiB and other media to 256 MiB.
+ * @note This call blocks; use a worker thread. File contents are streamed to storage.
  * Release results with xmax_uploaded_file_release.
  */
 xmax_result XMAX_CALL xmax_storage_upload_file(
@@ -1915,6 +2198,87 @@ xmax_result XMAX_CALL xmax_uploaded_file_get_info(
             };
         }
     );
+}
+
+/**
+ * Uploads a file or encoded bytes with a typed media policy.
+ *
+ * @see xmax_storage_upload_media in xmax.h for the contract.
+ */
+xmax_result XMAX_CALL xmax_storage_upload_media(
+    xmax_storage storage,
+    const char* path,
+    const uint8_t* data,
+    size_t length,
+    const xmax_upload_options* options,
+    int32_t media_kind,
+    xmax_uploaded_file* out,
+    xmax_storage_progress_fn progress,
+    xmax_cancellation_fn cancel,
+    void* user_data
+) {
+    if (out)
+        *out = nullptr;
+    return protect(__func__, [&] {
+        handle(storage);
+        handle(out);
+        sized(options);
+        require((path && !data && length == 0) || (!path && data && length),
+                XMAX_INVALID_ARGUMENT, "Provide one media input");
+        require(media_kind == XMAX_STORAGE_MEDIA_IMAGE || media_kind == XMAX_STORAGE_MEDIA_VIDEO,
+                XMAX_INVALID_ARGUMENT, "Invalid media type");
+        const bool image = media_kind == XMAX_STORAGE_MEDIA_IMAGE;
+        const std::string name = options->file_name ? options->file_name :
+            path ? std::filesystem::u8path(path).filename().u8string() : "";
+        auto type = options->content_type ? std::string(options->content_type) : std::string{};
+        if (type.empty())
+            type = StorageService::content_type(name);
+        else
+            type = trim_utf8_whitespace(type);
+        std::transform(type.begin(), type.end(), type.begin(), [](unsigned char ch) { return char(std::tolower(ch)); });
+        require(type.rfind(image ? "image/" : "video/", 0) == 0,
+                XMAX_INVALID_ARGUMENT, image ? "Expected an image content type" : "Expected a video content type");
+        const auto report = [progress, user_data](uint64_t bytes, uint64_t total) {
+            if (progress) progress(user_data, bytes, total);
+        };
+        const auto cancelled = [cancel, user_data] { return cancel && cancel(user_data) != 0; };
+        const bool safety = options->check_image_safety != 0;
+        auto file = path ? storage->storage->upload_file(path, name, type, safety, report, cancelled, true)
+                         : storage->storage->upload_data(data, length, name, type, safety, report, cancelled, true);
+        *out = new xmax_uploaded_file_impl{std::move(file)};
+    });
+}
+
+/**
+ * Downloads to a staged file with transfer callbacks.
+ *
+ * @see xmax_storage_download_with_progress in xmax.h for the contract.
+ */
+xmax_result XMAX_CALL xmax_storage_download_with_progress(
+    xmax_storage storage,
+    const char* url,
+    const char* destination,
+    uint64_t* bytes,
+    xmax_storage_progress_fn progress,
+    xmax_cancellation_fn cancel,
+    void* user_data
+) {
+    if (bytes)
+        *bytes = 0;
+    return protect(__func__, [&] {
+        handle(storage);
+        handle(url);
+        handle(destination);
+        handle(bytes);
+        *bytes = storage->storage->download(
+            url, destination,
+            [progress, user_data](uint64_t completed, uint64_t total) {
+                if (progress) progress(user_data, completed, total);
+            },
+            [cancel, user_data] { return cancel && cancel(user_data) != 0; },
+            true
+        );
+    });
 }
 
 /**
@@ -2304,6 +2668,198 @@ xmax_result XMAX_CALL xmax_realtime_bind_external_media(
     );
 }
 
+xmax_result XMAX_CALL xmax_realtime_create_external_video_stream(
+    xmax_realtime realtime,
+    const xmax_external_media_config* source,
+    const xmax_video_format* processing_format,
+    xmax_video_format* resolved_format,
+    xmax_external_frame_sink* out_sink
+) {
+    return xmax_realtime_create_external_video_stream_with_encoding(
+        realtime, source, processing_format, resolved_format, out_sink, nullptr
+    );
+}
+
+/**
+ * Creates an encoder-configured external source receiver.
+ *
+ * @see xmax_realtime_create_external_video_stream_with_encoding in xmax.h for the contract.
+ */
+xmax_result XMAX_CALL xmax_realtime_create_external_video_stream_with_encoding(
+    xmax_realtime realtime,
+    const xmax_external_media_config* source,
+    const xmax_video_format* processing_format,
+    xmax_video_format* resolved_format,
+    xmax_external_frame_sink* out_sink,
+    const xmax_encoding_config* encoding
+) {
+    if (out_sink)
+        *out_sink = nullptr;
+    return protect(
+        __func__,
+        [&] {
+            handle(realtime);
+            sized(source);
+            handle(resolved_format);
+            if (encoding)
+                sized(encoding);
+            handle(out_sink);
+            require(
+                source->has_audio == 0 || source->has_audio == 1,
+                XMAX_INVALID_ARGUMENT,
+                "has_audio must be 0 or 1"
+            );
+            const auto resolved = MediaService::external_input(
+                processing_format ? *processing_format : source->video_format,
+                realtime->session->model_info()
+            );
+            auto sink = std::make_unique<xmax_external_frame_sink_impl>();
+            sink->session = realtime->session;
+            sink->format = source->video_format;
+            sink->binding = realtime->session->prepare(
+                source->video_format,
+                source->has_audio != 0,
+                resolved,
+                encoding ? std::optional{*encoding} : std::nullopt
+            );
+            *resolved_format = resolved;
+            *out_sink = sink.release();
+        }
+    );
+}
+
+xmax_result XMAX_CALL xmax_external_frame_sink_complete_startup(
+    xmax_external_frame_sink sink
+) {
+    return protect(
+        __func__,
+        [&] {
+            handle(sink);
+            auto session = sink->session.lock();
+            require(
+                bool(session),
+                XMAX_INVALID_STATE,
+                "The external stream controller has been closed"
+            );
+            session->complete_external_stream(sink->binding);
+        }
+    );
+}
+
+xmax_result XMAX_CALL xmax_resolve_media_format(
+    const char* model,
+    const xmax_video_format* source,
+    int32_t camera,
+    xmax_video_format* resolved
+) {
+    return protect(__func__, [&] {
+        handle(source);
+        handle(resolved);
+        require(camera == 0 || camera == 1, XMAX_INVALID_ARGUMENT, "Invalid media source kind");
+        RealtimeModelDefinition::parse(model ? model : "x2.1");
+        const auto info = RealtimeModelDefinition::capabilities;
+        *resolved = camera ? MediaService::camera_input(*source, info)
+                           : MediaService::external_input(*source, info);
+    });
+}
+
+xmax_result XMAX_CALL xmax_resolve_generation_format(
+    const char* model,
+    const xmax_video_format* source,
+    xmax_video_format* resolved
+) {
+    return protect(__func__, [&] {
+        handle(source);
+        handle(resolved);
+        RealtimeModelDefinition::parse(model ? model : "x2.1");
+        *resolved = MediaService::generation(*source, RealtimeModelDefinition::capabilities);
+    });
+}
+
+xmax_result XMAX_CALL xmax_resolve_downlink_format(
+    const xmax_video_format* source,
+    double maximum_width,
+    double maximum_height,
+    xmax_video_format* resolved
+) {
+    return protect(__func__, [&] {
+        handle(source);
+        handle(resolved);
+        *resolved = MediaService::target(*source, maximum_width, maximum_height);
+    });
+}
+
+xmax_result XMAX_CALL xmax_realtime_list_microphones(
+    xmax_realtime realtime,
+    xmax_camera_list* devices
+) {
+    if (devices)
+        *devices = nullptr;
+    return protect(__func__, [&] {
+        handle(realtime);
+        handle(devices);
+        auto list = std::make_unique<xmax_camera_list_impl>();
+        list->devices = list_microphone_devices();
+        *devices = list.release();
+    });
+}
+
+xmax_result XMAX_CALL xmax_realtime_switch_microphone(
+    xmax_realtime realtime,
+    const char* device_id
+) {
+    return protect(__func__, [&] {
+        handle(realtime);
+        realtime->session->switch_microphone(device_id ? device_id : "");
+    });
+}
+
+xmax_result XMAX_CALL xmax_realtime_set_microphone_enabled(
+    xmax_realtime realtime,
+    int32_t enabled
+) {
+    return protect(__func__, [&] {
+        handle(realtime);
+        require(enabled == 0 || enabled == 1, XMAX_INVALID_ARGUMENT, "Invalid microphone flag");
+        realtime->session->set_microphone_enabled(enabled != 0);
+    });
+}
+
+xmax_result XMAX_CALL xmax_realtime_get_microphone_enabled(
+    xmax_realtime realtime,
+    int32_t* enabled
+) {
+    return protect(__func__, [&] {
+        handle(realtime);
+        handle(enabled);
+        *enabled = realtime->session->microphone_enabled() ? 1 : 0;
+    });
+}
+
+xmax_result XMAX_CALL xmax_realtime_stop_local_camera_stream(
+    xmax_realtime realtime
+) {
+    return protect(
+        __func__,
+        [&] {
+            handle(realtime);
+            realtime->session->stop_media(XmaxRealtimeManager::StopMediaSource::Camera);
+        }
+    );
+}
+
+xmax_result XMAX_CALL xmax_realtime_stop_external_video_stream(
+    xmax_realtime realtime
+) {
+    return protect(
+        __func__,
+        [&] {
+            handle(realtime);
+            realtime->session->stop_media(XmaxRealtimeManager::StopMediaSource::External);
+        }
+    );
+}
+
 /**
  * Converts and uploads source-bound PCM, ignoring inactive and replaced sources.
  *
@@ -2352,4 +2908,70 @@ xmax_result XMAX_CALL xmax_realtime_get_video_statistics(
             *statistics = realtime->session->video_statistics(direction);
         }
     );
+}
+
+namespace {
+struct BeautyListenerContext {
+    xmax_video_beauty_error_listener listener{};
+    bool adopted = false;
+    ~BeautyListenerContext() {
+        if (adopted && listener.release_user_data) {
+            try { listener.release_user_data(listener.user_data); } catch (...) {}
+        }
+    }
+};
+}
+/** Delegates validated beauty configuration to the shared render pipeline.
+ * @see xmax_realtime_set_remote_video_beauty in xmax.h for the public contract.
+ */
+xmax_result XMAX_CALL xmax_realtime_set_remote_video_beauty(
+    xmax_realtime realtime, const xmax_realtime_video_beauty_options* options) {
+    return protect(__func__, [&] {
+        handle(realtime);
+        if (options) sized(options);
+        realtime->session->remote_video_beauty(options ? std::optional<BeautyOptions>(*options) : std::nullopt);
+    });
+}
+/** Adopts a dedicated recoverable-error callback with SDK-managed context lifetime.
+ * @see xmax_realtime_set_remote_video_beauty_error_listener in xmax.h for the public contract.
+ */
+xmax_result XMAX_CALL xmax_realtime_set_remote_video_beauty_error_listener(
+    xmax_realtime realtime, const xmax_video_beauty_error_listener* listener) {
+    return protect(__func__, [&] {
+        handle(realtime);
+        if (!listener) { realtime->session->remote_video_beauty_error_listener({}); return; }
+        sized(listener);
+        require(listener->on_error != nullptr, XMAX_INVALID_ARGUMENT, "A beauty error callback is required");
+        auto context = std::make_shared<BeautyListenerContext>();
+        context->listener = *listener;
+        realtime->session->remote_video_beauty_error_listener([context](Error error) {
+            xmax_error_info info{}; info.struct_size = sizeof(info); info.code = error.code;
+            info.api_code = error.api_code; info.http_status = error.http_status;
+            const auto message = XmaxLogger::redact(error.what());
+            std::memcpy(info.message, message.data(), std::min(message.size(), sizeof(info.message) - 1));
+            context->listener.on_error(context->listener.user_data, &info);
+        });
+        context->adopted = true;
+    });
+}
+
+/** Maps the typed account query and borrowed cancellation callback to the public C boundary.
+ * @see xmax_client_get_credit_balance in xmax.h for the public contract.
+ */
+xmax_result XMAX_CALL xmax_client_get_credit_balance(
+    xmax_client client, xmax_credit_balance* balance, const xmax_request_cancellation* cancellation
+) {
+    return protect(__func__, [&] {
+        handle(client);
+        sized(balance);
+        Cancel cancelled = [] { return false; };
+        if (cancellation) {
+            sized(cancellation);
+            require(cancellation->is_cancelled != nullptr, XMAX_INVALID_ARGUMENT, "A cancellation callback is required");
+            const auto callback = *cancellation;
+            cancelled = [callback] { return callback.is_cancelled(callback.user_data) != 0; };
+        }
+        const auto current = client->client.credit_balance(cancelled);
+        balance->current_balance = current;
+    });
 }

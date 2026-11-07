@@ -1,3 +1,13 @@
+//
+//  storage_tests.cpp
+//  XmaxSDK
+//
+//  Author: 翁跃庭 (Yueting Weng)
+//  GitHub: https://github.com/Xmax-AI/XmaxSDK-Windows
+//
+//  Copyright (c) 2026 XMAX.AI PTE. LTD.
+//
+
 #include "Core/Storage/XmaxStorageManager.hpp"
 #include "Foundation/Crypto/Sha1.hpp"
 #include "Foundation/Runtime/RuntimeInfo.hpp"
@@ -11,11 +21,16 @@ struct StorageHttp : Http {
     std::mutex mutex;
     std::vector<HttpRequest> calls;
     std::atomic<bool> safe{true}, fail{false}, block{false}, uploading{false};
+    std::atomic<int> transfers_started{0};
     bool invalid_endpoint = false;
+    uint64_t streamed_size = 0;
+    std::string streamed_prefix;
     HttpResponse request(const HttpRequest& input, const Cancel& cancel) override {
         {
             std::lock_guard<std::mutex> lock(mutex);
             calls.push_back(input);
+            if (calls.back().upload)
+                calls.back().upload->read = {};
         }
         const auto response = [](json data) -> HttpResponse {
             return {200, json{{"success", true}, {"data", std::move(data)}}.dump()};
@@ -33,6 +48,7 @@ struct StorageHttp : Http {
             return response({{"safe", safe.load()}, {"url", "https://approved.test/image.png"}});
         }
         uploading = true;
+        ++transfers_started;
         if (input.progress)
             input.progress(1, input.body.empty() ? 4 : input.body.size());
         while (block && !cancel())
@@ -46,6 +62,12 @@ struct StorageHttp : Http {
             return {fail ? 503 : 200, ""};
         }
         CHECK(input.method == "PUT");
+        if (input.upload) {
+            CHECK(input.body.empty());
+            streamed_size = input.upload->size;
+            streamed_prefix.resize(size_t(std::min<uint64_t>(streamed_size, 5)));
+            input.upload->read(streamed_prefix.data(), streamed_prefix.size());
+        }
         CHECK(input.url.find("https://demo-123.cos.ap-test.myqcloud.com/uploads/") == 0);
         bool auth = false, token = false, leaked_key = false;
         for (const auto& h : input.headers) {
@@ -76,7 +98,15 @@ static void upload_and_safety() {
     auto http = std::make_shared<StorageHttp>();
     XmaxStorageManager storage(api(http));
     const uint8_t bytes[]{0, 1, 0, 255};
-    auto file = storage.upload_data(bytes, sizeof(bytes), "reference.png", "", true);
+    std::vector<uint64_t> progress;
+    auto file = storage.upload_data(bytes, sizeof(bytes), "reference.png", "", true,
+        [&](uint64_t completed, uint64_t total) {
+            CHECK(total == sizeof(bytes) && storage.progress().transferred == completed);
+            progress.push_back(completed);
+        });
+    auto unicode = storage.upload_data(bytes, sizeof(bytes), u8"\u53c2\u8003 2.png", "", false);
+    CHECK(unicode.object_key.find(u8"\u53c2\u8003_2.png") != std::string::npos);
+    CHECK(!progress.empty() && progress.front() == 1 && progress.back() == sizeof(bytes));
     CHECK(file.url == "https://approved.test/image.png" && file.etag == "test-etag");
     CHECK(file.object_key.find("uploads/") == 0 &&
           file.object_key.find("reference.png") != std::string::npos);
@@ -112,6 +142,19 @@ static void upload_file_and_atomic_download() {
     auto http = std::make_shared<StorageHttp>();
     XmaxStorageManager storage(api(http));
     CHECK(!storage.upload_file(source.u8string(), "", "", false).url.empty());
+    CHECK(http->streamed_size == 5 && http->streamed_prefix == "image");
+    constexpr uint64_t large_size = 256 * 1024 * 1024 + 1;
+    const auto large_source = folder.path / "large.mp4";
+    {
+        std::ofstream video(large_source, std::ios::binary);
+        video << "video";
+        video.seekp(large_size - 1);
+        video.put('\0');
+        CHECK(bool(video));
+    }
+    CHECK(!storage.upload_file(large_source.u8string(), "", " Video/MP4 ", false).url.empty());
+    CHECK(http->streamed_size == large_size && http->streamed_prefix == "video");
+    CHECK(storage.progress().transferred == large_size);
     const auto destination = folder.path / "result.png";
     CHECK(storage.download("https://files.test/result.png", destination.u8string()) == 4);
     std::ifstream stream(destination, std::ios::binary);
@@ -119,6 +162,24 @@ static void upload_file_and_atomic_download() {
     CHECK(text == "data");
     stream.close();
     expect_error(XMAX_IO_ERROR, [&] { storage.download("https://files.test/a", destination.u8string()); });
+    {
+        std::ofstream original(destination, std::ios::binary | std::ios::trunc);
+        original << "old";
+    }
+    http->fail = true;
+    expect_error(XMAX_DOWNLOAD_ERROR, [&] {
+        storage.download("https://files.test/a", destination.u8string(), {}, {}, true);
+    });
+    {
+        std::ifstream original(destination, std::ios::binary);
+        CHECK((std::string{std::istreambuf_iterator<char>(original), {}} == "old"));
+    }
+    http->fail = false;
+    CHECK(storage.download("http://files.test/a", destination.u8string(), {}, {}, true) == 4);
+    {
+        std::ifstream replacement(destination, std::ios::binary);
+        CHECK((std::string{std::istreambuf_iterator<char>(replacement), {}} == "data"));
+    }
     http->fail = true;
     const auto failed = folder.path / "failed.png";
     try {
@@ -172,6 +233,32 @@ static void cancel_transfer() {
     CHECK(!storage.upload_data(data, 4, "again.png", "", false).url.empty());
     CHECK(storage.progress().state == XMAX_TRANSFER_SUCCEEDED);
 }
+
+static void parallel_transfers_cancel_independently() {
+    auto http = std::make_shared<StorageHttp>();
+    http->block = true;
+    XmaxStorageManager storage(api(http));
+    const uint8_t data[]{1, 2, 3, 4};
+    std::atomic<bool> cancel_first{false};
+    auto first = std::async(std::launch::async, [&] {
+        expect_error(XMAX_CANCELLED, [&] {
+            storage.upload_data(data, 4, "first.png", "", false, {}, [&] { return cancel_first.load(); }, true);
+        });
+    });
+    const auto deadline = Clock::now() + std::chrono::seconds(3);
+    while (http->transfers_started < 1 && Clock::now() < deadline)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    auto second = std::async(std::launch::async, [&] {
+        return storage.upload_data(data, 4, "second.png", "", false, {}, {}, true);
+    });
+    while (http->transfers_started < 2 && Clock::now() < deadline)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    cancel_first = true;
+    http->block = false;
+    first.get();
+    CHECK(http->transfers_started == 2 && !second.get().url.empty());
+    CHECK(storage.progress().state == XMAX_TRANSFER_SUCCEEDED);
+}
 int main() {
     int failures = 0;
     for (auto test : std::vector<std::pair<const char*, void (*)()>>{
@@ -179,6 +266,7 @@ int main() {
              {"upload and image safety", upload_and_safety},
              {"file upload and atomic download", upload_file_and_atomic_download},
              {"cancellation and busy admission", cancel_transfer},
+             {"parallel transfers cancel independently", parallel_transfers_cancel_independently},
              {"persistent quality history and expiry", quality_history}}) {
         try {
             test.second();

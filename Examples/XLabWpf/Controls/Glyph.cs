@@ -15,6 +15,7 @@ public sealed class Glyph : FrameworkElement
         ["microphone"] = Geometry.Parse("M9,5 Q9,2 12,2 Q15,2 15,5 L15,11 Q15,14 12,14 Q9,14 9,11 Z M5,10 L5,12 C5,21 19,21 19,12 L19,10 M12,19 L12,22 M8,22 L16,22"),
         ["key"] = Geometry.Parse("M11.4,11.6 L21,2 M15.5,7.5 L18.5,10.5 L22,7 L19,4"),
         ["chevron"] = Geometry.Parse("M6,9 L12,15 L18,9"),
+        ["sparkles"] = Geometry.Parse("M12,2 L14.5,9.5 L22,12 L14.5,14.5 L12,22 L9.5,14.5 L2,12 L9.5,9.5 Z"),
         ["statistics"] = Geometry.Parse("M4,20 L4,11 M12,20 L12,4 M20,20 L20,14"),
         ["volume"] = Geometry.Parse("M11,5 L5,9 L2,9 L2,15 L5,15 L11,19 Z M15,8 C19,10 19,14 15,16 M18,5 C24,9 24,15 18,19"),
         ["muted"] = Geometry.Parse("M11,5 L5,9 L2,9 L2,15 L5,15 L11,19 Z M16,9 L22,15 M22,9 L16,15"),

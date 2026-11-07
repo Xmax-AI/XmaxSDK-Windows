@@ -27,5 +27,10 @@ struct RealtimeSession {
      * The RTC connection information allocated by the session.
      */
     Connection room;
+
+    /**
+     * The optional assigned model instance identifier used for HTTP command relay.
+     */
+    std::string model_id;
 };
 } // namespace xmax::detail

@@ -13,6 +13,7 @@ Button {
     property bool showsShadow: true
     property string glyph: ""
     property bool trailingGlyph: false
+    property bool showsChevron: false
     property bool passive: false
     property bool loading: false
     property real labelSize: primary ? 16 : 13
@@ -74,6 +75,7 @@ Button {
             font.weight: control.primary || control.destructive || control.recordingStyle ? Font.DemiBold : Font.Normal
             color: control.primary ? "white" : control.destructive ? "#dc2626" : control.accent ? "#2f46e2" : control.secondaryForeground || control.passive ? "#6b7380" : control.recordingStyle ? (control.hovered && control.enabled ? "#111318" : "#8b919d") : "#111318"
         }
+        Icon { visible: control.showsChevron; kind: "chevron"; width: 12; height: 12; anchors.verticalCenter: parent.verticalCenter; tint: label.color }
       }
     }
 }

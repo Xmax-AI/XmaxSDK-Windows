@@ -13,13 +13,13 @@ using Xmax.SDK.Interop;
 namespace Xmax.SDK;
 
 /// <summary>
-/// An owner of client configuration used to create realtime controllers and storage objects.
+/// An owner of client configuration for realtime controllers, storage objects and account credit queries.
 /// </summary>
 /// <remarks>
 /// Creating a client starts no capture or network session. Child controllers retain their own configuration
 /// and remain usable after this client is disposed. Native failures are reported as XmaxException.
 /// </remarks>
-public sealed class XmaxClient : IDisposable
+public sealed partial class XmaxClient : IDisposable
 {
     private readonly NativeHandle handle;
 
@@ -36,7 +36,7 @@ public sealed class XmaxClient : IDisposable
         using var key = new Utf8(configuration.ApiKey);
         var options = new xmax_client_options
         {
-            struct_size = (uint)sizeof(xmax_client_options), abi_version = 1, api_key = key.Pointer,
+            struct_size = (uint)sizeof(xmax_client_options), abi_version = 2, api_key = key.Pointer,
             environment = (int)configuration.Environment, logger_options = configuration.LoggerOptions,
             http_timeout_ms = configuration.HttpTimeoutMilliseconds
         };
@@ -54,21 +54,21 @@ public sealed class XmaxClient : IDisposable
         using var lease = handle.Borrow();
         var value = new xmax_capabilities { struct_size = (uint)sizeof(xmax_capabilities) };
         NativeError.Check(NativeMethods.xmax_client_get_capabilities(lease.Value, &value));
-        if (value.abi_version != 1) throw new NotSupportedException($"Unsupported native ABI {value.abi_version}.");
+        if (value.abi_version != 2) throw new NotSupportedException($"Unsupported native ABI {value.abi_version}.");
         return (XmaxCapabilities)value.flags;
     }
 
     /// <summary>
     /// Queries model formats, defaults, and input limits without creating a client or network session.
     /// </summary>
-    /// <param name="model">The supported service model identifier; x2.1 (default).</param>
+    /// <param name="model">The supported realtime model. The default is X2.1.</param>
     /// <returns>The model capability snapshot.</returns>
     public static unsafe ModelInfo GetModelInfo(
-        string model = "x2.1"
+        RealtimeModel model = RealtimeModel.X2_1
     )
     {
         NativeLibraryLoader.Initialize();
-        using var name = new Utf8(model);
+        using var name = new Utf8(GetModelIdentifier(model));
         var info = new xmax_model_info { struct_size = (uint)sizeof(xmax_model_info) };
         NativeError.Check(NativeMethods.xmax_model_get_info(name.Pointer, &info));
         xmax_video_format* formats = &info.supported_formats_0;
@@ -103,6 +103,11 @@ public sealed class XmaxClient : IDisposable
     {
         nint value = 0;
         NativeError.Check(NativeMethods.xmax_client_list_cameras(client, &value));
+        return ReadCameraList(value);
+    }
+
+    internal static unsafe IReadOnlyList<CameraDevice> ReadCameraList(nint value)
+    {
         using var list = new NativeHandle(value, HandleKind.CameraList);
         nuint count = NativeMethods.xmax_camera_list_count(value);
         var result = new List<CameraDevice>();
@@ -110,7 +115,17 @@ public sealed class XmaxClient : IDisposable
         {
             var info = new xmax_camera_info { struct_size = (uint)sizeof(xmax_camera_info) };
             NativeError.Check(NativeMethods.xmax_camera_list_get(value, i, &info));
-            result.Add(new(NativeError.Text(info.id), NativeError.Text(info.name), info.is_default != 0));
+            int position;
+            NativeError.Check(NativeMethods.xmax_camera_list_get_position(
+                value,
+                i,
+                &position
+            ));
+            result.Add(new CameraDevice(
+                NativeError.Text(info.id),
+                NativeError.Text(info.name),
+                info.is_default != 0
+            ) { Position = (CameraPosition)position });
         }
         return result.AsReadOnly();
     }
@@ -126,18 +141,37 @@ public sealed class XmaxClient : IDisposable
     {
         configuration ??= new();
         using var lease = handle.Borrow();
-        using var model = new Utf8(configuration.Model);
+        using var model = new Utf8(GetModelIdentifier(configuration.Model));
         var options = new xmax_realtime_options { struct_size = (uint)sizeof(xmax_realtime_options),
             model = model.Pointer, adaptive_quality_enabled = configuration.AdaptiveQualityEnabled ? 1 : 0 };
         nint value = 0;
         NativeError.Check(NativeMethods.xmax_realtime_create_with_options(lease.Value, &options, &value));
-        return new(new(value, HandleKind.Realtime));
+        var realtime = new NativeHandle(value, HandleKind.Realtime);
+        try
+        {
+            return new(realtime, configuration);
+        }
+        catch
+        {
+            realtime.Dispose();
+            throw;
+        }
     }
+
+    private static string GetModelIdentifier(RealtimeModel model) => model switch
+    {
+        RealtimeModel.X2_1 => "x2.1",
+        _ => throw new ArgumentOutOfRangeException(nameof(model))
+    };
+
+    /// <summary>Creates a media sizing and capability service for the selected model.</summary>
+    public XmaxMediaService CreateMediaService(RealtimeModel model = RealtimeModel.X2_1) => new(GetModelInfo(model));
 
     /// <summary>
     /// Creates an independent storage controller.
     /// </summary>
     /// <returns>A storage controller that your app must release with DisposeAsync.</returns>
+    /// <exception cref="XmaxException">The configured API key is empty.</exception>
     public unsafe XmaxStorage CreateStorage()
     {
         using var lease = handle.Borrow();

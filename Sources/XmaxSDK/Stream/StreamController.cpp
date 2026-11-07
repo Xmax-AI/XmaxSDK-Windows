@@ -86,6 +86,7 @@ void StreamController::join(
         XMAX_INVALID_STATE,
         "Allocate an RTC backend before joining"
     );
+    room_.backend()->microphone_device(microphone_device_);
     room_.backend()->external_audio(external_audio_);
     room_.join(
         connection,
@@ -112,21 +113,20 @@ void StreamController::join(
 }
 
 /**
- * Creates a task and sends start signaling, performing maintenance while waiting.
+ * Creates a task and sends start signaling before the startup deadline.
  *
  * @param[in] prompt The generation prompt, encoded as UTF-8.
  * @param[in] reference A reference image path or service-supported URL; empty omits the reference.
  * @param[in] face Whether to enable face restoration for generation.
  * @param[in] cancel A cooperative cancellation predicate; true requests termination of the operation.
- * @param[in] maintain The maintenance callback invoked while waiting or throttled; empty omits
- * maintenance.
+ * @param[in] deadline The startup deadline shared with result publication confirmation.
  */
 void StreamController::start(
     const std::string& prompt,
     const std::string& reference,
     bool face,
     const Cancel& cancel,
-    const std::function<void()>& maintain
+    Clock::time_point deadline
 ) {
     room_.task = task_id();
     require(
@@ -143,24 +143,24 @@ void StreamController::start(
             face
         ),
         cancel,
-        maintain
+        {},
+        deadline
     );
+    room_.backend()->confirm_generation();
 }
 
 /**
- * Waits for the first real result frame, checking cancellation and maintaining keepalives.
+ * Waits for the selected result user's published video after start signaling.
  *
  * @param[in] cancel A cooperative cancellation predicate; true requests termination of the operation.
- * @param[in] keepalive The periodic keepalive callback; it must not hold a cross-thread lifecycle lock.
+ * @param[in] deadline The startup deadline shared with the start send.
  */
-void StreamController::wait_remote(
-    const Cancel& cancel,
-    const std::function<void()>& keepalive
-) {
-    room_.backend()->wait_remote(
-        cancel,
-        keepalive
-    );
+void StreamController::wait_remote(const Cancel& cancel, Clock::time_point deadline) {
+    room_.backend()->wait_remote(cancel, deadline);
+}
+
+void StreamController::activate_result_audio() {
+    room_.backend()->result_audio(true);
 }
 
 /**
@@ -232,16 +232,23 @@ void StreamController::stop_generation(
         XMAX_INVALID_STATE,
         "No RTC room is connected"
     );
-    if (!room_.task.empty())
+    room_.cancel_commands();
+    const auto task = std::exchange(room_.task, {});
+    room_.backend()->end_generation();
+    std::exception_ptr audio_failure;
+    try { room_.backend()->result_audio(false); }
+    catch (...) { audio_failure = std::current_exception(); }
+    if (!task.empty())
         room_.send(
             room_event(
                 "stop",
                 room_.connection,
-                room_.task
+                task
             ),
             cancel
         );
-    room_.task.clear();
+    if (audio_failure)
+        std::rethrow_exception(audio_failure);
 }
 
 /**
@@ -255,6 +262,7 @@ void StreamController::stop() noexcept {
     }
     retired_playback.reset();
 
+    room_.cancel_commands();
     if (room_.joined() && !room_.task.empty()) {
         try {
             room_.send(
@@ -352,11 +360,7 @@ xmax_quality_status StreamController::quality() const {
             quality_.up.level,
             false
         );
-        value.downlink = quality_format(
-            format_,
-            quality_.down.level,
-            true
-        );
+        value.downlink = quality_format(format_, quality_.down.level, true);
     }
 
     return value;
@@ -378,27 +382,25 @@ json StreamController::generation_message(
     const std::string& reference,
     bool face
 ) const {
-    auto value =
-        generation_event(
-            event,
-            room_.connection,
-            room_.task,
-            generation_format_,
-            prompt,
-            reference,
-            face
-        );
+    const auto target = event == "start"
+                            ? quality_format(
+                                  format_,
+                                  quality_.down.level,
+                                  true
+                              )
+                            : xmax_video_format{};
+    auto value = generation_event(
+        event,
+        room_.connection,
+        room_.task,
+        generation_format_,
+        prompt,
+        reference,
+        face,
+        target
+    );
     if (uint64_t(format_.width) * generation_format_.height == uint64_t(format_.height) * generation_format_.width)
         value["params"].erase("padding");
-    const auto target = quality_format(
-        format_,
-        quality_.down.level,
-        true
-    );
-    value["params"]["target_size"] = json::array({target.width, target.height});
-
-    if (event == "start")
-        value["params"]["max_bitrate"] = std::min(10000, bitrate(target).second);
 
     return value;
 }
@@ -430,16 +432,8 @@ std::vector<xmax_event> StreamController::observe_quality(
         sampled_at,
         now,
         [this, direction, &policy](int candidate) {
-            const auto current = quality_format(
-                format_,
-                policy.level,
-                direction != 0
-            );
-            const auto next = quality_format(
-                format_,
-                candidate,
-                direction != 0
-            );
+            const auto current = quality_format(format_, policy.level, direction != 0);
+            const auto next = quality_format(format_, candidate, direction != 0);
             if (current.width == next.width && current.height == next.height && current.fps == next.fps)
                 return false;
             try {
@@ -467,11 +461,7 @@ std::vector<xmax_event> StreamController::observe_quality(
             false,
             now
         );
-        const auto previous = quality_format(
-            format_,
-            policy.level,
-            direction != 0
-        );
+        const auto previous = quality_format(format_, policy.level, direction != 0);
         xmax_event event{};
         event.type = XMAX_EVENT_QUALITY_CHANGE;
         event.code = error.code;
@@ -517,29 +507,21 @@ xmax_event StreamController::set_quality(
     );
 
     auto& policy = direction ? quality_.down : quality_.up;
-    const auto next = quality_format(
-        format_,
-        level,
-        direction != 0
-    );
+    const auto next = quality_format(format_, level, direction != 0);
 
     if (level != policy.level) {
         if (direction) {
-            auto message = room_event(
-                "change_target_size",
-                room_.connection,
-                room_.task
-            );
-            message["params"] = {
-                {"target_size", json::array({next.width, next.height})},
-                {"min_bitrate", 100},
-                {"max_bitrate", std::min(10000, bitrate(next).second)}
-            };
-            room_.send(
-                message,
-                cancel,
-                maintain
-            );
+            const auto previous = quality_format(format_, policy.level, true);
+            if (next.width != previous.width || next.height != previous.height) {
+                auto message = room_event("change_target_size", room_.connection, room_.task);
+                const auto [minimum, maximum] = downlink_bitrate(next);
+                message["params"] = {
+                    {"target_size", json::array({next.width, next.height})},
+                    {"min_bitrate", minimum},
+                    {"max_bitrate", maximum}
+                };
+                room_.send(message, cancel, maintain);
+            }
         } else {
             room_.backend()->configure_encoding(uplink_encoding(level));
         }

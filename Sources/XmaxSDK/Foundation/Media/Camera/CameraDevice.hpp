@@ -32,5 +32,10 @@ struct CameraDevice {
      * Whether this camera is the default in the current enumeration.
      */
     bool is_default = false;
+
+    /**
+     * The camera's enclosure position when available from its device driver.
+     */
+    xmax_camera_position position = XMAX_CAMERA_POSITION_UNSPECIFIED;
 };
 } // namespace xmax::detail

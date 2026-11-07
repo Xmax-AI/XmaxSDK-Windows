@@ -9,6 +9,7 @@
 //
 
 #pragma once
+#include "xmax.h"
 #include <string>
 
 namespace xmax {
@@ -32,5 +33,10 @@ struct camera_device {
      * Whether this camera is the default in the current enumeration.
      */
     bool is_default;
+
+    /**
+     * The camera's enclosure position when reported by Windows.
+     */
+    xmax_camera_position position = XMAX_CAMERA_POSITION_UNSPECIFIED;
 };
 } // namespace xmax

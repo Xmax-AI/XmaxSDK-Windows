@@ -1,3 +1,13 @@
+//
+//  MainWindow.Layout.cs
+//  XmaxSDK
+//
+//  Author: 翁跃庭 (Yueting Weng)
+//  GitHub: https://github.com/Xmax-AI/XmaxSDK-Windows
+//
+//  Copyright (c) 2026 XMAX.AI PTE. LTD.
+//
+
 using System.Collections.ObjectModel;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
@@ -21,12 +31,16 @@ public sealed partial class MainWindow
         branding.Children.Add(brand); branding.Children.Add(previewBadge); header.Children.Add(branding);
         foreach (var button in new[] { cameraButton, modelButton, keyButton }) homeControls.Children.Add(button);
         header.Children.Add(homeControls); header.Children.Add(sessionControls);
-        foreach (var element in new UIElement[] { sessionModelLabel, statisticsButton, volumeButton, elapsed, recordButton, stopButton }) sessionControls.Children.Add(element);
+        foreach (var element in new UIElement[] { sessionModelLabel, statisticsButton, beautyButton, volumeButton, elapsed, recordButton, stopButton }) sessionControls.Children.Add(element);
         AutomationProperties.SetName(cameraButton, "Select Camera"); AutomationProperties.SetName(keyButton, "API Key");
         AutomationProperties.SetName(StartButton, "Start Camera"); AutomationProperties.SetName(statisticsButton, "Show / hide statistics"); AutomationProperties.SetName(volumeButton, "Remote volume");
         ToolTipService.SetToolTip(statisticsButton, "Show / hide statistics"); ToolTipService.SetToolTip(volumeButton, "Remote volume"); ToolTipService.SetToolTip(keyButton, "API Key");
         cameraButton.Click += (_, _) => OpenCameras(); modelButton.Click += (_, _) => OpenModels(); keyButton.Click += (_, _) => OpenKey();
         statisticsButton.Click += (_, _) => Model.StatisticsVisible = !Model.StatisticsVisible;
+        beautyButton.Click += (_, _) => Model.BeautyEnabled = !Model.BeautyEnabled;
+        AutomationProperties.SetName(beautyButton, "Beauty");
+        ToolTipService.SetToolTip(beautyButton, "Toggle beauty on generated results");
+        beautyPanel.Bind(Model);
         recordButton.Click += async (_, _) => await ToggleRecordingAsync();
         volumeButton.Click += (_, _) => OpenVolume();
         stopButton.Click += async (_, _) => { try { await Model.StopAsync(); } catch (Exception error) { Model.ReportError(error); } };
@@ -43,6 +57,7 @@ public sealed partial class MainWindow
         var copyright = Theme.Text("Copyright © 2026 XMAX.AI PTE.LTD. All rights reserved.", 13, "#6B7380"); copyright.HorizontalAlignment = HorizontalAlignment.Center; copyright.Margin = new(0, 16, 0, 0); landing.Children.Add(copyright);
         var videos = new Grid(); videos.ColumnDefinitions.Add(new()); videos.ColumnDefinitions.Add(new() { Width = new(24) }); videos.ColumnDefinitions.Add(new());
         ConfigureVideo(localPanel, LocalView, localPlaceholder, localStatistics, false); ConfigureVideo(remotePanel, RemoteView, resultPlaceholder, remoteStatistics, true);
+        remotePanel.Children.Add(beautyPanel);
         videos.Children.Add(localPanel); Grid.SetColumn(remotePanel, 2); videos.Children.Add(remotePanel); workspace.Children.Add(videos);
         var tabBar = new Border { HorizontalAlignment = HorizontalAlignment.Center, CornerRadius = new(21), Background = Theme.Brush("#1A787880"), Height = 42, Padding = new(4), Margin = new(0, 34, 0, 28) };
         var tabRow = new StackPanel { Orientation = Orientation.Horizontal };

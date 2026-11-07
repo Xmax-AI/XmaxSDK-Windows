@@ -44,43 +44,38 @@ class XmaxRealtimeGenerationManager {
     }
 
     /**
-     * Starts generation and waits for a real first frame, or updates current conditions; caches conditions
+     * Starts generation and waits for result publication, or updates current conditions; caches conditions
      * only on success.
      *
      * @param[in,out] stream The current connection's realtime transport controller.
      * @param[in] value The conditions for this generation.
      * @param[in] updating Whether to update only the current task's conditions.
      * @param[in] cancel The cooperative cancellation predicate.
-     * @param[in] maintain The session keepalive callback invoked while waiting.
      */
     void run(
         StreamController& stream,
         const Context& value,
         bool updating,
-        const Cancel& cancel,
-        const std::function<void()>& maintain
+        const Cancel& cancel
     ) {
         if (updating)
             stream.update(
                 value.prompt,
                 value.reference,
                 value.face,
-                cancel,
-                maintain
+                cancel
             );
         else {
             interaction_.clear();
+            const auto deadline = Clock::now() + std::chrono::seconds(30);
             stream.start(
                 value.prompt,
                 value.reference,
                 value.face,
                 cancel,
-                maintain
+                deadline
             );
-            stream.wait_remote(
-                cancel,
-                maintain
-            );
+            stream.wait_remote(cancel, deadline);
         }
 
         require(
@@ -98,20 +93,17 @@ class XmaxRealtimeGenerationManager {
      * @param[in] sample The sample copied at submission.
      * @param[in] epoch The current connection's cancellation revision.
      * @param[in] cancel The cooperative cancellation predicate.
-     * @param[in] maintain The session keepalive callback invoked while waiting.
      */
     void send_interaction(
         StreamController& stream,
         const InteractionController::Sample& sample,
         uint64_t epoch,
-        const Cancel& cancel,
-        const std::function<void()>& maintain
+        const Cancel& cancel
     ) {
         if (sample.epoch == epoch && sample.task == stream.task() && !cancel())
             stream.tracks(
                 sample.points,
-                cancel,
-                maintain
+                cancel
             );
     }
 

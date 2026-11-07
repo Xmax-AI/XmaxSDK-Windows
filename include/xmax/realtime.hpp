@@ -9,6 +9,7 @@
 //
 
 #pragma once
+#include <optional>
 #include "handle_owner.hpp"
 #include "error.hpp"
 #include "frame.hpp"
@@ -17,6 +18,9 @@
 #include <functional>
 #include <memory>
 #include "RealtimeCameraPreset.hpp"
+#include "realtime_context.hpp"
+#include "realtime_media_stream.hpp"
+#include "realtime_state.hpp"
 #include "RealtimeQualityLevel.hpp"
 #include <string>
 #include <vector>
@@ -30,12 +34,26 @@ class realtime : public detail::owner<xmax_realtime, xmax_realtime_destroy> {
 
   public:
 
-    /**
-     * Inherits the handle owner's constructors; an empty handle creates an empty owner.
-     *
-     * @note The underlying resource is not copied. Destruction invokes its matching release function.
-     */
-    using owner::owner;
+    /** Takes ownership of a C realtime handle and assigns an identity to its media streams. */
+    explicit realtime(xmax_realtime handle = nullptr)
+        : owner(handle),
+          stream_owner_(handle ? std::make_shared<realtime_video_track::binding>(handle) : nullptr) {}
+
+    /** Transfers the controller and the stream identities it issued. */
+    realtime(realtime&& other) noexcept : owner(std::move(other)), stream_owner_(std::move(other.stream_owner_)) {}
+
+    /** Retires the previous controller's track handles before taking ownership of another controller. */
+    realtime& operator=(realtime&& other) noexcept {
+        if (this != &other) {
+            retire_tracks();
+            owner::operator=(std::move(other));
+            stream_owner_ = std::move(other.stream_owner_);
+        }
+        return *this;
+    }
+
+    /** Retires borrowed track metadata before releasing the controller. */
+    ~realtime() { retire_tracks(); }
 
     /**
      * Binds external input supplied by your app.
@@ -98,6 +116,42 @@ class realtime : public detail::owner<xmax_realtime, xmax_realtime_destroy> {
     }
 
     /**
+     * Creates a normalized external stream and returns the source-scoped receiver.
+     *
+     * @param[in] source The submitted video format and optional PCM declaration.
+     * @param[out] resolved The processing format after model alignment.
+     * @param[in] processing An optional target; null uses the source format.
+     * @param[in] encoding Optional sized encoder overrides for publication.
+     * @return The receiver that accepts input from this source.
+     */
+    external_frame_sink create_external_video_stream(
+        const xmax_external_media_config& source,
+        xmax_video_format& resolved,
+        const xmax_video_format* processing = nullptr,
+        const xmax_encoding_config* encoding = nullptr
+    ) {
+        xmax_external_frame_sink sink = nullptr;
+        check(xmax_realtime_create_external_video_stream_with_encoding(
+            get(),
+            &source,
+            processing,
+            &resolved,
+            &sink,
+            encoding
+        ));
+        external_frame_sink result(sink);
+        check(xmax_external_frame_sink_complete_startup(result.get()));
+        return result;
+    }
+
+    /**
+     * Stops external video delivery and clears its preview after disconnection.
+     */
+    void stop_external_video_stream() {
+        check(xmax_realtime_stop_external_video_stream(get()));
+    }
+
+    /**
      * Returns independent native capture, encoding, transmission, decoding, and rendering metrics.
      *
      * @param[in] direction Zero for uplink and one for downlink.
@@ -115,6 +169,26 @@ class realtime : public detail::owner<xmax_realtime, xmax_realtime_destroy> {
             &result
         ));
         return result;
+    }
+
+    /** Configures generated result beauty; nullopt disables. Same semantics as the C API. */
+    void remote_video_beauty(std::optional<xmax_realtime_video_beauty_options> options) {
+        if (options) options->struct_size = sizeof(*options);
+        check(xmax_realtime_set_remote_video_beauty(get(), options ? &*options : nullptr));
+    }
+    /** Dedicated recoverable error callback; dispatch blocking SDK work off the callback thread. */
+    void remote_video_beauty_error_listener(std::function<void(xmax_error_info)> listener) {
+        if (!listener) { check(xmax_realtime_set_remote_video_beauty_error_listener(get(), nullptr)); return; }
+        auto context = std::make_unique<std::function<void(xmax_error_info)>>(std::move(listener));
+        const xmax_video_beauty_error_listener registration{
+            sizeof(registration),
+            [](void* data, const xmax_error_info* error) {
+                (*static_cast<std::function<void(xmax_error_info)>*>(data))(*error);
+            }, context.get(),
+            [](void* data) { delete static_cast<std::function<void(xmax_error_info)>*>(data); }
+        };
+        check(xmax_realtime_set_remote_video_beauty_error_listener(get(), &registration));
+        context.release();
     }
 
     /**
@@ -162,31 +236,36 @@ class realtime : public detail::owner<xmax_realtime, xmax_realtime_destroy> {
     }
 
     /**
-     * Starts SDK camera capture and waits for the first real frame.
+     * Creates a local camera stream and waits for its first captured frame.
      *
-     * @param[in] device The UTF-8 camera identifier; an empty string selects the default camera.
-     * @param[in] format The input dimensions and frame rate; see xmax_video_format for limits.
-     * @param[in] microphone Whether to start microphone capture when joining the RTC room.
-     *
-     * @note This call blocks. Call it on a worker thread; failures throw xmax::error.
-     *
-     * @see xmax_realtime_prepare_camera
+     * A zero video format selects the model default. The returned stream can connect before a preview is attached.
      */
-    void prepare_camera(
-        const std::string& device = {},
-        xmax_video_format format = {},
-        bool microphone = false
+    realtime_media_stream create_local_camera_stream(
+        xmax_local_camera_options options = {},
+        std::optional<xmax_encoding_config> encoding = std::nullopt
     ) {
-        const xmax_camera_config config{
-            sizeof(config),
-            device.empty() ? nullptr : device.c_str(),
-            format,
-            microphone
-        };
-        check(xmax_realtime_prepare_camera(
-            get(),
-            &config
-        ));
+        options.struct_size = sizeof(options);
+        if (encoding) {
+            encoding->struct_size = sizeof(*encoding);
+            check(xmax_realtime_create_local_camera_stream_with_encoding(get(), &options, &*encoding));
+        } else {
+            check(xmax_realtime_create_local_camera_preview_stream(get(), &options));
+        }
+        return local_stream();
+    }
+
+    /** Returns the current local media stream after binding external input or switching cameras. */
+    realtime_media_stream local_stream() const {
+        uint64_t revision = 0;
+        check(xmax_realtime_get_local_stream_revision(get(), &revision));
+        if (state().connection_state == realtime_connection_state::idle)
+            throw error(XMAX_INVALID_STATE, "No local media stream is available");
+        return {stream_owner_, revision, true};
+    }
+
+    /** Marks the camera stream ready after its preview has been attached. */
+    void attach_local_camera_preview(const realtime_media_stream& stream) {
+        check(xmax_realtime_complete_camera_preview(get(), stream_revision(stream, true)));
     }
 
     /**
@@ -218,123 +297,41 @@ class realtime : public detail::owner<xmax_realtime, xmax_realtime_destroy> {
         check(xmax_realtime_stop_media(get()));
     }
 
-    /**
-     * Creates a server session and joins RTC without starting generation.
-     *
-     * @param[in] microphone Whether to start microphone capture when joining the RTC room.
-     *
-     * @note This call blocks. Call it on a worker thread; failures throw xmax::error.
-     *
-     * @see xmax_realtime_connect
-     */
-    void connect(
-        bool microphone = false
+    /** Connects a local stream and returns the result stream without starting generation. */
+    realtime_media_stream connect(
+        const realtime_media_stream& local_stream,
+        xmax_cancellation_fn cancel = nullptr,
+        void* user_data = nullptr
     ) {
-        check(xmax_realtime_connect(
-            get(),
-            microphone
+        uint64_t revision = 0;
+        check(xmax_realtime_connect_stream_cancellable(
+            get(), stream_revision(local_stream, true), &revision, cancel, user_data
         ));
+        return {stream_owner_, revision, false};
     }
 
-    /**
-     * Connects and starts generation, blocking until the first result frame.
-     *
-     * @param[in] prompt The generation prompt, encoded as UTF-8.
-     * @param[in] reference A reference image path or service-supported URL; empty omits the reference.
-     * @param[in] microphone Whether to start microphone capture when joining the RTC room.
-     * @param[in] face Whether to enable face restoration for generation.
-     *
-     * @note This call blocks. Call it on a worker thread; failures throw xmax::error.
-     *
-     * @see xmax_realtime_start
-     */
-    void start(
-        const std::string& prompt,
-        const std::string& reference = {},
-        bool microphone = false,
-        bool face = false
+    /** Starts or updates generation on an open connection. An empty context reuses successful conditions. */
+    void start_generation(
+        const std::optional<realtime_context>& context = std::nullopt,
+        bool face_restoration = false,
+        xmax_cancellation_fn cancel = nullptr,
+        void* user_data = nullptr
     ) {
-        const xmax_generation_context context{
-            sizeof(context),
-            prompt.c_str(),
-            reference.empty() ? nullptr : reference.c_str(),
-            face
-        };
-        check(xmax_realtime_start(
-            get(),
-            &context,
-            microphone
-        ));
+        request_generation(0, context, face_restoration, cancel, user_data);
     }
 
-    /**
-     * Starts generation on an existing connection using cached conditions.
-     *
-     * @note This call blocks. Call it on a worker thread; failures throw xmax::error.
-     *
-     * @see xmax_realtime_generate
-     */
-    void generate() {
-        check(xmax_realtime_generate(
-            get(),
-            nullptr
-        ));
-    }
-
-    /**
-     * Starts generation on an existing connection using supplied conditions.
-     *
-     * @param[in] prompt The generation prompt, encoded as UTF-8.
-     * @param[in] reference A reference image path or service-supported URL; empty omits the reference.
-     * @param[in] face Whether to enable face restoration for generation.
-     *
-     * @note This call blocks. Call it on a worker thread; failures throw xmax::error.
-     *
-     * @see xmax_realtime_generate
-     */
-    void generate(
-        const std::string& prompt,
-        const std::string& reference = {},
-        bool face = false
+    /** Connects the local stream if needed, then starts generation and returns the result stream. */
+    realtime_media_stream start_generation(
+        const realtime_media_stream& local_stream,
+        const std::optional<realtime_context>& context = std::nullopt,
+        bool face_restoration = false,
+        xmax_cancellation_fn cancel = nullptr,
+        void* user_data = nullptr
     ) {
-        const xmax_generation_context context{
-            sizeof(context),
-            prompt.c_str(),
-            reference.empty() ? nullptr : reference.c_str(),
-            face
-        };
-        check(xmax_realtime_generate(
-            get(),
-            &context
-        ));
-    }
-
-    /**
-     * Replaces the active task's generation conditions.
-     *
-     * @param[in] prompt The generation prompt, encoded as UTF-8.
-     * @param[in] reference A reference image path or service-supported URL; empty omits the reference.
-     * @param[in] face Whether to enable face restoration for generation.
-     *
-     * @note This call blocks. Call it on a worker thread; failures throw xmax::error.
-     *
-     * @see xmax_realtime_update
-     */
-    void update(
-        const std::string& prompt,
-        const std::string& reference = {},
-        bool face = false
-    ) {
-        const xmax_generation_context context{
-            sizeof(context),
-            prompt.c_str(),
-            reference.empty() ? nullptr : reference.c_str(),
-            face
-        };
-        check(xmax_realtime_update(
-            get(),
-            &context
-        ));
+        const auto revision = request_generation(
+            stream_revision(local_stream, true), context, face_restoration, cancel, user_data
+        );
+        return {stream_owner_, revision, false};
     }
 
     /**
@@ -406,21 +403,12 @@ class realtime : public detail::owner<xmax_realtime, xmax_realtime_destroy> {
         return value;
     }
 
-    /**
-     * Returns the current state snapshot without consuming pending events.
-     *
-     * @return The current state and session identifier snapshot.
-     *
-     * @see xmax_realtime_get_state
-     */
-    xmax_event state() const {
-        xmax_event value{};
-        value.struct_size = sizeof(value);
-        check(xmax_realtime_get_state(
-            get(),
-            &value
-        ));
-        return value;
+    /** Returns the typed state snapshot without consuming pending events. */
+    realtime_state state() const {
+        xmax_event_info info{};
+        info.struct_size = sizeof(info);
+        check(xmax_realtime_get_state_info(get(), &info));
+        return realtime_state::from_event(info);
     }
 
     /**
@@ -488,6 +476,35 @@ class realtime : public detail::owner<xmax_realtime, xmax_realtime_destroy> {
             &value
         ));
         return frame(value);
+    }
+
+    /** Takes the latest frame for this binding, or returns an empty frame if it is stale or has no frame. */
+    frame acquire_stream_frame(const realtime_media_stream& stream) const {
+        xmax_frame result = nullptr;
+        check(xmax_realtime_acquire_stream_frame(
+            get(), stream.is_local(), stream_revision(stream, stream.is_local()), &result
+        ));
+        return frame(result);
+    }
+
+    /** Takes a result frame and reports when the renderer must discard its retained pixels. */
+    frame acquire_result_video_frame(const realtime_media_stream& stream, uint64_t& content_revision) const {
+        xmax_frame result = nullptr;
+        check(xmax_realtime_acquire_result_video_frame(
+            get(), stream_revision(stream, false), &content_revision, &result
+        ));
+        return frame(result);
+    }
+
+    /** Submits a trajectory mapped to the specified result stream. */
+    void submit_stream_interaction(
+        const realtime_media_stream& stream,
+        const xmax_interaction_frame& sample,
+        bool mirrored
+    ) {
+        check(xmax_realtime_submit_stream_interaction(
+            get(), stream_revision(stream, false), &sample, mirrored
+        ));
     }
 
     /**
@@ -593,9 +610,9 @@ class realtime : public detail::owner<xmax_realtime, xmax_realtime_destroy> {
     }
 
     /**
-     * Closes server and RTC resources while retaining local preview and cached conditions.
+     * Closes server and RTC resources, clears generation conditions, and retains local preview.
      *
-     * @note This call blocks. Call it on a worker thread; failures throw xmax::error.
+     * @note This call blocks. Service cleanup failures are reported through the SDK state and diagnostics.
      *
      * @see xmax_realtime_disconnect
      */
@@ -606,7 +623,7 @@ class realtime : public detail::owner<xmax_realtime, xmax_realtime_destroy> {
     /**
      * Disconnects and releases local media and cached generation conditions.
      *
-     * @note This call blocks. Call it on a worker thread; failures throw xmax::error.
+     * @note This call blocks. Service cleanup failures are reported through the SDK state and diagnostics.
      *
      * @see xmax_realtime_close
      */
@@ -625,6 +642,23 @@ class realtime : public detail::owner<xmax_realtime, xmax_realtime_destroy> {
         check(xmax_realtime_update_camera_format(
             get(),
             &format
+        ));
+    }
+
+    /**
+     * Updates the camera format and encoder overrides together while disconnected.
+     *
+     * @param[in] format The target dimensions and frame rate supported by the model.
+     * @param[in] encoding The sized uplink encoder overrides.
+     */
+    void update_camera_format(
+        const xmax_video_format& format,
+        const xmax_encoding_config& encoding
+    ) {
+        check(xmax_realtime_update_camera_format_with_encoding(
+            get(),
+            &format,
+            &encoding
         ));
     }
 
@@ -699,19 +733,6 @@ class realtime : public detail::owner<xmax_realtime, xmax_realtime_destroy> {
     }
 
     /**
-     * Returns a state snapshot with reason and error details.
-     */
-    xmax_event_info state_info() const {
-        xmax_event_info info{};
-        info.struct_size = sizeof(info);
-        check(xmax_realtime_get_state_info(
-            get(),
-            &info
-        ));
-        return info;
-    }
-
-    /**
      * Acquires an event with reason and error details without blocking, sharing the legacy poll queue.
      *
      * @param[out] info Receives the oldest event; unchanged if the queue is empty.
@@ -736,12 +757,24 @@ class realtime : public detail::owner<xmax_realtime, xmax_realtime_destroy> {
      * @param[in] reason Normal stop or display-orientation change.
      */
     void disconnect(
-        xmax_realtime_reason reason
+        realtime_stop_reason reason
     ) {
         check(xmax_realtime_disconnect_with_reason(
             get(),
-            reason
+            static_cast<xmax_realtime_reason>(reason)
         ));
+    }
+
+    /** Disconnects with a normal stop reason or a caller-supplied failure. */
+    void disconnect(const realtime_reason& reason) {
+        if (const auto* stop = std::get_if<realtime_stop_reason>(&reason)) {
+            disconnect(*stop);
+        } else {
+            const auto& failure = std::get<error>(reason);
+            check(xmax_realtime_disconnect_with_error(
+                get(), failure.code(), failure.what(), failure.api_code(), failure.http_status()
+            ));
+        }
     }
 
     /**
@@ -756,6 +789,50 @@ class realtime : public detail::owner<xmax_realtime, xmax_realtime_destroy> {
             get(),
             &frame
         ));
+    }
+
+    /**
+     * Submits trajectory samples with the mirror state of the actual displayed frame.
+     */
+    void submit_interaction(
+        const xmax_interaction_frame& frame,
+        bool mirrored
+    ) {
+        check(xmax_realtime_submit_interaction_view(
+            get(),
+            &frame,
+            mirrored ? 1 : 0
+        ));
+    }
+
+    /**
+     * Selects a camera microphone endpoint. Empty follows the system default.
+     */
+    void switch_microphone(const std::string& device) {
+        check(xmax_realtime_switch_microphone(get(), device.empty() ? nullptr : device.c_str()));
+    }
+
+    /**
+     * Changes camera microphone capture and publication without restarting generation.
+     */
+    void microphone_enabled(bool enabled) {
+        check(xmax_realtime_set_microphone_enabled(get(), enabled ? 1 : 0));
+    }
+
+    /**
+     * Reads whether camera microphone capture is enabled.
+     */
+    bool microphone_enabled() const {
+        int32_t enabled = 0;
+        check(xmax_realtime_get_microphone_enabled(get(), &enabled));
+        return enabled != 0;
+    }
+
+    /**
+     * Stops the camera stream after disconnecting.
+     */
+    void stop_local_camera_stream() {
+        check(xmax_realtime_stop_local_camera_stream(get()));
     }
 
     /**
@@ -793,5 +870,44 @@ class realtime : public detail::owner<xmax_realtime, xmax_realtime_destroy> {
             content_mode
         ));
     }
+
+  private:
+    /** The borrowed handle identity shared by this controller's tracks. */
+    std::shared_ptr<realtime_video_track::binding> stream_owner_;
+
+    /** Clears the borrowed handle before its unique owner destroys it. */
+    void retire_tracks() noexcept {
+        if (stream_owner_) {
+            std::lock_guard<std::mutex> lock(stream_owner_->mutex);
+            stream_owner_->handle = nullptr;
+        }
+    }
+
+    uint64_t stream_revision(const realtime_media_stream& stream, bool local) const {
+        if (!stream_owner_ || stream.track_.owner_.lock() != stream_owner_ || stream.is_local() != local)
+            throw error(XMAX_INVALID_ARGUMENT, "The media stream does not belong to this controller or direction");
+        return stream.track_.revision_;
+    }
+
+    uint64_t request_generation(
+        uint64_t local_revision,
+        const std::optional<realtime_context>& context,
+        bool face_restoration,
+        xmax_cancellation_fn cancel,
+        void* user_data
+    ) {
+        xmax_generation_context native{};
+        if (context) {
+            native = {sizeof(native), context->prompt.c_str(),
+                      context->reference_path && !context->reference_path->empty() ? context->reference_path->c_str() : nullptr,
+                      face_restoration};
+        }
+        uint64_t revision = 0;
+        check(xmax_realtime_start_generation_cancellable(
+            get(), local_revision, context ? &native : nullptr, face_restoration, &revision, 0, cancel, user_data
+        ));
+        return revision;
+    }
+
 };
 } // namespace xmax

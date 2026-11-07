@@ -12,6 +12,7 @@
 #include "Core/Realtime/XmaxRealtimeManager.hpp"
 #include "Core/Realtime/XmaxRealtimeFactory.hpp"
 #include "Core/Storage/XmaxStorageManager.hpp"
+#include "Service/Account/CreditBalanceService.hpp"
 #include "Foundation/Render/WindowRenderer.hpp"
 
 namespace xmax::detail {
@@ -70,6 +71,11 @@ class XmaxClient {
             body,
             cancel
         );
+    }
+
+    /** Fetches fresh account credits without creating realtime or media resources. */
+    double credit_balance(const Cancel& cancel) const {
+        return CreditBalanceService::read(*api_, cancel);
     }
 
     /**
@@ -134,6 +140,7 @@ class XmaxClient {
      * @return An exclusively owned storage controller whose configuration survives client destruction.
      */
     std::unique_ptr<XmaxStorageManager> create_storage() const {
+        require(!api_->config().key.empty(), XMAX_INVALID_API_KEY, "An Xmax API Key is required");
         return std::make_unique<XmaxStorageManager>(api_);
     }
 

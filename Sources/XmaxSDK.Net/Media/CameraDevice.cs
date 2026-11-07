@@ -20,4 +20,10 @@ public sealed record CameraDevice(
     string Id,
     string Name,
     bool IsDefault
-);
+)
+{
+    /// <summary>
+    /// Gets the enclosure position reported by Windows, if available.
+    /// </summary>
+    public CameraPosition Position { get; init; }
+}

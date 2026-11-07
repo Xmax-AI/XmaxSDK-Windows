@@ -1,3 +1,13 @@
+//
+//  MainViewModel.Presentation.cs
+//  XmaxSDK
+//
+//  Author: 翁跃庭 (Yueting Weng)
+//  GitHub: https://github.com/Xmax-AI/XmaxSDK-Windows
+//
+//  Copyright (c) 2026 XMAX.AI PTE. LTD.
+//
+
 using System.Collections.ObjectModel;
 using System.Diagnostics;
 using XLab.Shared.Platform;
@@ -8,22 +18,21 @@ namespace XLab.Shared.ViewModels;
 
 internal sealed partial class MainViewModel
 {
-    private bool active, statisticsVisible = true, remoteReady, preview;
+    private bool active, statisticsVisible = true, preview;
     private string selectedMode = "charx";
     private double volume;
     private long intent;
     private DateTimeOffset? startedAt;
     private readonly IUiTimer elapsedTimer;
-    private (GenerationContext Context, long Intent, int Revision)? pendingConditions;
+    private (GenerationContext Context, bool FaceRestoration, long Intent, int Revision)? pendingConditions;
     private Task? updateTask;
     internal Task WaitForConditionsAsync() => updateTask ?? Task.CompletedTask;
     private readonly Dictionary<ReferenceItem, CancellationTokenSource> uploadCancellations = [];
-    public bool Active { get => active; private set { if (active == value) return; active = value; Changed(); Changed(nameof(StartLabel)); RecordingChanged(); } }
+    public bool Active { get => active; private set { if (active == value) return; active = value; Changed(); Changed(nameof(StartLabel)); Changed(nameof(BeautyPanelVisible)); RecordingChanged(); } }
     public bool IsPreview { get => preview; private set { preview = value; Changed(); Changed(nameof(StartLabel)); Changed(nameof(StopLabel)); Changed(nameof(Elapsed)); Changed(nameof(LocalPlaceholder)); } }
     public bool CanEdit => !Busy;
-    public bool RemoteReady { get => remoteReady; private set { remoteReady = value; Changed(); Changed(nameof(ResultPlaceholder)); RecordingChanged(); } }
     public string LocalPlaceholder => IsPreview ? "UI Preview\nCamera is disabled" : "";
-    public string ResultPlaceholder => IsPreview ? "UI Preview\nGeneration is disabled" : RemoteReady ? "" : State == RealtimeState.Connected ? "Generating…" : "Select a reference to generate…";
+    public string ResultPlaceholder => IsPreview ? "UI Preview\nGeneration is disabled" : RemoteReady ? "" : State == RealtimeConnectionState.Connected ? "Generating…" : "Select a reference to generate…";
     public string LocalTitle => IsPreview ? "Local" : string.IsNullOrEmpty(SelectedCamera?.Name) ? "Local" : "Local · " + SelectedCamera.Name;
     public string KeyLabel => ApiKey.Length == 0 ? "" : "****************";
     public string StartLabel => Busy ? "Starting…" : IsPreview ? "Preview UI" : "Start Camera";
@@ -79,6 +88,7 @@ internal sealed partial class MainViewModel
     public void ConfigurePreview(bool sessionPage)
     {
         IsPreview = true;
+        ResetBeautyForPreview();
         Active = sessionPage;
         if (sessionPage) MarkSelected(CharacterReferences.First(item => !item.IsUpload));
         Changed(nameof(LocalTitle));
@@ -120,7 +130,7 @@ internal sealed partial class MainViewModel
         if (IsPreview) return;
         if (string.IsNullOrWhiteSpace(ApiKey)) { RequireKey(); return; }
         string text = item.Mode == "free" ? Prompt : ModePrompt(item.Mode);
-        await QueueConditionsAsync(new(text, item.ReferenceUrl, item.Mode == "clothx"));
+        await QueueConditionsAsync(new(text, item.ReferenceUrl), faceRestoration: item.Mode == "clothx");
     }
     public async Task SubmitPromptAsync()
     {
@@ -132,9 +142,9 @@ internal sealed partial class MainViewModel
     }
     private bool FreeReferenceReady => FreeReference is null || !FreeReference.IsUploading && !FreeReference.HasError && FreeReference.ReferenceUrl.Length > 0;
     private bool CanSubmitPrompt() => !Busy && FreeReferenceReady;
-    private Task QueueConditionsAsync(GenerationContext context)
+    private Task QueueConditionsAsync(GenerationContext context, bool faceRestoration = false)
     {
-        pendingConditions = (context, ++intent, revision);
+        pendingConditions = (context, faceRestoration, ++intent, revision);
         if (updateTask is null || updateTask.IsCompleted) updateTask = ApplyConditionsAsync();
         return updateTask;
     }
@@ -147,9 +157,7 @@ internal sealed partial class MainViewModel
             if (current is null || pending.Revision != revision) continue;
             try
             {
-                if (State == RealtimeState.Generating) await current.UpdateAsync(pending.Context);
-                else await current.StartAsync(pending.Context, Microphone);
-                if (pending.Revision == revision) { State = RealtimeState.Generating; RemoteReady = true; }
+                await GenerateOnStreamAsync(current, pending.Context, pending.FaceRestoration, pending.Revision);
             }
             catch (Exception failure) when (pending.Revision == revision && pending.Intent == intent) { ReportError(failure); }
             catch (Exception) when (pending.Revision != revision || pending.Intent != intent) { }
@@ -176,7 +184,7 @@ internal sealed partial class MainViewModel
             try { item.Thumbnail = await thumbnails.LoadAsync(path); } catch (Exception) { /* uploads can still accept encoded WebP without a local codec */ }
             using var client = new XmaxClient(new() { ApiKey = sessionKey, Environment = ServiceEnvironment });
             await using var storage = client.CreateStorage();
-            var uploaded = await storage.UploadFileAsync(path, cancellationToken: cancellation.Token);
+            var uploaded = await storage.UploadImageWithSafetyCheckAsync(path, cancellationToken: cancellation.Token);
             item.ReferenceUrl = uploaded.Url; item.IsUploading = false;
             if (current == revision && mode == SelectedMode && (mode != "free" || FreeReference == item)) await SelectReferenceAsync(item);
         }
@@ -192,21 +200,4 @@ internal sealed partial class MainViewModel
     }
     private async Task ApplyVolumeAsync(XmaxRealtime current, double value)
     { try { await current.SetRemoteVolumeAsync((float)value); } catch (Exception failure) { if (current == session) ReportError(failure); } }
-    private void UpdateMetricRows(RealtimeEvent item)
-    {
-        if (item.Type == RealtimeEventType.Timing)
-        {
-            double[] values = [item.SessionMilliseconds, item.JoinMilliseconds, item.PublishMilliseconds, item.FirstFrameMilliseconds, item.TotalMilliseconds];
-            for (int i = 0; i < values.Length; ++i) TimingRows[i].Value = values[i] < 0 ? "—" : $"{values[i]:F1} ms";
-        }
-        if (item.Type != RealtimeEventType.Statistics) return;
-        var video = item.Direction == 0 ? UplinkRows : DownlinkRows;
-        var network = item.Direction == 0 ? UplinkNetworkRows : DownlinkNetworkRows;
-        if (item.Width > 0 && item.Height > 0) video[0].Value = $"{item.Width}×{item.Height}";
-        if (item.FramesPerSecond >= 0) video[1].Value = $"{item.FramesPerSecond} fps";
-        if (item.BitrateKbps >= 0) video[2].Value = $"{item.BitrateKbps} kbps";
-        if (item.PacketLossPercent >= 0) network[item.Direction == 0 ? 0 : 1].Value = $"{item.PacketLossPercent}%";
-        if (item.Quality >= 0) network[item.Direction == 0 ? 1 : 2].Value = item.Quality.ToString();
-        if (item.Direction == 1 && item.EndToEndMilliseconds >= 0) network[4].Value = $"{item.EndToEndMilliseconds} ms";
-    }
 }

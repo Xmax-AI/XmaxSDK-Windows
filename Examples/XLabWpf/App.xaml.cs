@@ -1,3 +1,13 @@
+//
+//  App.xaml.cs
+//  XmaxSDK
+//
+//  Author: 翁跃庭 (Yueting Weng)
+//  GitHub: https://github.com/Xmax-AI/XmaxSDK-Windows
+//
+//  Copyright (c) 2026 XMAX.AI PTE. LTD.
+//
+
 using XLab.Shared.Services;
 using System.IO;
 using System.Text.Json;
@@ -13,7 +23,7 @@ public partial class App : Application
     protected override async void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
-        bool preview = e.Args.Contains("--preview") || e.Args.Contains("--preview-session") || e.Args.Contains("--smoke-test-ui");
+        bool preview = e.Args.Contains("--preview") || e.Args.Contains("--preview-session") || e.Args.Contains("--smoke-test-ui") || e.Args.Contains("--smoke-test-beauty");
         string? mode = e.Args.FirstOrDefault(arg => arg.StartsWith("--smoke-test"));
         ApiKeyStore? store = preview || mode is not null ? null : new();
         // Persistence tests use their own credential; other smokes never write user credentials.
@@ -23,7 +33,7 @@ public partial class App : Application
             store = new ApiKeyStore("XMAX.AI/XLabWpf/ApiKey.Smoke." + id.ToString("N"));
         }
         var window = new MainWindow(store);
-        if (preview) { window.Model.ConfigurePreview(e.Args.Contains("--preview-session")); window.Title = "XLab - WPF — UI Preview (no live session)"; }
+        if (preview) { window.Model.ConfigurePreview(e.Args.Contains("--preview-session") || mode == "--smoke-test-beauty"); window.Title = "XLab - WPF — UI Preview (no live session)"; }
         MainWindow = window;
         window.Show();
         window.LoadApiKey(!preview && (mode is null or "--smoke-test-camera" or "--smoke-test-live") ? Environment.GetEnvironmentVariable("XMAX_API_KEY") : null);
@@ -39,7 +49,7 @@ public partial class App : Application
         long remoteMediaVideoPackets = 0;
         int localMinimumLuma = -1, localMaximumLuma = -1;
         bool referenceUpdatePassed = false;
-        var pageEntryStates = new List<RealtimeState>();
+        var pageEntryStates = new List<RealtimeConnectionState>();
         void ObservePageEntry(object? sender, System.ComponentModel.PropertyChangedEventArgs args)
         {
             if (args.PropertyName == nameof(window.Model.Active) && window.Model.Active && !window.Model.IsPreview) pageEntryStates.Add(window.Model.State);
@@ -51,6 +61,7 @@ public partial class App : Application
             if (!string.IsNullOrEmpty(cameraName) && mode is "--smoke-test-camera" or "--smoke-test-live") window.Model.SelectedCamera = window.Model.Cameras.FirstOrDefault(camera => camera.Name.Contains(cameraName, StringComparison.OrdinalIgnoreCase)) ?? throw new InvalidOperationException("Requested test camera was not found.");
             if (mode == "--smoke-test") await window.VerifyMenusAsync(Environment.GetEnvironmentVariable("XMAX_SMOKE_OUTPUT"));
             if (mode.StartsWith("--smoke-test-key-memory-")) window.VerifyApiKeyMemory(mode["--smoke-test-key-memory-".Length..]);
+            if (mode == "--smoke-test-beauty") await window.VerifyBeautyAsync();
             if (mode == "--smoke-test-ui")
             {
                 await VerifyUiAsync(window);
@@ -64,7 +75,7 @@ public partial class App : Application
                     await Task.Delay(30);
                     await window.Model.StopAsync();
                     try { await startup; } catch (OperationCanceledException) { }
-                    if (window.Model.State != RealtimeState.Idle || window.Model.Active) throw new InvalidOperationException("Stopping startup did not restore the idle landing page.");
+                    if (window.Model.State != RealtimeConnectionState.Idle || window.Model.Active) throw new InvalidOperationException("Stopping startup did not restore the idle landing page.");
                 }
                 await window.Model.PreviewAsync();
                 await UntilAsync(() => window.LocalVideoView.PresentedFrameCount >= 10, TimeSpan.FromSeconds(20));
@@ -90,7 +101,7 @@ public partial class App : Application
                 if (!string.IsNullOrEmpty(startupOutput)) window.SaveUiScreenshot(Path.Combine(startupOutput, "startup-landing.png"));
                 await UntilAsync(() => !window.Model.Busy, TimeSpan.FromSeconds(90));
                 if (window.Model.Error.Length != 0) throw new InvalidOperationException(window.Model.Error);
-                if (pageEntryStates.Count != 1 || pageEntryStates[0] is not (RealtimeState.Connected or RealtimeState.Generating))
+                if (pageEntryStates.Count != 1 || pageEntryStates[0] is not (RealtimeConnectionState.Connected or RealtimeConnectionState.Generating))
                     throw new InvalidOperationException("The generation page opened before RTC connected.");
                 if (window.Model.Session is null) throw new InvalidOperationException(window.Model.Error);
                 await UntilAsync(() => window.LocalVideoView.PresentedFrameCount >= 10 && window.RemoteVideoView.PresentedFrameCount >= 10, TimeSpan.FromSeconds(20));
@@ -108,13 +119,13 @@ public partial class App : Application
                 await UntilAsync(() => Interlocked.Read(ref remoteMediaVideoPackets) > 0, TimeSpan.FromSeconds(10));
                 remoteFrames = window.RemoteVideoView.PresentedFrameCount;
                 remoteWidth = window.RemoteVideoView.VideoWidth; remoteHeight = window.RemoteVideoView.VideoHeight;
-                if (window.Model.State != RealtimeState.Generating) throw new InvalidOperationException("Generation did not become active.");
+                if (window.Model.State != RealtimeConnectionState.Generating) throw new InvalidOperationException("Generation did not become active.");
                 await UntilAsync(() => window.Model.TimingRows[^1].Value != "—", TimeSpan.FromSeconds(10));
                 await UntilAsync(() => window.Model.UplinkRows[0].Value != "—" && window.Model.DownlinkRows[0].Value != "—", TimeSpan.FromSeconds(15));
                 long beforeReference = window.RemoteVideoView.PresentedFrameCount;
                 await window.ClickReferenceAsync(window.Model.CharacterReferences.First(item => item.Id == "charx-9"));
                 await UntilAsync(() => window.RemoteVideoView.PresentedFrameCount > beforeReference + 10, TimeSpan.FromSeconds(15));
-                if (window.Model.State != RealtimeState.Generating) throw new InvalidOperationException("Reference update stopped generation.");
+                if (window.Model.State != RealtimeConnectionState.Generating) throw new InvalidOperationException("Reference update stopped generation.");
                 referenceUpdatePassed = true;
                 await Task.Delay(800);
                 string? referenceOutput = Environment.GetEnvironmentVariable("XMAX_SMOKE_OUTPUT");
@@ -126,7 +137,7 @@ public partial class App : Application
             }
             await Task.Delay(300);
             string? output = Environment.GetEnvironmentVariable("XMAX_SMOKE_OUTPUT");
-            if (!string.IsNullOrEmpty(output))
+            if (!string.IsNullOrEmpty(output) && mode != "--smoke-test-beauty")
             {
                 Directory.CreateDirectory(output);
                 window.SaveUiScreenshot(Path.Combine(output, mode.TrimStart('-') + ".png"));
@@ -139,7 +150,7 @@ public partial class App : Application
             window.DismissPopups();
             object videoDiagnostics = window.VideoDiagnostics;
             string? videoOutput = Environment.GetEnvironmentVariable("XMAX_SMOKE_OUTPUT");
-            try { if (!string.IsNullOrEmpty(videoOutput)) window.SaveVideoScreenshots(videoOutput); }
+            try { if (!string.IsNullOrEmpty(videoOutput) && mode != "--smoke-test-beauty") window.SaveVideoScreenshots(videoOutput); }
             catch (Exception error) { result = 1; failure ??= error.Message; }
             try { await window.Model.StopAsync(); } catch (Exception error) { result = 1; failure ??= error.Message; }
             string? output = Environment.GetEnvironmentVariable("XMAX_SMOKE_OUTPUT");
@@ -179,7 +190,7 @@ public partial class App : Application
             if (layout.StageWidth + 56 > layout.PageWidth + 2 || layout.StageHeight <= 0)
                 throw new InvalidOperationException("The landing preview overflows the resized page.");
             if (layout.StageWidth > 940.5 || Math.Abs(layout.StageWidth * 1080 / 1920 - layout.StageHeight) > .5)
-                throw new InvalidOperationException("The landing preview no longer matches the Qt/macOS size cap and aspect ratio.");
+                throw new InvalidOperationException("The landing preview must fit within 940 DIP and retain a 16:9 aspect ratio.");
             layouts.Add(new { size.Name, layout.Width, layout.PageWidth, layout.HeaderWidth, layout.StageWidth, layout.StageHeight });
             if (!string.IsNullOrEmpty(output)) window.SaveUiScreenshot(Path.Combine(output, "landing-" + size.Name + ".png"));
         }

@@ -12,6 +12,7 @@
 #include "Media/Camera/CameraController.hpp"
 #include "Media/Interaction/InteractionController.hpp"
 #include "Media/External/ExternalVideoController.hpp"
+#include <algorithm>
 
 namespace xmax::detail {
 
@@ -68,6 +69,11 @@ class MediaController {
         external_.stop();
     }
 
+    /** Starts releasing SDK-owned capture while leaving binding cleanup to the lifecycle worker. */
+    std::future<void> stop_local_capture() {
+        return camera_.stop_async();
+    }
+
     /**
      * Stops capture and clears input binding and device state.
      */
@@ -85,17 +91,20 @@ class MediaController {
      * @param[in] format The input dimensions and frame rate; see xmax_video_format for limits.
      * @param[in] binding The revision rejecting frames from replaced external sources.
      * @param[in] has_audio Whether this source supplies PCM instead of microphone input.
+     * @param[in] processing_format The normalized output format, or omitted for exact source dimensions.
      */
     void prepare_external(
         xmax_video_format format,
         uint64_t binding = 0,
-        bool has_audio = false
+        bool has_audio = false,
+        std::optional<xmax_video_format> processing_format = {}
     ) {
         close();
         external_.prepare(
             format,
             binding,
-            has_audio
+            has_audio,
+            processing_format
         );
     }
 
@@ -143,17 +152,10 @@ class MediaController {
         std::function<void(Error)> failure,
         const Cancel& cancel
     ) {
-        require(
-            camera_active_,
-            XMAX_INVALID_STATE,
-            "No camera stream is active"
-        );
-        camera_.stop();
-        external_.prepare(external_.format());
-        camera_.start(
+        reconfigure_camera(
             device,
             external_.format(),
-            {[this](Frame frame) { external_.push_owned(std::move(frame)); }, std::move(failure)},
+            std::move(failure),
             cancel
         );
         device_ = device;
@@ -171,44 +173,12 @@ class MediaController {
         std::function<void(Error)> failure,
         const Cancel& cancel
     ) {
-        require(
-            camera_active_,
-            XMAX_INVALID_STATE,
-            "No camera stream is active"
+        reconfigure_camera(
+            device_,
+            format,
+            std::move(failure),
+            cancel
         );
-
-        const auto previous = external_.format();
-        camera_.stop();
-        external_.prepare(format);
-
-        try {
-            camera_.start(
-                device_,
-                format,
-                {[this](Frame frame) { external_.push_owned(std::move(frame)); }, failure},
-                cancel
-            );
-        } catch (...) {
-            const auto original = std::current_exception();
-            if (cancel()) {
-                close();
-            } else {
-
-                try {
-                    external_.prepare(previous);
-                    camera_.start(
-                        device_,
-                        previous,
-                        {[this](Frame frame) { external_.push_owned(std::move(frame)); }, failure},
-                        cancel
-                    );
-                } catch (...) {
-                    close();
-                }
-            }
-
-            std::rethrow_exception(original);
-        }
     }
 
     /**
@@ -227,7 +197,79 @@ class MediaController {
         return camera_.devices();
     }
 
+    /** Reads the selected camera from the current device enumeration. */
+    std::optional<CameraDevice> current_camera() {
+        if (!camera_active())
+            return {};
+        const auto cameras = devices();
+        if (cameras.empty())
+            return {};
+        const auto selected = std::find_if(cameras.begin(), cameras.end(), [this](const auto& camera) {
+            return device_.empty() ? camera.is_default : camera.id == device_;
+        });
+        if (selected != cameras.end())
+            return *selected;
+        if (device_.empty())
+            return cameras.front();
+        return {};
+    }
+
   private:
+
+    /**
+     * Restarts capture on the requested device and restores the previous capture on failure.
+     *
+     * @param[in] device The requested device identifier; empty selects the default camera.
+     * @param[in] format The new encoding target.
+     * @param[in] failure The current media binding's failure callback.
+     * @param[in] cancel The cooperative cancellation predicate.
+     */
+    void reconfigure_camera(
+        const std::string& device,
+        xmax_video_format format,
+        std::function<void(Error)> failure,
+        const Cancel& cancel
+    ) {
+        require(
+            camera_active_,
+            XMAX_INVALID_STATE,
+            "No camera stream is active"
+        );
+
+        const auto previous = external_.format();
+        camera_.stop();
+        const CaptureCallbacks callbacks{
+            [this](Frame frame) { external_.push_owned(std::move(frame)); },
+            std::move(failure)
+        };
+        try {
+            external_.prepare(format);
+            camera_.start(
+                device,
+                format,
+                callbacks,
+                cancel
+            );
+        } catch (...) {
+            const auto original = std::current_exception();
+            if (cancel()) {
+                close();
+            } else {
+                try {
+                    external_.prepare(previous);
+                    camera_.start(
+                        device_,
+                        previous,
+                        callbacks,
+                        cancel
+                    );
+                } catch (...) {
+                    close();
+                }
+            }
+            std::rethrow_exception(original);
+        }
+    }
 
     /**
      * The shared controller for input publication and local preview delivery.

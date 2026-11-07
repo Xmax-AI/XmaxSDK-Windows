@@ -12,6 +12,7 @@
 #include "Foundation/Media/VideoFrame.hpp"
 #include "Media/Audio/ExternalAudioConverter.hpp"
 #include <mutex>
+#include <optional>
 
 namespace xmax::detail {
 
@@ -33,11 +34,13 @@ class ExternalVideoController {
      * @param[in] format The input dimensions and frame rate; see xmax_video_format for limits.
      * @param[in] binding The source revision; zero reserves the channel for unversioned camera delivery.
      * @param[in] has_audio Whether this external source supplies PCM instead of microphone input.
+     * @param[in] processing_format The resolved processing format, if the source requires normalization.
      */
     void prepare(
         xmax_video_format format,
         uint64_t binding = 0,
-        bool has_audio = false
+        bool has_audio = false,
+        std::optional<xmax_video_format> processing_format = {}
     );
 
     /**
@@ -88,6 +91,11 @@ class ExternalVideoController {
      * Reports whether this source declares external PCM upload.
      */
     bool has_audio() const;
+
+    /**
+     * Reports whether this binding can use the RTC microphone instead of source audio.
+     */
+    bool allows_microphone() const;
 
     /**
      * Delivers camera frames at capture dimensions; RTC handles encoding dimensions and aspect ratio.
@@ -142,6 +150,11 @@ class ExternalVideoController {
     xmax_video_format format_{};
 
     /**
+     * The dimensions that external frames must have before resizing.
+     */
+    xmax_video_format source_format_{};
+
+    /**
      * The latest accepted monotonic timestamp for this input binding, in microseconds.
      */
     int64_t last_timestamp_ = -1;
@@ -165,6 +178,11 @@ class ExternalVideoController {
      * Whether this binding opted into PCM upload.
      */
     bool has_audio_ = false;
+
+    /**
+     * Whether the application owns audio and video capture for this stream.
+     */
+    bool app_owned_capture_ = false;
 
     /**
      * The binding's serialized PCM conversion and packetization state.

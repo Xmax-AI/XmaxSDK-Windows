@@ -10,6 +10,7 @@
 
 #pragma once
 #include "Foundation/Common.hpp"
+#include <optional>
 
 namespace xmax::detail {
 
@@ -57,6 +58,20 @@ struct HttpRequest {
      * The streaming receiver taking a borrowed data pointer and byte count, valid only during the callback.
      */
     std::function<void(const char*, size_t)> receive;
+
+    /** A sized upload body read sequentially during the synchronous request. */
+    struct Upload {
+        /** The content length in bytes. */
+        uint64_t size;
+        /** Fills the requested number of bytes or throws a source error. */
+        std::function<void(char*, size_t)> read;
+    };
+
+    /** An optional streaming body used in place of body. */
+    std::optional<Upload> upload{};
+
+    /** Enables bounded HTTP(S) redirects on an unsigned storage GET. */
+    bool follow_download_redirects = false;
 };
 
 /**

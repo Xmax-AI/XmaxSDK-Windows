@@ -24,6 +24,7 @@ namespace xmax::detail {
  * @param[in] prompt The generation prompt, encoded as UTF-8.
  * @param[in] reference A reference image path or service-supported URL; empty omits the reference.
  * @param[in] face Whether to enable face restoration for generation.
+ * @param[in] target The return dimensions for startup. A zero width uses the generation canvas.
  */
 json generation_event(
     const std::string& event,
@@ -32,7 +33,8 @@ json generation_event(
     xmax_video_format format,
     const std::string& prompt,
     const std::string& reference,
-    bool face
+    bool face,
+    xmax_video_format target = {}
 );
 
 /**

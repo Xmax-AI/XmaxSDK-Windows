@@ -43,7 +43,8 @@ class XmaxRealtimeManager {
         RtcFactory factory = make_rtc,
         std::chrono::milliseconds heartbeat = std::chrono::seconds(10),
         CameraFactory camera = make_camera_capture,
-        std::shared_ptr<QualityHistory> history = {}
+        std::shared_ptr<QualityHistory> history = {},
+        std::function<void(const std::string&)> microphone_validator = {}
     );
 
     /**
@@ -63,11 +64,23 @@ class XmaxRealtimeManager {
      * @param[in] format The input dimensions and frame rate; see xmax_video_format for limits.
      * @param[in] has_audio Whether the source provides PCM upload without microphone capture.
      *
+     * @param[in] processing_format The resolved processing format. When present, the controller must be idle.
      * @return The revision identifying this external source binding.
      */
     uint64_t prepare(
         xmax_video_format format,
-        bool has_audio = false
+        bool has_audio = false,
+        std::optional<xmax_video_format> processing_format = {},
+        std::optional<xmax_encoding_config> encoding = {}
+    );
+
+    /**
+     * Commits the prepared external stream after the app installs frame delivery.
+     *
+     * @param[in] binding The pending external source revision.
+     */
+    void complete_external_stream(
+        uint64_t binding
     );
 
     /**
@@ -163,12 +176,31 @@ class XmaxRealtimeManager {
      * @param[in] device The UTF-8 camera identifier; an empty string selects the default camera.
      * @param[in] format The input dimensions and frame rate; see xmax_video_format for limits.
      * @param[in] microphone Whether to start microphone capture when joining the RTC room.
+     * @param[in] mirror Whether to mirror local preview and camera publication.
+     * @param[in] microphone_device The recording endpoint used on connection; empty follows the default input.
+     * @param[in] wait_for_preview Whether to wait for a bound preview before publishing ready.
      */
-    void prepare_camera(
+    void create_local_camera_stream(
         std::string device,
         xmax_video_format format,
-        bool microphone
+        bool microphone,
+        bool mirror = false,
+        std::string microphone_device = {},
+        bool wait_for_preview = false,
+        std::optional<xmax_encoding_config> encoding = {}
     );
+
+    /** Marks a prepared camera stream ready when its preview is attached. */
+    void complete_camera_preview(uint64_t revision);
+
+    /** Updates the selected physical microphone without replacing the camera stream. */
+    void switch_microphone(std::string device);
+
+    /** Changes the camera microphone's capture and publication policy. */
+    void set_microphone_enabled(bool enabled);
+
+    /** Reads the camera microphone's capture intent. */
+    bool microphone_enabled();
 
     /**
      * Switches the active camera and resumes generation with retained conditions.
@@ -179,18 +211,24 @@ class XmaxRealtimeManager {
         std::string device
     );
 
-    /**
-     * Releases local capture and input bindings after disconnection.
-     */
-    void stop_media();
+    /** Selects which local media kind a stop request can release. */
+    enum class StopMediaSource { Any, Camera, External };
+
+    /** Releases the requested local capture or input binding after disconnection. */
+    void stop_media(StopMediaSource source = StopMediaSource::Any);
 
     /**
      * Creates a server session and joins RTC without starting generation.
      *
      * @param[in] microphone Whether to start microphone capture when joining the RTC room.
+     * @param[in] local_revision A nonzero revision requires this specific local binding.
+     * @param[in] caller_cancelled An optional cancellation predicate scoped to this connection attempt.
+     * @return The remote stream revision for the connected room.
      */
-    void connect(
-        bool microphone
+    uint64_t connect(
+        bool microphone,
+        uint64_t local_revision = 0,
+        Cancel caller_cancelled = {}
     );
 
     /**
@@ -198,9 +236,17 @@ class XmaxRealtimeManager {
      *
      * @param[in] value Optional generation conditions; null reuses previous conditions, but the first call
      * requires them.
+     * @param[in] local_revision A nonzero revision requires this specific local binding.
+     * @param[in] face_restoration An optional override even when using cached conditions.
+     * @return The remote stream revision for this connection.
      */
-    void generate(
-        const xmax_generation_context* value
+    uint64_t generate(
+        const xmax_generation_context* value,
+        uint64_t local_revision = 0,
+        std::optional<bool> face_restoration = {},
+        bool connect_if_needed = true,
+        Cancel caller_cancelled = {},
+        bool update_only = false
     );
 
     /**
@@ -273,6 +319,16 @@ class XmaxRealtimeManager {
     );
 
     /**
+     * Sets generated result beauty independently of generation errors; nullopt disables it.
+     */
+    void remote_video_beauty(std::optional<BeautyOptions> options);
+
+    /**
+     * Sets the recoverable result-beauty error listener; empty clears it.
+     */
+    void remote_video_beauty_error_listener(BeautyErrorListener listener);
+
+    /**
      * Replaces the serialized remote audio/video listener, preserving playback and the current listener
      * if native audio observation cannot be enabled.
      *
@@ -301,8 +357,13 @@ class XmaxRealtimeManager {
      *
      * @return A frame that retains its pixels, or an empty object if no new frame is available.
      */
-    std::shared_ptr<Frame> acquire_frame() {
-        return render_.acquire_frame();
+    std::shared_ptr<Frame> acquire_frame(uint64_t revision = 0) {
+        return render_.acquire_frame(revision);
+    }
+
+    /** Takes a result frame and the content revision used to clear an unpublished result. */
+    std::shared_ptr<Frame> acquire_result(uint64_t track, uint64_t& content_revision) {
+        return render_.acquire_result(track, content_revision);
     }
 
     /**
@@ -310,8 +371,22 @@ class XmaxRealtimeManager {
      *
      * @return A frame that retains its pixels, or an empty object if no new frame is available.
      */
-    std::shared_ptr<Frame> acquire_local_frame() {
-        return render_.acquire_local_frame();
+    std::shared_ptr<Frame> acquire_local_frame(uint64_t revision = 0);
+
+    /** Reads the negotiated format and optional camera metadata for a current stream binding. */
+    bool read_video_track(
+        uint64_t revision,
+        bool local,
+        xmax_video_format& format,
+        xmax_encoding_config* encoding,
+        std::optional<CameraDevice>* camera
+    );
+
+    /**
+     * Returns the opaque revision of the current local media binding.
+     */
+    uint64_t local_stream_revision() const {
+        return local_stream_id_.load() + 1;
     }
 
     /**
@@ -321,13 +396,17 @@ class XmaxRealtimeManager {
      * @param[in] format The target dimensions and frame rate supported by the model.
      */
     void update_camera_format(
-        xmax_video_format format
+        xmax_video_format format,
+        std::optional<xmax_encoding_config> encoding = {}
     );
 
     /**
      * Returns the camera format, or an all-zero format if no camera stream exists.
      */
     xmax_video_format camera_format();
+
+    /** Returns the encoder overrides on the lifecycle queue. */
+    xmax_encoding_config encoding_config();
 
     /**
      * Returns the latest directional video statistics without consuming events.
@@ -354,7 +433,7 @@ class XmaxRealtimeManager {
     /**
      * Returns the current state snapshot with its reason and error.
      */
-    xmax_event_info state_info();
+    xmax_event_info state_info() const;
 
     /**
      * Acquires an event with state reason and error details without blocking.
@@ -372,10 +451,12 @@ class XmaxRealtimeManager {
     /**
      * Disconnects for the specified reason while retaining local media.
      *
-     * @param[in] reason The normal-stop or orientation-change reason.
+     * @param[in] reason The final state reason.
+     * @param[in] failure The SDK error when the caller supplies a failure reason.
      */
     void disconnect_reason(
-        xmax_realtime_reason reason
+        xmax_realtime_reason reason,
+        std::optional<Error> failure = {}
     );
 
     /**
@@ -385,7 +466,9 @@ class XmaxRealtimeManager {
      * @param[in] frame The sampled points and actual video layout.
      */
     void submit_interaction(
-        const xmax_interaction_frame& frame
+        const xmax_interaction_frame& frame,
+        std::optional<bool> mirrored = {},
+        uint64_t remote_revision = 0
     );
 
     /**
@@ -431,6 +514,9 @@ class XmaxRealtimeManager {
      */
     std::shared_ptr<ApiService> api_;
 
+    /** Validates recording endpoint selection and Windows privacy access. */
+    std::function<void(const std::string&)> microphone_validator_;
+
     /**
      * The service managing server-session creation, keepalive, and closing.
      */
@@ -466,6 +552,17 @@ class XmaxRealtimeManager {
      */
     std::atomic<uint64_t> media_epoch_{0};
 
+    /** Stream identity changes only when a local stream is created or removed. */
+    std::atomic<uint64_t> local_stream_id_{0};
+
+    /** Whether the camera is waiting for the preview consumer to attach. */
+    std::atomic<bool> camera_preview_pending_{false};
+
+    /**
+     * Whether the external receiver is installed and waiting for source startup to finish.
+     */
+    std::atomic<bool> external_start_pending_{false};
+
     /**
      * Serializes binding revision changes with asynchronous fault admission.
      */
@@ -480,6 +577,18 @@ class XmaxRealtimeManager {
      * The microphone connection policy saved with the camera binding.
      */
     bool camera_microphone_ = false;
+
+    /**
+     * The selected Windows microphone endpoint; empty follows the system default.
+     */
+    std::string camera_microphone_device_;
+
+    /** Whether RTC callbacks may report physical microphone volume. */
+    std::mutex microphone_level_mutex_;
+    bool microphone_sampling_ = false;
+
+    void emit_microphone_level(int sample);
+    void set_microphone_sampling(bool enabled);
 
     /**
      * The mutex protecting RTC-thread statistics updates and application snapshot reads.
@@ -542,9 +651,14 @@ class XmaxRealtimeManager {
      * @param[in] context Conditions to commit on success; an empty value reuses the last committed conditions.
      * @param[in] microphone Whether to enable microphone capture if a connection must be created.
      */
-    void request_generation(
+    uint64_t request_generation(
         std::optional<Context> context,
-        bool microphone
+        bool microphone,
+        uint64_t local_revision = 0,
+        std::optional<bool> face_restoration = {},
+        bool connect_if_needed = true,
+        Cancel caller_cancelled = {},
+        bool update_only = false
     );
 
     /**
@@ -594,21 +708,7 @@ class XmaxRealtimeManager {
         XmaxRealtimeLifecycleManager::TerminationScope scope
     );
 
-    /**
-     * Runs due server-session and RTC room keepalives for an active connection.
-     */
-    void heartbeat();
-
-    /**
-     * Checks cancellation and keeps the session and room alive while waiting for generation.
-     *
-     * @param[in] cancel A cooperative cancellation predicate; true requests termination of the operation.
-     */
-    void keepalive(
-        const Cancel& cancel
-    );
-
-    /**
+            /**
      * Releases resources held by a failed operation and delivers the original SDK error.
      *
      * @param[in] error The original SDK exception whose code and diagnostic must be preserved.
@@ -631,6 +731,9 @@ class XmaxRealtimeManager {
         bool microphone
     );
 
+    /** Reports whether the local source can be published, independently of camera preview attachment. */
+    bool can_connect() const;
+
     /**
      * Sends generation conditions, enables input delivery, and waits for the first result frame.
      *
@@ -647,7 +750,7 @@ class XmaxRealtimeManager {
     /**
      * Binds local preview to a new media revision, rejecting earlier frames.
      */
-    void bind_local();
+    void bind_local(bool preserve_stream = false);
 
     /**
      * Invalidates local source callbacks and clears preview after media has stopped.

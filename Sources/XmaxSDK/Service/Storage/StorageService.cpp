@@ -9,8 +9,10 @@
 //
 
 #include "Service/Storage/StorageService.hpp"
+#include "Service/Storage/StorageFileName.hpp"
 #include "Foundation/Crypto/Sha1.hpp"
 #include "Foundation/Runtime/RuntimeInfo.hpp"
+#include "Foundation/Text/Utf8.hpp"
 #include <algorithm>
 #include <cctype>
 #include <filesystem>
@@ -92,14 +94,7 @@ HttpResponse storage_request(
     }
 }
 
-/**
- * The maximum image upload size, 20 MiB.
- */
-constexpr uint64_t image_limit = 20 * 1024 * 1024;
-
-/**
- * The maximum other-media upload and download size, 256 MiB.
- */
+/** The maximum size of a legacy download. */
 constexpr uint64_t transfer_limit = 256 * 1024 * 1024;
 
 /**
@@ -143,30 +138,31 @@ std::string encoded(
 }
 
 /**
- * Validates HTTPS hosts and rejects user information and unsafe URL characters.
+ * Validates web hosts and rejects user information and unsafe URL characters.
  *
- * @param[in] url The absolute HTTPS URL without user information.
+ * @param[in] url The absolute URL without user information.
+ * @param[in] allow_http Whether to allow plain HTTP for unauthenticated downloads.
  */
 std::string authority(
-    const std::string& url
+    const std::string& url,
+    bool allow_http = false
 ) {
+    const auto scheme = lower(url.substr(0, 8));
+    const size_t prefix = scheme == "https://" ? 8 : allow_http && scheme.rfind("http://", 0) == 0 ? 7 : 0;
     require(
-        url.rfind(
-            "https://",
-            0
-        ) == 0 &&
+        prefix != 0 &&
             url.find_first_of("\r\n\\#") == std::string::npos,
         XMAX_INVALID_ARGUMENT,
-        "A valid HTTPS URL is required"
+        allow_http ? "A valid HTTP or HTTPS URL is required" : "A valid HTTPS URL is required"
     );
 
     const auto end = url.find_first_of(
         "/?",
-        8
+        prefix
     );
     const auto host = url.substr(
-        8,
-        end == std::string::npos ? end : end - 8
+        prefix,
+        end == std::string::npos ? end : end - prefix
     );
     require(
         !host.empty() && host.find('@') == std::string::npos,
@@ -204,37 +200,6 @@ std::string required(
     return text;
 }
 
-/**
- * Normalizes an object filename to safe ASCII and trims surrounding punctuation.
- *
- * @param[in] value The uploaded object filename to normalize.
- *
- * @return A nonempty safe filename for storage metadata.
- */
-std::string safe_name(
-    const std::string& value
-) {
-    std::string result;
-
-    for (unsigned char c : value) {
-        const bool valid = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
-                           c == '.' || c == '-' || c == '_';
-        if (valid)
-            result += char(c);
-        else if (!result.empty() && result.back() != '_')
-            result += '_';
-    }
-
-    const auto first = result.find_first_not_of("._-");
-
-    if (first == std::string::npos)
-        return {};
-
-    return result.substr(
-        first,
-        result.find_last_not_of("._-") - first + 1
-    );
-}
 } // namespace
 
 /**
@@ -302,6 +267,19 @@ StoredFile StorageService::upload(
     const Cancel& cancel,
     const TransferProgress& progress
 ) {
+    HttpRequest request;
+    request.body = data;
+    return upload_source(std::move(request), std::move(name), std::move(type), safety, cancel, progress);
+}
+
+StoredFile StorageService::upload_source(
+    HttpRequest request,
+    std::string name,
+    std::string type,
+    bool safety,
+    const Cancel& cancel,
+    const TransferProgress& progress
+) {
     require(
         !cancel(),
         XMAX_CANCELLED,
@@ -311,7 +289,7 @@ StoredFile StorageService::upload(
     if (type.empty())
         type = content_type(name);
 
-    type = lower(type);
+    type = lower(std::string(trim_utf8_whitespace(type)));
 
     const bool image = type.rfind(
         "image/",
@@ -331,12 +309,12 @@ StoredFile StorageService::upload(
         XMAX_INVALID_ARGUMENT,
         "Image safety checks require an image"
     );
-    name = safe_name(name);
+    name = storage_file_name(name);
+    const auto size = request.upload ? request.upload->size : request.body.size();
     require(
-        !name.empty() && name.size() <= 512 && !data.empty() &&
-            data.size() <= (image ? image_limit : transfer_limit),
+        !name.empty() && size != 0,
         XMAX_INVALID_ARGUMENT,
-        "Invalid media filename or size (images: 20 MiB, videos: 256 MiB)"
+        "Media filename and content must be nonempty"
     );
 
     const auto sts = api_->request(
@@ -390,7 +368,7 @@ StoredFile StorageService::upload(
                 "开始上传 (Upload Started)",
                 "Upload Started"
             ) +
-                   "\n└─ bytes=" + std::to_string(data.size());
+                   "\n└─ bytes=" + std::to_string(size);
         }
     );
     require(
@@ -460,10 +438,8 @@ StoredFile StorageService::upload(
             ),
             "sha1\n" + time + "\n" + sha1_hex(canonical) + "\n"
         );
-    HttpRequest request;
     request.method = "PUT";
     request.url = "https://" + host + path;
-    request.body = data;
     request.timeout_ms = 60000;
     request.progress = progress;
     request.headers = {
@@ -520,10 +496,11 @@ StoredFile StorageService::upload(
             checked,
             "url"
         );
-        authority(result.url);
+        authority(result.url, true);
     }
 
-    progress(data.size(), data.size());
+    if (progress)
+        progress(size, size);
     XmaxLogger::write(
         LogCategory::Storage,
         XMAX_LOG_INFO,
@@ -533,7 +510,7 @@ StoredFile StorageService::upload(
                 "上传完成 (Upload Completed)",
                 "Upload Completed"
             ) +
-                   "\n└─ bytes=" + std::to_string(data.size());
+                   "\n└─ bytes=" + std::to_string(size);
         }
     );
 
@@ -573,67 +550,28 @@ StoredFile StorageService::upload_file(
         file,
         error
     );
-    require(
-        !error && size > 0 && size <= (type.rfind(
-            "image/",
-            0
-        ) == 0 ? image_limit : transfer_limit),
-        XMAX_IO_ERROR,
-        "Cannot read media file or file exceeds the upload limit"
-    );
+    require(!error && size > 0, XMAX_IO_ERROR, "Cannot read a nonempty media file");
 
-    std::ifstream stream(
-        file,
-        std::ios::binary
-    );
-    require(
-        bool(stream),
-        XMAX_IO_ERROR,
-        "Cannot open media file"
-    );
-
-    std::string data(
-        size_t(size),
-        '\0'
-    );
-
-    for (size_t offset = 0; offset < data.size();) {
-        require(
-            !cancel(),
-            XMAX_CANCELLED,
-            "Upload cancelled"
-        );
-
-        const auto count = std::min(size_t(65536), data.size() - offset);
-        stream.read(
-            data.data() + offset,
-            std::streamsize(count)
-        );
-        require(
-            size_t(stream.gcount()) == count,
-            XMAX_IO_ERROR,
-            "Media file changed while reading"
-        );
-        offset += count;
-    }
-
-    return upload(
-        data,
-        std::move(name),
-        std::move(type),
-        safety,
-        cancel,
-        progress
-    );
+    std::ifstream stream(file, std::ios::binary);
+    require(bool(stream), XMAX_IO_ERROR, "Cannot open media file");
+    HttpRequest request;
+    request.upload = HttpRequest::Upload{size, [&stream, &cancel](char* buffer, size_t count) {
+        require(!cancel(), XMAX_CANCELLED, "Upload cancelled");
+        stream.read(buffer, static_cast<std::streamsize>(count));
+        require(stream.gcount() == static_cast<std::streamsize>(count), XMAX_IO_ERROR,
+                "Media file changed while reading");
+    }};
+    return upload_source(std::move(request), std::move(name), std::move(type), safety, cancel, progress);
 }
 
 /**
- * Downloads HTTPS content to a temporary file and publishes it to a nonexistent destination on success.
+ * Downloads HTTPS content to a temporary file and publishes it to the destination on success.
  *
  * @param[in] url An absolute HTTPS URL allowed by the transport's URL policy.
- * @param[in] path The UTF-8 destination path; the file must not already exist.
+ * @param[in] path The UTF-8 destination path; must not name a directory.
  * @param[in] cancel A cooperative cancellation predicate; true requests termination of the operation.
  * @param[in] progress The byte-progress callback, receiving completed bytes followed by total bytes.
+ * @param[in] replace_existing Whether a successful download can replace an existing file.
  *
  * @return The size of the completed destination file, in bytes.
  */
@@ -641,9 +579,10 @@ uint64_t StorageService::download(
     const std::string& url,
     const std::string& path,
     const Cancel& cancel,
-    const TransferProgress& progress
+    const TransferProgress& progress,
+    bool replace_existing
 ) {
-    authority(url);
+    authority(url, replace_existing);
     require(
         !path.empty(),
         XMAX_INVALID_ARGUMENT,
@@ -652,9 +591,9 @@ uint64_t StorageService::download(
 
     const auto destination = std::filesystem::u8path(path);
     require(
-        !std::filesystem::exists(destination),
+        replace_existing ? !std::filesystem::is_directory(destination) : !std::filesystem::exists(destination),
         XMAX_IO_ERROR,
-        "Download destination already exists"
+        replace_existing ? "Download destination is a directory" : "Download destination already exists"
     );
 
     const auto temporary = std::filesystem::u8path(path + ".part-" + random_id());
@@ -674,14 +613,15 @@ uint64_t StorageService::download(
         HttpRequest request;
         request.method = "GET";
         request.url = url;
+        request.follow_download_redirects = true;
         request.timeout_ms = 120000;
-        request.response_limit = transfer_limit;
+        request.response_limit = replace_existing ? std::numeric_limits<uint64_t>::max() : transfer_limit;
         request.progress = progress;
         request.receive = [&](const char* data, size_t count) {
             require(
-                bytes + count <= transfer_limit,
+                count <= request.response_limit - bytes,
                 XMAX_IO_ERROR,
-                "Download exceeds 256 MiB"
+                "Download exceeds the byte limit"
             );
             stream.write(
                 data,
@@ -719,22 +659,52 @@ uint64_t StorageService::download(
             "Download file flush failed"
         );
         stream.close();
-#ifdef _WIN32
         require(
-            MoveFileExW(temporary.c_str(), destination.c_str(), MOVEFILE_WRITE_THROUGH),
+            bool(stream),
             XMAX_IO_ERROR,
-            "Cannot publish download; destination may exist"
+            "Download file close failed"
+        );
+        require(
+            !cancel(),
+            XMAX_CANCELLED,
+            "Download cancelled"
+        );
+
+#ifdef _WIN32
+        const DWORD flags = MOVEFILE_WRITE_THROUGH | (replace_existing ? MOVEFILE_REPLACE_EXISTING : 0);
+        require(
+            MoveFileExW(
+                temporary.c_str(),
+                destination.c_str(),
+                flags
+            ),
+            XMAX_IO_ERROR,
+            "Cannot publish download"
         );
 #else
-        require(
-            ::link(
-                temporary.c_str(),
-                destination.c_str()
-            ) == 0,
-            XMAX_IO_ERROR,
-            "Cannot publish download; destination may exist"
-        );
-        std::filesystem::remove(temporary);
+        if (replace_existing) {
+            std::error_code error;
+            std::filesystem::rename(
+                temporary,
+                destination,
+                error
+            );
+            require(
+                !error,
+                XMAX_IO_ERROR,
+                "Cannot publish download"
+            );
+        } else {
+            require(
+                ::link(
+                    temporary.c_str(),
+                    destination.c_str()
+                ) == 0,
+                XMAX_IO_ERROR,
+                "Cannot publish download; destination may exist"
+            );
+            std::filesystem::remove(temporary);
+        }
 #endif
         progress(bytes, bytes);
         XmaxLogger::write(

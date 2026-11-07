@@ -11,6 +11,8 @@
 #pragma once
 #include "Service/Realtime/RealtimeSessionService.hpp"
 #include "Stream/StreamController.hpp"
+#include "Service/Realtime/RealtimeEventRelayService.hpp"
+#include <optional>
 
 namespace xmax::detail {
 
@@ -28,9 +30,7 @@ class XmaxRealtimeConnectionManager {
      */
     explicit XmaxRealtimeConnectionManager(
         std::shared_ptr<ApiService> api
-    )
-        : service_(std::move(api)) {
-    }
+    );
 
     /**
      * Validates RTC capability before allocating a server session to avoid creating billable resources
@@ -44,10 +44,7 @@ class XmaxRealtimeConnectionManager {
     const RealtimeSession& create(
         StreamController& stream,
         const Cancel& cancel
-    ) {
-        stream.allocate();
-        return service_.create(cancel);
-    }
+    );
 
     /**
      * Returns the current session; its identifier is empty before allocation.
@@ -73,42 +70,25 @@ class XmaxRealtimeConnectionManager {
         RtcCallbacks callbacks,
         const Cancel& cancel,
         xmax_video_format canvas
-    ) {
-        stream.join(
-            service_.active().room,
-            format,
-            microphone,
-            std::move(callbacks),
-            cancel,
-            canvas
-        );
-    }
+    );
 
-    /**
-     * Keeps both the server session and RTC room alive.
-     *
-     * @param[in,out] stream The current realtime transport controller.
-     * @param[in] cancel The cooperative cancellation predicate.
+        /**
+     * Starts session billing heartbeats once after this session's generating state is committed.
      */
-    void heartbeat(
-        StreamController& stream,
-        const Cancel& cancel
-    ) {
-        service_.heartbeat(cancel);
-        stream.heartbeat(cancel);
-    }
+    void start_heartbeat(
+        const std::string& session_id,
+        std::chrono::milliseconds interval,
+        std::function<void(Error)> failure
+    );
 
     /**
-     * Stops RTC publication and drains callbacks before releasing the server session.
+     * Submits server closure concurrently with local RTC cleanup and drains session heartbeats.
      *
      * @param[in,out] stream The current realtime transport controller.
      */
     void close(
         StreamController& stream
-    ) {
-        stream.stop();
-        service_.close();
-    }
+    );
 
   private:
 
@@ -116,5 +96,20 @@ class XmaxRealtimeConnectionManager {
      * The server-session resource for the current model.
      */
     RealtimeSessionService service_;
+
+    /**
+     * The authenticated independent command-relay service.
+     */
+    RealtimeEventRelayService relay_;
+
+    /**
+     * The session-creation start used for the first billing grace duration.
+     */
+    std::optional<Clock::time_point> started_at_;
+
+    /**
+     * Whether this session has already started its HTTP heartbeat.
+     */
+    bool heartbeat_started_ = false;
 };
 } // namespace xmax::detail

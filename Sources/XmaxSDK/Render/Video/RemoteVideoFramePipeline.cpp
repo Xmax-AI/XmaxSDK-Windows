@@ -28,7 +28,9 @@ void RemoteVideoFramePipeline::activate(
 
     token_ = token;
     latest_.reset();
+    received_ = false;
     active_ = true;
+    changed_.notify_all();
     XmaxLogger::write(
         LogCategory::Render,
         XMAX_LOG_DEBUG,
@@ -56,6 +58,7 @@ void RemoteVideoFramePipeline::deactivate(
     token_ = token;
     active_ = false;
     latest_.reset();
+    changed_.notify_all();
 }
 
 /**
@@ -91,7 +94,20 @@ bool RemoteVideoFramePipeline::submit_owned(
     if (!active_ || token != token_)
         return false;
     latest_ = std::move(frame);
+    if (!std::exchange(received_, true))
+        changed_.notify_all();
     return true;
+}
+
+void RemoteVideoFramePipeline::wait_ready(uint64_t token, Clock::time_point deadline, const Cancel& cancel) {
+    std::unique_lock<std::mutex> lock(mutex_);
+    for (;;) {
+        require(active_ && token_ == token && !cancel(), XMAX_CANCELLED, "Result video binding was cleared");
+        if (received_)
+            return;
+        require(Clock::now() < deadline, XMAX_TIMEOUT, "Remote video first frame timed out");
+        changed_.wait_until(lock, std::min(deadline, Clock::now() + std::chrono::milliseconds(20)));
+    }
 }
 
 /**
@@ -99,8 +115,10 @@ bool RemoteVideoFramePipeline::submit_owned(
  *
  * @return An independently owned latest frame, or nullptr if none is pending.
  */
-std::shared_ptr<Frame> RemoteVideoFramePipeline::acquire() {
+std::shared_ptr<Frame> RemoteVideoFramePipeline::acquire(uint64_t revision) {
     std::lock_guard<std::mutex> lock(mutex_);
+    if (revision && revision - 1 != token_)
+        return {};
     return std::exchange(
         latest_,
         {}

@@ -38,7 +38,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-#define XMAX_ABI_VERSION 1u
+#define XMAX_ABI_VERSION 2u
 #pragma pack(push, 8)
 
 /**
@@ -286,7 +286,17 @@ typedef enum xmax_event_type {
     /**
      * A device performance event; code 1 means constrained and 0 means recovered.
      */
-    XMAX_EVENT_PERFORMANCE = 6 /* code: 1=limited, 0=recovered; dimensions/fps are recommendations. */
+    XMAX_EVENT_PERFORMANCE = 6, /* code: 1=limited, 0=recovered; dimensions/fps are recommendations. */
+
+    /**
+     * A physical microphone level; code is -1 when unavailable or 0 through 255.
+     */
+    XMAX_EVENT_MICROPHONE_LEVEL = 7,
+
+    /**
+     * One paired network sample; quality is uplink and code is downlink.
+     */
+    XMAX_EVENT_NETWORK_QUALITY = 8
 } xmax_event_type;
 
 /**
@@ -437,8 +447,8 @@ typedef struct xmax_client_config {
  *
  * X2.1 camera targets support 1920x1080, 1080x1920, 1408x1408, 1152x1536 and 1536x1152
  * at [1, 60] fps; dimensions must match one target exactly.
- * External input accepts even dimensions in [4, 8192] totaling at most 2100000 pixels,
- * without restricting input to camera presets.
+ * External input accepts even dimensions in [4, 8192] and a positive nominal frame rate.
+ * Resolved external processing dimensions remain within the model pixel budget.
  * Capture preserves native frame dimensions; RTC handles target aspect ratio and resolution.
  */
 typedef struct xmax_video_format {
@@ -886,6 +896,27 @@ typedef struct xmax_capabilities {
 } xmax_capabilities;
 
 /**
+ * The enclosure position reported for a capture device.
+ */
+typedef enum xmax_camera_position {
+
+    /**
+     * The device has no known front or back panel.
+     */
+    XMAX_CAMERA_POSITION_UNSPECIFIED = 0,
+
+    /**
+     * The camera faces the user.
+     */
+    XMAX_CAMERA_POSITION_FRONT = 1,
+
+    /**
+     * The camera faces away from the user.
+     */
+    XMAX_CAMERA_POSITION_BACK = 2
+} xmax_camera_position;
+
+/**
  * Borrows camera strings from an enumeration snapshot; invalid after snapshot release.
  */
 typedef struct xmax_camera_info {
@@ -913,32 +944,54 @@ typedef struct xmax_camera_info {
 } xmax_camera_info;
 
 /**
- * The camera device, RTC encoding target, and microphone policy at connection time.
+ * Initial microphone input for a local camera stream.
  */
-typedef struct xmax_camera_config {
+typedef enum xmax_microphone_kind {
+    /**
+     * Creates video without microphone capture.
+     */
+    XMAX_MICROPHONE_DISABLED = 0,
 
     /**
-     * The structure size in bytes. Initialize it with sizeof for this structure.
+     * Captures from the system default recording endpoint on connection.
+     */
+    XMAX_MICROPHONE_SYSTEM_DEFAULT = 1,
+
+    /**
+     * Captures from the specified recording endpoint on connection.
+     */
+    XMAX_MICROPHONE_DEVICE = 2
+} xmax_microphone_kind;
+
+/**
+ * Camera creation settings; mirror affects preview and publication, retaining result-display settings.
+ */
+typedef struct xmax_local_camera_options {
+    /**
+     * Initialize with sizeof(xmax_local_camera_options).
      */
     uint32_t struct_size;
-
     /**
-     * The UTF-8 camera identifier; NULL or empty selects the default device.
+     * UTF-8 camera identifier; NULL selects the system default.
      */
     const char* device_id;
-
     /**
-     * The RTC encoding target; an all-zero format selects the model's camera default: 1080x1920 at 30 fps.
-     * Frame views report actual capture dimensions.
+     * Encoding target; all zeros selects the model default.
      */
-    xmax_video_format format;
-
+    xmax_video_format video_format;
     /**
-     * A nonzero value enables the microphone when connecting to RTC.
+     * 1 mirrors local preview and published camera video; 0 disables mirroring.
      */
-    int32_t use_microphone;
-
-} xmax_camera_config;
+    int32_t mirror;
+    /**
+     * One of xmax_microphone_kind; capture begins only on connection.
+     */
+    int32_t microphone;
+    /**
+     * Required UTF-8 recording endpoint ID for XMAX_MICROPHONE_DEVICE.
+     */
+    const char* microphone_device_id;
+} xmax_local_camera_options;
 
 /**
  * The storage transfer lifecycle state.
@@ -1224,7 +1277,7 @@ typedef enum xmax_camera_preset {
 typedef enum xmax_realtime_reason {
 
     /**
-     * A normal operation or explicit stop.
+     * An explicit stop or normal resource release.
      */
     XMAX_REASON_NORMAL = 0,
 
@@ -1236,7 +1289,10 @@ typedef enum xmax_realtime_reason {
     /**
      * An operation or runtime failure; see associated error details.
      */
-    XMAX_REASON_FAILURE = 2
+    XMAX_REASON_FAILURE = 2,
+
+    /** No reason is associated with the current state. */
+    XMAX_REASON_NONE = 3
 
 } xmax_realtime_reason;
 
@@ -1559,6 +1615,45 @@ typedef struct xmax_remote_media_listener {
 } xmax_remote_media_listener;
 
 /**
+ * Result beauty strengths; enabled with all-zero strengths by default.
+ */
+typedef struct xmax_realtime_video_beauty_options {
+    uint32_t struct_size;
+    float smoothness;
+    float lightening;
+    float sharpness;
+    float redness;
+} xmax_realtime_video_beauty_options;
+
+/**
+ * The latest server-confirmed credits for the account owning the client's API key.
+ */
+typedef struct xmax_credit_balance {
+    /**
+     * Initialize with sizeof(xmax_credit_balance).
+     */
+    uint32_t struct_size;
+    /**
+     * Finite nonnegative credits, including fractional credits; valid only on success.
+     */
+    double current_balance;
+} xmax_credit_balance;
+
+/**
+ * Returns nonzero to cancel. Must not throw; context remains caller-owned during the blocking call.
+ */
+typedef int32_t(XMAX_CALL* xmax_cancellation_callback)(void* user_data);
+
+/**
+ * Optional cooperative cancellation for a single request.
+ */
+typedef struct xmax_request_cancellation {
+    uint32_t struct_size;
+    xmax_cancellation_callback is_cancelled;
+    void* user_data;
+} xmax_request_cancellation;
+
+/**
  * SDK error details; api_code and http_status are 0 when absent.
  */
 typedef struct xmax_error_info {
@@ -1759,6 +1854,7 @@ XMAX_API xmax_result XMAX_CALL xmax_last_error_info(
  * @param[in,out] info The destination structure, with struct_size initialized.
  *
  * @return XMAX_OK on success, or a negative error code on failure.
+ * @note Reads the latest published state without waiting for lifecycle operations or consuming events.
  */
 XMAX_API xmax_result XMAX_CALL xmax_realtime_get_state_info(
     xmax_realtime realtime,
@@ -1785,7 +1881,7 @@ XMAX_API xmax_result XMAX_CALL xmax_realtime_poll_event_info(
  * Disconnects for the specified reason while retaining local media preview.
  *
  * @param[in] realtime The realtime handle.
- * @param[in] reason Normal termination or orientation change; the SDK reports failure reasons.
+ * @param[in] reason Normal termination or orientation change.
  *
  * @return XMAX_OK on success, or a negative error code on failure.
  */
@@ -1793,6 +1889,26 @@ XMAX_API xmax_result XMAX_CALL
 xmax_realtime_disconnect_with_reason(
     xmax_realtime realtime,
     xmax_realtime_reason reason
+);
+
+/**
+ * Disconnects while retaining local media and publishing a caller-supplied failure as the final reason.
+ *
+ * @param[in] realtime The realtime handle.
+ * @param[in] code The negative SDK error code.
+ * @param[in] message A NUL-terminated UTF-8 error description.
+ * @param[in] api_code The service error code, or 0 if absent.
+ * @param[in] http_status The HTTP status, or 0 if absent.
+ *
+ * @return XMAX_OK on success, or a negative error code for invalid arguments or handle.
+ * @note Like xmax_realtime_disconnect, this is a no-op when no connection or related operation is active.
+ */
+XMAX_API xmax_result XMAX_CALL xmax_realtime_disconnect_with_error(
+    xmax_realtime realtime,
+    xmax_result code,
+    const char* message,
+    int32_t api_code,
+    int32_t http_status
 );
 
 /**
@@ -1874,6 +1990,8 @@ xmax_realtime_set_downlink_quality_level(
 /**
  * Maps trajectory samples to video coordinates and asynchronously sends tracks for the current task.
  *
+ * Uses the controller result-display mirror setting.
+ *
  * @param[in] realtime The realtime handle with an active generation task.
  * @param[in] frame The viewport trajectory samples, copied during this call.
  *
@@ -1886,6 +2004,35 @@ XMAX_API xmax_result XMAX_CALL
 xmax_realtime_submit_interaction(
     xmax_realtime realtime,
     const xmax_interaction_frame* frame
+);
+
+/**
+ * Submits a trajectory sampled from a viewport that can mirror the result video.
+ *
+ * @param[in] realtime The realtime controller.
+ * @param[in] frame The sampled points and actual display geometry.
+ * @param[in] mirrored Whether the displayed pixels were mirrored when sampling, 0 or 1.
+ */
+XMAX_API xmax_result XMAX_CALL xmax_realtime_submit_interaction_view(
+    xmax_realtime realtime,
+    const xmax_interaction_frame* frame,
+    int32_t mirrored
+);
+
+/**
+ * Queues a sampled gesture for the matching result stream.
+ *
+ * @param[in] realtime The realtime controller.
+ * @param[in] remote_revision The active result stream revision issued by this controller.
+ * @param[in] frame The sized viewport geometry and borrowed trajectory points.
+ * @param[in] mirrored Zero for unmirrored display or one for horizontally mirrored display.
+ * @return XMAX_OK on acceptance or XMAX_INVALID_STATE when the stream or task is inactive.
+ */
+XMAX_API xmax_result XMAX_CALL xmax_realtime_submit_stream_interaction(
+    xmax_realtime realtime,
+    uint64_t remote_revision,
+    const xmax_interaction_frame* frame,
+    int32_t mirrored
 );
 
 /**
@@ -2089,6 +2236,20 @@ xmax_camera_list_get(
 );
 
 /**
+ * Copies a camera's enclosure position without changing the camera information structure.
+ *
+ * @param[in] list The camera enumeration snapshot.
+ * @param[in] index The zero-based device index within the snapshot.
+ * @param[out] position The position, or unspecified when the device does not report it.
+ * @return XMAX_OK on success or XMAX_INVALID_ARGUMENT if a pointer or index is invalid.
+ */
+XMAX_API xmax_result XMAX_CALL xmax_camera_list_get_position(
+    xmax_camera_list list,
+    size_t index,
+    xmax_camera_position* position
+);
+
+/**
  * Releases a camera enumeration snapshot and its device strings.
  *
  * @param[in] list The snapshot to release; may be NULL.
@@ -2143,22 +2304,20 @@ xmax_realtime_prepare_external(
 );
 
 /**
- * Starts SDK camera capture and waits for the first real video frame.
+ * Creates local camera media and waits for its first real frame without creating a cloud session.
+ * Camera preview/publication mirroring and initial microphone selection are committed together.
+ * Bind the local video output to a view; release camera resources through stop_media or close.
+ * Windows validates microphone access and the selected recording endpoint when connecting RTC.
  *
- * @param[in] realtime A non-null realtime controller handle.
- * @param[in] config The camera configuration with struct_size initialized; an empty identifier selects the
- * default camera, and an all-zero video format selects the model's camera default.
- *
- * @return XMAX_OK on success, or a negative error code on failure. Use xmax_last_error for details.
- *
- * @note This call blocks; use a worker thread. Only local video is prepared; no server session is created.
- * Microphone capture follows the configuration when connecting.
+ * @param[in] realtime The realtime controller.
+ * @param[in] options The sized camera creation options.
+ * @return XMAX_OK on success; failure rolls back local media without creating a cloud session.
  */
-XMAX_API xmax_result XMAX_CALL
-xmax_realtime_prepare_camera(
+XMAX_API xmax_result XMAX_CALL xmax_realtime_create_local_camera_stream(
     xmax_realtime realtime,
-    const xmax_camera_config* config
+    const xmax_local_camera_options* options
 );
+
 
 /**
  * Switches the active camera while retaining the connection and restoring generation conditions.
@@ -2168,8 +2327,8 @@ xmax_realtime_prepare_camera(
  *
  * @return XMAX_OK on success, or a negative error code on failure. Use xmax_last_error for details.
  *
- * @note This call blocks; use a worker thread. It waits for the new camera; failure cleans up the connection
- * and local media.
+ * @note This call blocks; use a worker thread. A camera failure attempts to restore local capture.
+ * If switching during generation fails, the connection is closed.
  */
 XMAX_API xmax_result XMAX_CALL xmax_realtime_switch_camera(
     xmax_realtime realtime,
@@ -2396,14 +2555,15 @@ xmax_realtime_update(
 );
 
 /**
- * Disconnects the server session and RTC while retaining local preview and cached conditions.
+ * Disconnects the server session and RTC, clears generation conditions, and retains local preview.
  *
  * @param[in] realtime A non-null realtime controller handle.
  *
  * @return XMAX_OK on success, or a negative error code on failure. Use xmax_last_error for details.
  *
  * @note This call blocks; use a worker thread. It also requests cancellation of in-flight lifecycle
- * operations.
+ * operations. It is a no-op when no connection or related operation is active. Service cleanup
+ * failures are logged while the requested disconnect reason is preserved.
  */
 XMAX_API xmax_result XMAX_CALL xmax_realtime_disconnect(
     xmax_realtime realtime
@@ -2417,7 +2577,7 @@ XMAX_API xmax_result XMAX_CALL xmax_realtime_disconnect(
  * @return XMAX_OK on success, or a negative error code on failure. Use xmax_last_error for details.
  *
  * @note This call blocks; use a worker thread. The handle remains valid for preparing media and starting
- * another session.
+ * another session. Service cleanup failures are logged after local resource release begins.
  */
 XMAX_API xmax_result XMAX_CALL xmax_realtime_close(
     xmax_realtime realtime
@@ -2507,6 +2667,209 @@ XMAX_API xmax_result XMAX_CALL xmax_realtime_acquire_frame(
 );
 
 /**
+ * Reads the current local binding revision for a stream handle.
+ */
+XMAX_API xmax_result XMAX_CALL xmax_realtime_get_local_stream_revision(
+    xmax_realtime realtime,
+    uint64_t* revision
+);
+
+/**
+ * Connects with a specific local stream and returns the result stream revision.
+ */
+XMAX_API xmax_result XMAX_CALL xmax_realtime_connect_stream(
+    xmax_realtime realtime,
+    uint64_t local_revision,
+    uint64_t* remote_revision
+);
+
+/**
+ * Starts or updates generation with a specific local stream and returns the result stream revision.
+ */
+XMAX_API xmax_result XMAX_CALL xmax_realtime_start_generation_stream(
+    xmax_realtime realtime,
+    uint64_t local_revision,
+    const xmax_generation_context* context,
+    int32_t face_restoration,
+    uint64_t* remote_revision
+);
+
+/**
+ * Tests cancellation on an SDK worker. The callback must return promptly and must not throw.
+ *
+ * @param[in] user_data The context supplied for this operation.
+ * @return Nonzero to cancel.
+ */
+typedef int32_t (XMAX_CALL *xmax_cancellation_fn)(
+    void* user_data
+);
+
+/**
+ * Connects using a ready local stream, with cancellation scoped to this connection attempt.
+ *
+ * @param[in] realtime The realtime controller.
+ * @param[in] local_revision The ready local stream revision.
+ * @param[out] remote_revision Receives the result stream revision on success.
+ * @param[in] cancel An optional cooperative cancellation callback.
+ * @param[in] user_data The context borrowed until this call returns.
+ * @return XMAX_OK on success, XMAX_CANCELLED after cancellation cleanup, or another SDK error.
+ */
+XMAX_API xmax_result XMAX_CALL xmax_realtime_connect_stream_cancellable(
+    xmax_realtime realtime,
+    uint64_t local_revision,
+    uint64_t* remote_revision,
+    xmax_cancellation_fn cancel,
+    void* user_data
+);
+
+/**
+ * Starts or updates generation using an open connection or a supplied local stream.
+ *
+ * This call blocks until startup or the update completes. A failed or cancelled condition update
+ * keeps the active connection.
+ *
+ * @param[in] realtime The realtime controller.
+ * @param[in] local_revision A ready local stream revision, or zero to require an open connection.
+ * @param[in] context The sized generation conditions, or null to reuse the last successful conditions.
+ * @param[in] face_restoration Zero or one to override face restoration, or -1 to use the conditions' value.
+ * @param[out] remote_revision Receives the active result stream revision on success.
+ * @param[in] update_only One to require an active generation task or zero to allow startup.
+ * @param[in] cancel The optional cooperative cancellation callback.
+ * @param[in] user_data The application context borrowed by the callbacks until the call returns.
+ * @return XMAX_OK on success, XMAX_CANCELLED on cancellation, or another negative SDK error.
+ */
+XMAX_API xmax_result XMAX_CALL xmax_realtime_start_generation_cancellable(
+    xmax_realtime realtime,
+    uint64_t local_revision,
+    const xmax_generation_context* context,
+    int32_t face_restoration,
+    uint64_t* remote_revision,
+    int32_t update_only,
+    xmax_cancellation_fn cancel,
+    void* user_data
+);
+
+/**
+ * Creates a camera binding and waits for its first captured frame.
+ *
+ * The stream can connect before the preview is attached.
+ *
+ * @param[in] realtime The realtime controller.
+ * @param[in] options The sized camera options.
+ * @param[in] encoding The sized uplink encoder overrides, or null to use the controller settings.
+ * @return XMAX_OK on success or a negative SDK error code on failure.
+ */
+XMAX_API xmax_result XMAX_CALL xmax_realtime_create_local_camera_stream_with_encoding(
+    xmax_realtime realtime,
+    const xmax_local_camera_options* options,
+    const xmax_encoding_config* encoding
+);
+
+/**
+ * Updates camera dimensions, frame rate, and encoder overrides while disconnected.
+ *
+ * @param[in] realtime The realtime controller.
+ * @param[in] format The supported camera dimensions and frame rate.
+ * @param[in] encoding The sized uplink encoder overrides.
+ * @return XMAX_OK on success or a negative SDK error code on failure.
+ */
+XMAX_API xmax_result XMAX_CALL xmax_realtime_update_camera_format_with_encoding(
+    xmax_realtime realtime,
+    const xmax_video_format* format,
+    const xmax_encoding_config* encoding
+);
+
+/**
+ * Reads the controller's uplink encoder overrides.
+ *
+ * @param[in] realtime The realtime controller.
+ * @param[in,out] encoding The destination with struct_size initialized.
+ * @return XMAX_OK on success or a negative SDK error code on failure.
+ */
+XMAX_API xmax_result XMAX_CALL xmax_realtime_get_encoding(
+    xmax_realtime realtime,
+    xmax_encoding_config* encoding
+);
+
+/**
+ * Binds an external source and applies encoder overrides to its publication format.
+ *
+ * Call xmax_external_frame_sink_complete_startup after installing the source callback.
+ *
+ * @param[in] realtime The realtime controller.
+ * @param[in] source The sized input format and audio declaration.
+ * @param[in] processing_format The processing format, or null to resolve it from the source.
+ * @param[out] resolved_format Receives the resolved processing format on success.
+ * @param[out] sink Receives an owned source receiver; cleared on failure.
+ * @param[in] encoding The optional sized encoder overrides.
+ * @return XMAX_OK on success or a negative SDK error code on failure.
+ */
+XMAX_API xmax_result XMAX_CALL xmax_realtime_create_external_video_stream_with_encoding(
+    xmax_realtime realtime,
+    const xmax_external_media_config* source,
+    const xmax_video_format* processing_format,
+    xmax_video_format* resolved_format,
+    xmax_external_frame_sink* sink,
+    const xmax_encoding_config* encoding
+);
+
+/**
+ * Takes the latest available frame from the specified media binding.
+ *
+ * @param[in] realtime The realtime controller.
+ * @param[in] local One for local media or zero for the result stream.
+ * @param[in] revision The stream revision issued by this controller.
+ * @param[out] frame Receives an owned frame; null when no frame is available or on failure.
+ * @return XMAX_OK for an owned frame, XMAX_NO_EVENT when no frame is available, or a negative SDK error.
+ */
+XMAX_API xmax_result XMAX_CALL xmax_realtime_acquire_stream_frame(
+    xmax_realtime realtime,
+    int32_t local,
+    uint64_t revision,
+    xmax_frame* frame
+);
+
+/**
+ * Takes the latest result frame and reports its content revision, even when no frame is pending.
+ *
+ * Clear retained result pixels when this value changes. A subsequent generation can deliver new
+ * frames under the same track identity.
+ *
+ * @param[in] realtime The realtime controller.
+ * @param[in] track_revision The result stream revision issued by this controller.
+ * @param[out] content_revision Receives the current content revision.
+ * @param[out] frame Receives an owned frame, or null when no frame is available or on failure.
+ * @return XMAX_OK for an owned frame, XMAX_NO_EVENT when no frame is pending, or a negative SDK error.
+ */
+XMAX_API xmax_result XMAX_CALL xmax_realtime_acquire_result_video_frame(
+    xmax_realtime realtime,
+    uint64_t track_revision,
+    uint64_t* content_revision,
+    xmax_frame* frame
+);
+
+/**
+ * Reads negotiated video track metadata for the supplied stream revision.
+ *
+ * @param[in] realtime The realtime controller that issued the stream revision.
+ * @param[in] local One for local media or zero for the result stream.
+ * @param[in] revision The stream revision issued by this controller.
+ * @param[out] format Receives the negotiated format.
+ * @param[in,out] encoding Optional encoder settings destination with struct_size initialized.
+ * @param[out] camera Optional destination for an owned single-device snapshot, or null for non-camera tracks.
+ * @return XMAX_OK on success, XMAX_NO_EVENT for a retired stream, or a negative SDK error.
+ * @note Release a returned camera snapshot with xmax_camera_list_release.
+ */
+XMAX_API xmax_result XMAX_CALL xmax_realtime_get_video_track_info(
+    xmax_realtime realtime,
+    int32_t local,
+    uint64_t revision,
+    xmax_video_format* format,
+    xmax_encoding_config* encoding,
+    xmax_camera_list* camera
+);
+
+/**
  * Acquires the latest local preview frame without blocking.
  *
  * @param[in] realtime A non-null realtime controller handle.
@@ -2591,6 +2954,7 @@ XMAX_API xmax_result XMAX_CALL xmax_frame_render_window(
  * @return XMAX_OK on success, or a negative error code on failure. Use xmax_last_error for details.
  *
  * @note Release with xmax_storage_destroy. The handle independently retains the client configuration.
+ * An empty API key returns XMAX_INVALID_API_KEY.
  */
 XMAX_API xmax_result XMAX_CALL xmax_storage_create(
     xmax_client client,
@@ -2609,7 +2973,7 @@ XMAX_API void XMAX_CALL xmax_storage_destroy(
 );
 
 /**
- * Requests cancellation of the current storage transfer.
+ * Requests cancellation of all admitted storage transfers.
  *
  * @param[in] storage The storage handle; may be NULL.
  *
@@ -2620,9 +2984,9 @@ XMAX_API void XMAX_CALL xmax_storage_cancel(
 );
 
 /**
- * Returns a thread-safe transfer state and byte-progress snapshot.
+ * Returns the state and byte progress of the most recently started transfer.
  *
- * @param[in] storage A non-null storage handle. Each instance permits one active transfer.
+ * @param[in] storage A non-null storage handle.
  * @param[in,out] progress A non-null destination structure with struct_size initialized.
  *
  * @return XMAX_OK on success, or a negative error code on failure. Use xmax_last_error for details.
@@ -2646,7 +3010,7 @@ xmax_storage_get_progress(
  *
  * @return XMAX_OK on success, or a negative error code on failure. Use xmax_last_error for details.
  *
- * @note This call blocks; use a worker thread. Images are limited to 20 MiB and other media to 256 MiB.
+ * @note This call blocks; use a worker thread. File contents are streamed to storage.
  * Release results with xmax_uploaded_file_release.
  */
 XMAX_API xmax_result XMAX_CALL xmax_storage_upload_file(
@@ -2699,6 +3063,93 @@ XMAX_API xmax_result XMAX_CALL xmax_storage_download(
 );
 
 /**
+ * Reports byte progress for one synchronous storage operation on its calling thread.
+ *
+ * The callback must return promptly and must not throw.
+ *
+ * @param[in] user_data The context supplied for this transfer.
+ * @param[in] completed The number of transferred bytes.
+ * @param[in] total The total byte count, or zero if unknown.
+ */
+typedef void (XMAX_CALL *xmax_storage_progress_fn)(
+    void* user_data,
+    uint64_t completed,
+    uint64_t total
+);
+
+/**
+ * The accepted media categories for typed storage uploads.
+ */
+enum {
+
+    /**
+     * An image; the caller may request an image safety check.
+     */
+    XMAX_STORAGE_MEDIA_IMAGE = 1,
+
+    /**
+     * A video.
+     */
+    XMAX_STORAGE_MEDIA_VIDEO = 2
+};
+
+/**
+ * Uploads a local image or video from exactly one source.
+ *
+ * This call blocks. Typed transfers can overlap on one controller. Release a successful result with
+ * xmax_uploaded_file_release.
+ *
+ * @param[in] storage The storage transfer controller.
+ * @param[in] path A UTF-8 file path, or null when uploading bytes.
+ * @param[in] data Borrowed encoded bytes, or null when uploading a file.
+ * @param[in] length The byte count, or zero when uploading a file.
+ * @param[in] options The sized filename, MIME type, and optional image safety policy.
+ * @param[in] media_kind The expected media category, image or video.
+ * @param[out] out Receives an owned upload result; cleared on failure.
+ * @param[in] progress The optional byte progress callback.
+ * @param[in] cancel The optional cooperative cancellation callback.
+ * @param[in] user_data The application context borrowed by the callbacks until the call returns.
+ * @return XMAX_OK on success or a negative SDK error code on failure.
+ */
+XMAX_API xmax_result XMAX_CALL xmax_storage_upload_media(
+    xmax_storage storage,
+    const char* path,
+    const uint8_t* data,
+    size_t length,
+    const xmax_upload_options* options,
+    int32_t media_kind,
+    xmax_uploaded_file* out,
+    xmax_storage_progress_fn progress,
+    xmax_cancellation_fn cancel,
+    void* user_data
+);
+
+/**
+ * Downloads HTTP or HTTPS content and replaces an existing file only after a successful transfer.
+ *
+ * The transfer is staged beside the destination. A failed or cancelled transfer leaves an
+ * existing destination file intact. Typed transfers can overlap on one controller.
+ *
+ * @param[in] storage The storage transfer controller.
+ * @param[in] url The absolute HTTP or HTTPS source URL.
+ * @param[in] destination The UTF-8 file path; it must not name a directory.
+ * @param[out] bytes Receives the completed byte count; zero on failure.
+ * @param[in] progress The optional byte progress callback.
+ * @param[in] cancel The optional cooperative cancellation callback.
+ * @param[in] user_data The application context borrowed by the callbacks until the call returns.
+ * @return XMAX_OK on success or a negative SDK error code on failure.
+ */
+XMAX_API xmax_result XMAX_CALL xmax_storage_download_with_progress(
+    xmax_storage storage,
+    const char* url,
+    const char* destination,
+    uint64_t* bytes,
+    xmax_storage_progress_fn progress,
+    xmax_cancellation_fn cancel,
+    void* user_data
+);
+
+/**
  * Returns borrowed metadata from an upload result.
  *
  * @param[in] file A non-null upload result handle.
@@ -2721,6 +3172,23 @@ xmax_uploaded_file_get_info(
  */
 XMAX_API void XMAX_CALL xmax_uploaded_file_release(
     xmax_uploaded_file file
+);
+
+/** Queries GET /balance using the client's API key and general service environment.
+ * Each invocation requests the current server balance. No realtime session, capture or cached balance
+ * is involved; the application owns refresh scheduling and insufficient-credit policy.
+ *
+ * @param[in] client The valid client; keep it alive until the call returns.
+ * @param[out] balance Sized destination, written only on success. Never treat an error as zero credits.
+ * @param[in] cancellation Optional sized cancellation callback; NULL disables cancellation.
+ * @return XMAX_OK or a negative result. Service and transport details use xmax_last_error_info.
+ * @note This call blocks. Use a worker thread. Cancellation is cooperative and may wait for an active
+ * native HTTP phase to return within the configured timeout. Callback/context are borrowed only during this call.
+ */
+XMAX_API xmax_result XMAX_CALL xmax_client_get_credit_balance(
+    xmax_client client,
+    xmax_credit_balance* balance,
+    const xmax_request_cancellation* cancellation
 );
 
 /**
@@ -2768,7 +3236,7 @@ XMAX_API void XMAX_CALL xmax_string_release(
 );
 
 /**
- * Sets serialized remote PCM and video delivery without changing playback volume or subscriptions.
+ * Sets serialized remote PCM and generated video delivery after beauty, without changing playback volume or subscriptions.
  *
  * @param[in] realtime A valid realtime controller.
  * @param[in] listener The listener configuration, copied on success; NULL clears it and queued output.
@@ -2785,6 +3253,32 @@ XMAX_API xmax_result XMAX_CALL xmax_realtime_set_remote_media_frame_listener(
     xmax_realtime realtime,
     const xmax_remote_media_listener* listener
 );
+
+/** Runtime beauty failure after fallback; error is borrowed during the callback.
+ * Dispatch blocking SDK work elsewhere; callbacks must not synchronously close or configure the controller.
+ */
+typedef void(XMAX_CALL* xmax_video_beauty_error_callback)(void* user_data, const xmax_error_info* error);
+typedef struct xmax_video_beauty_error_listener {
+    uint32_t struct_size;
+    xmax_video_beauty_error_callback on_error;
+    void* user_data;
+    xmax_listener_context_release release_user_data;
+} xmax_video_beauty_error_listener;
+
+/** Configures result beauty once before preview and media delivery; NULL disables and releases the helper.
+ * Strengths must be finite in [0,1]. Default is enabled with four zero strengths. Can be configured before
+ * connecting or during generation on a worker thread. Reconnection retains options; full close restores
+ * defaults. Input/publication are unchanged. Configuration failures return here; later frame failures
+ * disable only beauty and notify the separate listener. Generation continues with original pixels.
+ */
+XMAX_API xmax_result XMAX_CALL xmax_realtime_set_remote_video_beauty(
+    xmax_realtime realtime, const xmax_realtime_video_beauty_options* options);
+
+/** Registers recoverable beauty failures; NULL clears. Full close also clears this listener.
+ * Context ownership transfers only on success; release_user_data runs after its final in-flight callback.
+ */
+XMAX_API xmax_result XMAX_CALL xmax_realtime_set_remote_video_beauty_error_listener(
+    xmax_realtime realtime, const xmax_video_beauty_error_listener* listener);
 
 /**
  * Retains a callback-borrowed or owned packet without copying its media bytes.
@@ -2947,6 +3441,139 @@ XMAX_API xmax_result XMAX_CALL xmax_realtime_bind_external_media(
     xmax_realtime realtime,
     const xmax_external_media_config* config,
     xmax_external_frame_sink* out_sink
+);
+
+/**
+ * Prepares an external video stream on an idle controller and returns a source-scoped receiver.
+ * Install frame delivery and call xmax_external_frame_sink_complete_startup to publish READY.
+ * The receiver can accept frames while the controller is preparing.
+ *
+ * @param[in] realtime The idle realtime controller.
+ * @param[in] source The source dimensions, frame rate and optional PCM declaration.
+ * @param[in] processing_format Optional processing target. NULL uses the source format.
+ * @param[out] resolved_format Receives the processing format aligned to the model area limits.
+ * @param[out] out_sink Receives the receiver for frames at the original source dimensions.
+ */
+XMAX_API xmax_result XMAX_CALL xmax_realtime_create_external_video_stream(
+    xmax_realtime realtime,
+    const xmax_external_media_config* source,
+    const xmax_video_format* processing_format,
+    xmax_video_format* resolved_format,
+    xmax_external_frame_sink* out_sink
+);
+
+/**
+ * Marks the prepared source ready after frame delivery has been installed.
+ *
+ * @param[in] sink The receiver returned by xmax_realtime_create_external_video_stream.
+ */
+XMAX_API xmax_result XMAX_CALL xmax_external_frame_sink_complete_startup(
+    xmax_external_frame_sink sink
+);
+
+/**
+ * Starts camera capture. A preview consumer can publish READY before connection begins.
+ */
+XMAX_API xmax_result XMAX_CALL xmax_realtime_create_local_camera_preview_stream(
+    xmax_realtime realtime,
+    const xmax_local_camera_options* options
+);
+
+/**
+ * Signals that the camera preview track is being consumed.
+ */
+XMAX_API xmax_result XMAX_CALL xmax_realtime_complete_camera_preview(
+    xmax_realtime realtime,
+    uint64_t revision
+);
+
+/**
+ * Lists camera endpoints without starting capture.
+ */
+XMAX_API xmax_result XMAX_CALL xmax_realtime_list_cameras(
+    xmax_realtime realtime,
+    xmax_camera_list* devices
+);
+
+/**
+ * Resolves local media for a camera (camera = 1) or external source (camera = 0).
+ */
+XMAX_API xmax_result XMAX_CALL xmax_resolve_media_format(
+    const char* model,
+    const xmax_video_format* source,
+    int32_t camera,
+    xmax_video_format* resolved
+);
+
+/**
+ * Resolves the model's generation canvas from the local media format.
+ */
+XMAX_API xmax_result XMAX_CALL xmax_resolve_generation_format(
+    const char* model,
+    const xmax_video_format* source,
+    xmax_video_format* resolved
+);
+
+/**
+ * Resolves a target video format within the supplied downlink bounds.
+ */
+XMAX_API xmax_result XMAX_CALL xmax_resolve_downlink_format(
+    const xmax_video_format* source,
+    double maximum_width,
+    double maximum_height,
+    xmax_video_format* resolved
+);
+
+/**
+ * Lists Windows microphone endpoints without opening a capture stream.
+ * The returned device list uses the camera-list accessors and release function.
+ */
+XMAX_API xmax_result XMAX_CALL xmax_realtime_list_microphones(
+    xmax_realtime realtime,
+    xmax_camera_list* devices
+);
+
+/**
+ * Selects a physical or virtual recording endpoint for the camera stream.
+ * NULL follows the system default. This does not restart video generation.
+ */
+XMAX_API xmax_result XMAX_CALL xmax_realtime_switch_microphone(
+    xmax_realtime realtime,
+    const char* device_id
+);
+
+/**
+ * Enables or disables physical microphone capture and RTC publication for the camera stream.
+ */
+XMAX_API xmax_result XMAX_CALL xmax_realtime_set_microphone_enabled(
+    xmax_realtime realtime,
+    int32_t enabled
+);
+
+/**
+ * Returns the camera stream's microphone intent, or zero when there is no camera stream.
+ */
+XMAX_API xmax_result XMAX_CALL xmax_realtime_get_microphone_enabled(
+    xmax_realtime realtime,
+    int32_t* enabled
+);
+
+/**
+ * Stops camera capture after disconnection. External input is unaffected.
+ *
+ * @param[in] realtime The disconnected realtime controller.
+ */
+XMAX_API xmax_result XMAX_CALL xmax_realtime_stop_local_camera_stream(
+    xmax_realtime realtime
+);
+
+/**
+ * Stops external input after disconnection. Camera input is unaffected.
+ *
+ * @param[in] realtime The disconnected realtime controller.
+ */
+XMAX_API xmax_result XMAX_CALL xmax_realtime_stop_external_video_stream(
+    xmax_realtime realtime
 );
 
 /**

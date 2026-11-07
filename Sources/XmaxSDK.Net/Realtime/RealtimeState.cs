@@ -10,44 +10,28 @@
 
 namespace Xmax.SDK;
 
-/// <summary>
-/// The lifecycle state of a realtime controller.
-/// </summary>
-public enum RealtimeState
+/// <summary>The current realtime connection state and its optional business identifiers and reason.</summary>
+/// <param name="ConnectionState">The connection lifecycle phase.</param>
+/// <param name="SessionId">The current or most recent session identifier.</param>
+/// <param name="TaskId">The current generation task identifier.</param>
+/// <param name="Reason">The reason for the state, when applicable.</param>
+public sealed record RealtimeState(
+    RealtimeConnectionState ConnectionState,
+    string? SessionId = null,
+    string? TaskId = null,
+    RealtimeReason? Reason = null
+)
 {
-
-    /// <summary>
-    /// No local media is prepared.
-    /// </summary>
-    Idle,
-
-    /// <summary>
-    /// Local media is prepared without an active connection.
-    /// </summary>
-    Ready,
-
-    /// <summary>
-    /// A server session and RTC connection are being established.
-    /// </summary>
-    Connecting,
-
-    /// <summary>
-    /// The RTC connection is ready without active generation.
-    /// </summary>
-    Connected,
-
-    /// <summary>
-    /// Generation is active or waiting for its first result.
-    /// </summary>
-    Generating,
-
-    /// <summary>
-    /// The connection is being closed.
-    /// </summary>
-    Disconnecting,
-
-    /// <summary>
-    /// Local media is being prepared or reconfigured.
-    /// </summary>
-    Preparing
+    internal static RealtimeState From(RealtimeEvent item) => new(
+        item.State,
+        item.SessionId.Length == 0 ? null : item.SessionId,
+        item.TaskId.Length == 0 ? null : item.TaskId,
+        item.Reason switch
+        {
+            0 => RealtimeReason.Normal,
+            1 => RealtimeReason.OrientationChanged,
+            2 => new RealtimeReason.Failure(new(item.Code, item.Message, item.ApiCode, item.HttpStatus)),
+            _ => null
+        }
+    );
 }

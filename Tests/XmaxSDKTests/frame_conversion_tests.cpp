@@ -1,4 +1,15 @@
+//
+//  frame_conversion_tests.cpp
+//  XmaxSDK
+//
+//  Author: 翁跃庭 (Yueting Weng)
+//  GitHub: https://github.com/Xmax-AI/XmaxSDK-Windows
+//
+//  Copyright (c) 2026 XMAX.AI PTE. LTD.
+//
+
 #include "Foundation/Media/FrameConverter.hpp"
+#include "Media/External/ExternalVideoFrame.hpp"
 #include "Media/MediaController.hpp"
 #include "Service/Media/MediaService.hpp"
 #include "TestSupport.hpp"
@@ -129,6 +140,24 @@ static void render_conversion() {
     }
 }
 
+static void external_center_crop() {
+    auto bgra = native_frame(8, 4, XMAX_BGRA, 10);
+    for (size_t y = 0; y < bgra.height; ++y)
+        for (size_t x = 0; x < bgra.width; ++x)
+            bgra.planes[0][y * bgra.strides[0] + 4 * x] = uint8_t(20 * x);
+    const auto square = copy_external_video_frame(bgra.view(), {4, 4, 30}, true);
+    CHECK(square.timestamp_us == 10 && square.planes[0][0] == 40 && square.planes[0][12] == 100);
+    const auto scaled = copy_external_video_frame(bgra.view(), {2, 2, 30}, true);
+    CHECK(scaled.planes[0][0] > 40 && scaled.planes[0][0] < 60);
+    CHECK(scaled.planes[0][4] > 80 && scaled.planes[0][4] < 100);
+
+    auto yuv = native_frame(8, 4, XMAX_I420, 11);
+    yuv.planes[1] = {20, 40, 60, 80, 20, 40, 60, 80};
+    yuv.planes[2] = {25, 45, 65, 85, 25, 45, 65, 85};
+    const auto nv12 = copy_external_video_frame(yuv.view(), {4, 4, 30}, true);
+    CHECK(nv12.format == XMAX_NV12 && nv12.planes[1] == std::vector<uint8_t>({40, 45, 60, 65, 40, 45, 60, 65}));
+}
+
 int main() {
     try {
         model_formats();
@@ -136,6 +165,7 @@ int main() {
         camera_passthrough(XMAX_NV12);
         camera_passthrough(XMAX_I420);
         render_conversion();
+        external_center_crop();
         std::cout << "Native frame ownership, dimensions, pixel formats and model presets passed\n";
         return 0;
     } catch (const std::exception& error) {

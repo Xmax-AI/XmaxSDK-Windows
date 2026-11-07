@@ -12,6 +12,7 @@
 #include "Service/Realtime/RealtimeSession.hpp"
 #include "Foundation/RTC/RtcPlatform.hpp"
 #include "Service/Network/ApiService.hpp"
+#include "Service/Realtime/RealtimeSessionHeartbeat.hpp"
 
 namespace xmax::detail {
 
@@ -43,6 +44,11 @@ class RealtimeSessionService {
     }
 
     /**
+     * Stops and drains the heartbeat worker without making a session-close request.
+     */
+    ~RealtimeSessionService();
+
+    /**
      * Allocates a server session and validates RTC information, retaining the identifier needed for
      * rollback.
      *
@@ -58,10 +64,27 @@ class RealtimeSessionService {
      * Refreshes the active server session with cooperative cancellation.
      *
      * @param[in] cancel A cooperative cancellation predicate; true requests termination of the operation.
+     * @param[in] first_grace_seconds The startup duration rounded up to seconds, sent only with the first
+     * request.
      */
     void heartbeat(
-        const Cancel& cancel
+        const Cancel& cancel,
+        std::optional<int64_t> first_grace_seconds = {}
     );
+
+    /**
+     * Starts one immediate HTTP heartbeat, then periodic requests; failures are reported asynchronously.
+     */
+    void start_heartbeat(
+        int64_t first_grace_seconds,
+        std::chrono::milliseconds interval,
+        std::function<void(Error)> failure
+    );
+
+    /**
+     * Invalidates heartbeat results and drains its worker before returning.
+     */
+    void stop_heartbeat();
 
     /**
      * Closes the active server session and clears its local record.
@@ -89,5 +112,10 @@ class RealtimeSessionService {
      * The active session and RTC information, cleared on closing.
      */
     RealtimeSession session_;
+
+    /**
+     * The session heartbeat worker, drained before releasing its HTTP dependencies.
+     */
+    std::unique_ptr<RealtimeSessionHeartbeat> heartbeat_;
 };
 } // namespace xmax::detail

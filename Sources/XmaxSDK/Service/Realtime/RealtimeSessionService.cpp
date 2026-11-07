@@ -9,6 +9,7 @@
 //
 
 #include "Service/Realtime/RealtimeSessionService.hpp"
+#include "Foundation/Text/Utf8.hpp"
 
 namespace xmax::detail {
 
@@ -22,12 +23,15 @@ static std::string field(
     const json& j,
     const char* key
 ) {
+    auto value = j.contains(key) && j[key].is_string()
+                     ? trim_utf8_whitespace(j[key].get_ref<const std::string&>())
+                     : std::string_view{};
     require(
-        j.contains(key) && j[key].is_string() && !j[key].get_ref<const std::string&>().empty(),
+        !value.empty(),
         XMAX_SESSION_ERROR,
         "Session response is missing RTC connection fields"
     );
-    return j[key].get<std::string>();
+    return std::string(value);
 }
 
 /**
@@ -45,6 +49,8 @@ RealtimeSession parse_connection(
         payload,
         "sessionUid"
     );
+    if (payload.contains("modelUid") && payload["modelUid"].is_string())
+        c.model_id = trim_utf8_whitespace(payload["modelUid"].get_ref<const std::string&>());
     require(
         payload.contains("modelExtra"),
         XMAX_SESSION_ERROR,
@@ -73,6 +79,7 @@ RealtimeSession parse_connection(
         extra,
         "rtc_app_id"
     );
+    require(c.room.app_id == realtime_rtc_app_id, XMAX_SESSION_ERROR, "Session RTC app does not match the SDK configuration");
     c.room.room = field(
         extra,
         "room_id"
@@ -121,7 +128,7 @@ const RealtimeSession& RealtimeSessionService::create(
 
     // Retain the allocated session identifier so later validation failures can release server resources.
     if (payload.contains("sessionUid") && payload["sessionUid"].is_string())
-        session_.id = payload["sessionUid"].get<std::string>();
+        session_.id = trim_utf8_whitespace(payload["sessionUid"].get_ref<const std::string&>());
 
     session_ = parse_connection(payload);
 
@@ -134,46 +141,72 @@ const RealtimeSession& RealtimeSessionService::create(
  * @param[in] cancel A cooperative cancellation predicate; true requests termination of the operation.
  */
 void RealtimeSessionService::heartbeat(
-    const Cancel& cancel
+    const Cancel& cancel,
+    std::optional<int64_t> first_grace_seconds
 ) {
     require(
         !session_.id.empty(),
         XMAX_INVALID_STATE,
         "No server session is allocated"
     );
-
-    const auto value = api_->request(
-        "PUT",
-        "/session/" + session_.id + "/heartbeat",
-        nullptr,
+    RealtimeSessionHeartbeat::request(
+        *api_,
+        session_.id,
         cancel,
-        true
+        first_grace_seconds
     );
+}
 
-    if (value.contains("status") && value["status"].is_string())
-        require(
-            value["status"] == "ACTIVE",
-            XMAX_SESSION_ERROR,
-            "Server session is no longer active"
-        );
+RealtimeSessionService::~RealtimeSessionService() {
+    stop_heartbeat();
+}
+
+void RealtimeSessionService::start_heartbeat(
+    int64_t first_grace_seconds,
+    std::chrono::milliseconds interval,
+    std::function<void(Error)> failure
+) {
+    require(
+        !session_.id.empty() && first_grace_seconds >= 0 && interval.count() > 0,
+        XMAX_INVALID_STATE,
+        "Invalid session heartbeat configuration"
+    );
+    if (heartbeat_)
+        return;
+    heartbeat_ = std::make_unique<RealtimeSessionHeartbeat>(
+        api_,
+        session_.id,
+        first_grace_seconds,
+        interval,
+        std::move(failure)
+    );
+}
+
+void RealtimeSessionService::stop_heartbeat() {
+    heartbeat_.reset();
 }
 
 /**
  * Closes the active server session and clears its local record.
  */
 void RealtimeSessionService::close() {
-    // Clear local ownership even if server closing fails to avoid reusing an invalid session.
-    auto previous = std::exchange(
-        session_,
-        {}
-    );
-    if (!previous.id.empty())
-        api_->request(
-            "DELETE",
-            "/session/" + previous.id,
-            nullptr,
-            [] { return false; },
-            true
-        );
+    auto previous = std::exchange(session_, {});
+    if (heartbeat_)
+        heartbeat_->cancel();
+    // Submit server closure before draining an active HTTP phase or local RTC cleanup.
+    try {
+        if (!previous.id.empty())
+            api_->request(
+                "DELETE",
+                "/session/" + previous.id,
+                nullptr,
+                [] { return false; },
+                true
+            );
+    } catch (...) {
+        stop_heartbeat();
+        throw;
+    }
+    stop_heartbeat();
 }
 } // namespace xmax::detail

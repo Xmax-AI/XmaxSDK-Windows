@@ -1,3 +1,13 @@
+//
+//  MainWindow.Verification.cs
+//  XmaxSDK
+//
+//  Author: 翁跃庭 (Yueting Weng)
+//  GitHub: https://github.com/Xmax-AI/XmaxSDK-Windows
+//
+//  Copyright (c) 2026 XMAX.AI PTE. LTD.
+//
+
 using System.IO;
 using System.Text.Json;
 using Microsoft.UI.Xaml;
@@ -10,6 +20,7 @@ using Windows.Graphics.Imaging;
 using Windows.Storage.Streams;
 using XLab.Shared.ViewModels;
 using Xmax.SDK;
+using Xmax.SDK.WinUI;
 
 namespace XLabWinUI;
 
@@ -79,24 +90,25 @@ public sealed partial class MainWindow
     private static void Check(bool condition, string message) { if (!condition) throw new InvalidOperationException(message); }
     private async Task VerifyModelsAsync()
     {
-        string original = Model.SelectedModel;
+        RealtimeModel original = Model.SelectedModel;
         try
         {
-            foreach (string identifier in MainViewModel.Models.Reverse())
+            foreach (RealtimeModel model in MainViewModel.Models.Reverse())
             {
                 OpenModels();
                 var surface = (Border)popups.Single().Child;
                 var list = (StackPanel)surface.Child;
                 Check(list.Children.Count == 1, "The model menu must contain only X2.1.");
+                string identifier = XmaxClient.GetModelInfo(model).Identifier;
                 var option = list.Children.OfType<Button>().Single(button => Microsoft.UI.Xaml.Automation.AutomationProperties.GetName(button) == identifier);
                 await UntilAsync(() => option.IsLoaded);
-                if (identifier.EndsWith("-us")) await SaveScreenshotAsync("model-menu", surface);
+                await SaveScreenshotAsync("model-menu", surface);
                 var peer = FrameworkElementAutomationPeer.CreatePeerForElement(option)!;
                 ((IInvokeProvider)peer.GetPattern(PatternInterface.Invoke)).Invoke();
-                await UntilAsync(() => Model.SelectedModel == identifier && popups.Count == 0);
+                await UntilAsync(() => Model.SelectedModel == model && popups.Count == 0);
                 Check(modelButton.Text == Model.ModelDisplayName && sessionModelLabel.Text == Model.ModelDisplayName, "Model labels did not follow selection.");
                 Check(Model.Session is null, "Selecting a model started a session.");
-                Check(Model.SelectedFormat == new VideoFormat(1920, 1080, 30), "The example must use 1920x1080 capture independently of the SDK default.");
+                Check(Model.SelectedFormat == new VideoFormat(1920, 1080, 30), "The example must use the SDK’s 1920x1080 model default.");
             }
         }
         finally { ClosePopups(); Model.SelectedModel = original; }
@@ -116,7 +128,7 @@ public sealed partial class MainWindow
         bool passed = false, referenceUpdatePassed = false;
         string? error = null;
         var transitions = new List<object>();
-        var pageEntryStates = new List<RealtimeState>();
+        var pageEntryStates = new List<RealtimeConnectionState>();
         void ObservePageEntry(object? sender, System.ComponentModel.PropertyChangedEventArgs args)
         {
             if (args.PropertyName == nameof(Model.Active) && Model.Active && !Model.IsPreview) pageEntryStates.Add(Model.State);
@@ -125,6 +137,7 @@ public sealed partial class MainWindow
         try
         {
             await Task.Delay(650);
+            if (mode == "--smoke-test-beauty") await VerifyBeautyAsync();
             if (mode == "--smoke-test-ui")
             {
                 await VerifyModelsAsync();
@@ -194,7 +207,7 @@ public sealed partial class MainWindow
                     await SaveScreenshotAsync("startup-landing");
                     await UntilAsync(() => !Model.Busy, 90);
                     Check(Model.Error.Length == 0, Model.Error);
-                    Check(pageEntryStates.Count == 1 && pageEntryStates[0] is RealtimeState.Connected or RealtimeState.Generating,
+                    Check(pageEntryStates.Count == 1 && pageEntryStates[0] is RealtimeConnectionState.Connected or RealtimeConnectionState.Generating,
                         "The generation page opened before RTC connected.");
                 }
                 await UntilAsync(() => LocalView.PresentedFrameCount >= 10);
@@ -211,7 +224,7 @@ public sealed partial class MainWindow
                 Check(Model.Error.Length == 0, Model.Error);
                 await SaveScreenshotAsync("local-video", LocalView); if (mode == "--smoke-test-live") await SaveScreenshotAsync("remote-video", RemoteView);
             }
-            await SaveScreenshotAsync(mode.TrimStart('-'));
+            if (mode != "--smoke-test-beauty") await SaveScreenshotAsync(mode.TrimStart('-'));
             passed = true;
         }
         catch (Exception failure) { error = failure.ToString(); }
@@ -249,10 +262,15 @@ public sealed partial class MainWindow
         using var client = new XmaxClient(); await using var realtime = client.CreateRealtime();
         using var sink = await realtime.BindExternalAsync(new(16, 8));
         Model.StatisticsVisible = false;
-        LocalView.Width = 160; LocalView.Height = 80; LocalView.VideoSource = realtime.LocalVideo;
+        LocalView.Width = 160; LocalView.Height = 80; LocalView.FirstFrameFadeInDuration = 0;
+        LocalView.VideoSource = realtime.LocalVideo;
         byte[] pixels = new byte[64 * 8];
         for (int y = 0; y < 8; ++y) for (int x = 0; x < 16; ++x) { int i = y * 64 + x * 4; pixels[i + (x < 8 ? 2 : 0)] = 255; pixels[i + 3] = 255; }
-        sink.PushBgra(pixels, 64, 1000); await UntilAsync(() => LocalView.PresentedFrameCount >= 1); await Task.Delay(100);
+        workspace.Visibility = Visibility.Collapsed;
+        sink.PushBgra(pixels, 64, 1000);
+        await UntilAsync(() => LocalView.PresentedFrameCount >= 1);
+        workspace.Visibility = Visibility.Visible;
+        await Task.Delay(100);
         await VerifyFramePixelsAsync(false); await SaveScreenshotAsync("render-bgra", LocalView);
         await realtime.SetVideoMirrorAsync(new(true, false, false)); sink.PushBgra(pixels, 64, 2000);
         await UntilAsync(() => LocalView.PresentedFrameCount >= 2); await Task.Delay(100); await VerifyFramePixelsAsync(true); await SaveScreenshotAsync("render-mirrored", LocalView);
@@ -261,6 +279,17 @@ public sealed partial class MainWindow
         localPanel.Children.Remove(LocalView); await Task.Delay(50); localPanel.Children.Insert(0, LocalView);
         sink.PushBgra(pixels, 64, 101000); await UntilAsync(() => LocalView.LastPresentedTimestampMicroseconds == 101000);
         LocalView.VideoSource = null;
+
+        // Use the result panel itself to check the single-view first-frame transition.
+        RemoteView.FirstFrameFadeInDuration = 0.6;
+        RemoteView.VideoSource = realtime.LocalVideo;
+        Check(RemoteView.PresentedFrameCount == 0, "The result panel presented before receiving a frame.");
+        sink.PushBgra(pixels, 64, 102000);
+        await UntilAsync(() => RemoteView.LastPresentedTimestampMicroseconds == 102000);
+        if (new Windows.UI.ViewManagement.UISettings().AnimationsEnabled)
+            await UntilAsync(() => RemoteView.Opacity is > 0 and < 1);
+        await UntilAsync(() => RemoteView.Opacity == 1);
+        RemoteView.VideoSource = null;
     }
     private async Task VerifyFramePixelsAsync(bool mirrored)
     {

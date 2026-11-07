@@ -1,6 +1,21 @@
+//
+//  c_consumer.c
+//  XmaxSDK
+//
+//  Author: 翁跃庭 (Yueting Weng)
+//  GitHub: https://github.com/Xmax-AI/XmaxSDK-Windows
+//
+//  Copyright (c) 2026 XMAX.AI PTE. LTD.
+//
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <time.h>
+#endif
 #pragma pack(push, 1)
 #include <xmax/xmax.h>
 struct caller_packed {
@@ -47,8 +62,10 @@ int main(void) {
     xmax_realtime realtime = NULL;
     xmax_client_config c = {0};
     c.struct_size = sizeof(c);
+    c.abi_version = 1;
+    c.api_key = "\xe2\x80\x8b\xe3\x80\x80"; /* Foundation whitespace is normalized before key validation. */
+    CHECK(xmax_client_create(&c, &client) == XMAX_INVALID_ARGUMENT && client == NULL);
     c.abi_version = XMAX_ABI_VERSION;
-    c.api_key = "";
     CHECK(xmax_client_create(&c, &client) == XMAX_OK);
     struct {
         xmax_capabilities caps;
@@ -60,7 +77,13 @@ int main(void) {
     CHECK(!!(extended.caps.flags & XMAX_CAP_EXTERNAL_AUDIO_INPUT) == !!(extended.caps.flags & XMAX_CAP_RTC));
     CHECK(extended.canary == UINT64_C(0x123456789abcdef0));
     xmax_storage storage = NULL;
-    CHECK(xmax_storage_create(client, &storage) == XMAX_OK);
+    CHECK(xmax_storage_create(client, &storage) == XMAX_INVALID_API_KEY && storage == NULL);
+    xmax_client storage_client = NULL;
+    xmax_client_config storage_config = c;
+    storage_config.api_key = "offline-test";
+    CHECK(xmax_client_create(&storage_config, &storage_client) == XMAX_OK);
+    CHECK(xmax_storage_create(storage_client, &storage) == XMAX_OK);
+    xmax_client_destroy(storage_client);
     CHECK(xmax_realtime_create(client, &realtime) == XMAX_OK);
     xmax_video_mirror_config mirror = {sizeof(mirror), 0, 0, 0};
     CHECK(sizeof(mirror) == 16);
@@ -117,9 +140,9 @@ int main(void) {
     };
     CHECK(xmax_realtime_set_remote_media_frame_listener(configured, &listener) == XMAX_OK);
     xmax_external_frame_sink previous_sink = NULL, current_sink = NULL;
-    xmax_video_format small = {4, 4, 30};
-    CHECK(xmax_realtime_bind_external_video(configured, &small, &previous_sink) == XMAX_OK);
-    CHECK(xmax_realtime_bind_external_video(configured, &small, &current_sink) == XMAX_OK);
+    xmax_video_format small_format = {4, 4, 30};
+    CHECK(xmax_realtime_bind_external_video(configured, &small_format, &previous_sink) == XMAX_OK);
+    CHECK(xmax_realtime_bind_external_video(configured, &small_format, &current_sink) == XMAX_OK);
     xmax_error_info source_failure = {0};
     source_failure.struct_size = sizeof(source_failure);
     source_failure.code = XMAX_MEDIA_ERROR;
@@ -128,16 +151,26 @@ int main(void) {
     xmax_event_info source_state = {0};
     source_state.struct_size = sizeof(source_state);
     CHECK(xmax_realtime_get_state_info(configured, &source_state) == XMAX_OK);
-    CHECK(source_state.event.state == XMAX_READY && source_state.reason == XMAX_REASON_NORMAL);
+    CHECK(source_state.event.state == XMAX_READY && source_state.reason == XMAX_REASON_NONE);
     CHECK(xmax_external_frame_sink_report_error(current_sink, &source_failure) == XMAX_OK);
-    CHECK(xmax_realtime_get_state_info(configured, &source_state) == XMAX_OK);
+    for (int attempt = 0; attempt < 1000; ++attempt) {
+        CHECK(xmax_realtime_get_state_info(configured, &source_state) == XMAX_OK);
+        if (source_state.event.state == XMAX_IDLE)
+            break;
+#ifdef _WIN32
+        Sleep(1);
+#else
+        const struct timespec delay = {0, 1000000};
+        nanosleep(&delay, NULL);
+#endif
+    }
     CHECK(source_state.event.state == XMAX_IDLE && source_state.error.code == XMAX_MEDIA_ERROR);
     CHECK(xmax_realtime_set_remote_media_frame_listener(configured, NULL) == XMAX_OK);
     CHECK(released_contexts == 1);
     xmax_realtime_destroy(configured);
     int32_t demand = 1;
     CHECK(xmax_external_frame_sink_is_requesting_frames(current_sink, &demand) == XMAX_OK && demand == 0);
-    CHECK(xmax_external_frame_sink_get_format(current_sink, &small) == XMAX_OK && small.width == 4);
+    CHECK(xmax_external_frame_sink_get_format(current_sink, &small_format) == XMAX_OK && small_format.width == 4);
     xmax_external_frame_sink_release(previous_sink);
     xmax_external_frame_sink_release(current_sink);
     xmax_external_frame_sink_release(NULL);

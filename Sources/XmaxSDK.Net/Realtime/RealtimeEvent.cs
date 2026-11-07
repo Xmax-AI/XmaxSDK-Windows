@@ -21,7 +21,7 @@ namespace Xmax.SDK;
 /// <param name="Message">The diagnostic or status text.</param>
 /// <param name="SessionId">The server session identifier, empty before session creation.</param>
 /// <param name="TaskId">The generation task identifier, empty before generation starts.</param>
-/// <param name="Reason">The state reason: 0 normal, 1 orientation change, or 2 failure.</param>
+/// <param name="Reason">The state reason: 0 normal, 1 orientation change, 2 failure, or 3 absent.</param>
 /// <param name="ApiCode">The service business error code, or 0 when absent.</param>
 /// <param name="HttpStatus">The HTTP status code, or 0 when absent.</param>
 /// <param name="Direction">The event transport direction: 0 uplink or 1 downlink.</param>
@@ -43,7 +43,7 @@ namespace Xmax.SDK;
 /// </remarks>
 public sealed record RealtimeEvent(
     RealtimeEventType Type,
-    RealtimeState State,
+    RealtimeConnectionState State,
     int Code,
     string Message,
     string SessionId,
@@ -69,8 +69,10 @@ public sealed record RealtimeEvent(
     internal static unsafe RealtimeEvent From(xmax_event_info info)
     {
         var e = info.@event;
-        return new((RealtimeEventType)e.type, (RealtimeState)e.state, e.code,
-            NativeError.Text(e.message), NativeError.Text(e.session_id), NativeError.Text(e.task_id),
+        return new((RealtimeEventType)e.type, (RealtimeConnectionState)e.state, e.code,
+            e.type == (int)RealtimeEventType.State && info.error.code != 0
+                ? NativeError.Text(info.error.message) : NativeError.Text(e.message),
+            NativeError.Text(e.session_id), NativeError.Text(e.task_id),
             info.reason, info.error.api_code, info.error.http_status, e.direction, e.width, e.height, e.fps,
             e.bitrate_kbps, e.packet_loss_percent, e.quality, e.e2e_ms, e.session_ms, e.rtc_join_ms,
             e.publish_ms, e.first_frame_ms, e.total_ms);

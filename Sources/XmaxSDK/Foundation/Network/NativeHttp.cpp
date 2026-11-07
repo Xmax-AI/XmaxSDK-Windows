@@ -10,7 +10,9 @@
 
 #include "Foundation/Network/HttpTransport.hpp"
 #include <algorithm>
+#include <array>
 #include <exception>
+#include <limits>
 #ifdef _WIN32
 #include <windows.h>
 #include <winhttp.h>
@@ -197,6 +199,8 @@ class NativeHttp final : public Http {
             XMAX_INVALID_ARGUMENT,
             "Invalid API URL"
         );
+        require(parts.nScheme == INTERNET_SCHEME_HTTPS || parts.nScheme == INTERNET_SCHEME_HTTP,
+                XMAX_INVALID_ARGUMENT, "An HTTP or HTTPS URL is required");
 
         const std::wstring host(
             parts.lpszHostName,
@@ -242,23 +246,33 @@ class NativeHttp final : public Http {
             nullptr,
             WINHTTP_NO_REFERER,
             WINHTTP_DEFAULT_ACCEPT_TYPES,
-            WINHTTP_FLAG_SECURE
+            parts.nScheme == INTERNET_SCHEME_HTTPS ? WINHTTP_FLAG_SECURE : 0
         ));
-        DWORD redirect = WINHTTP_OPTION_REDIRECT_POLICY_NEVER;
-        WinHttpSetOption(
+        DWORD redirect = input.follow_download_redirects ? WINHTTP_OPTION_REDIRECT_POLICY_DISALLOW_HTTPS_TO_HTTP
+                                                         : WINHTTP_OPTION_REDIRECT_POLICY_NEVER;
+        http_checked(WinHttpSetOption(
             req,
             WINHTTP_OPTION_REDIRECT_POLICY,
             &redirect,
             sizeof(redirect)
-        );
+        ), "HTTPS redirect policy");
+        if (input.follow_download_redirects) {
+            DWORD maximum_redirects = 10;
+            http_checked(WinHttpSetOption(req, WINHTTP_OPTION_MAX_HTTP_AUTOMATIC_REDIRECTS,
+                                          &maximum_redirects, sizeof(maximum_redirects)), "HTTPS redirect limit");
+        }
 
         std::string header_text;
 
         for (const auto& header : input.headers)
             header_text += header.first + ": " + header.second + "\r\n";
 
-        const auto headers = wide(header_text);
         const auto& data = input.body;
+        const uint64_t upload_size = input.upload ? input.upload->size : data.size();
+        const bool large = upload_size > (std::numeric_limits<DWORD>::max)();
+        if (large)
+            header_text += "Content-Length: " + std::to_string(upload_size) + "\r\n";
+        const auto headers = wide(header_text);
         require(
             !cancel(),
             XMAX_CANCELLED,
@@ -271,41 +285,40 @@ class NativeHttp final : public Http {
                 DWORD(headers.size()),
                 WINHTTP_NO_REQUEST_DATA,
                 0,
-                DWORD(data.size()),
+                large ? WINHTTP_IGNORE_REQUEST_TOTAL_LENGTH : DWORD(upload_size),
                 0
             ),
             "HTTPS send"
         );
 
-        size_t sent = 0;
+        uint64_t sent = 0;
+        std::array<char, 65536> upload_buffer;
 
-        while (sent < data.size()) {
+        while (sent < upload_size) {
             require(
                 !cancel(),
                 XMAX_CANCELLED,
                 "Operation cancelled"
             );
 
-            const auto count = DWORD(std::min(size_t(65536), data.size() - sent));
-            DWORD written = 0;
-            http_checked(
-                WinHttpWriteData(
-                    req,
-                    data.data() + sent,
-                    count,
-                    &written
-                ),
-                "HTTPS upload"
-            );
-            require(
-                written > 0,
-                XMAX_NETWORK_ERROR,
-                "HTTPS upload made no progress"
-            );
-            sent += written;
-
-            if (input.progress)
-                input.progress(sent, data.size());
+            const auto count = DWORD(std::min<uint64_t>(upload_buffer.size(), upload_size - sent));
+            const char* chunk;
+            if (input.upload) {
+                input.upload->read(upload_buffer.data(), count);
+                chunk = upload_buffer.data();
+            } else {
+                chunk = data.data() + static_cast<size_t>(sent);
+            }
+            for (DWORD offset = 0; offset < count;) {
+                require(!cancel(), XMAX_CANCELLED, "Operation cancelled");
+                DWORD written = 0;
+                http_checked(WinHttpWriteData(req, chunk + offset, count - offset, &written), "HTTPS upload");
+                require(written > 0, XMAX_NETWORK_ERROR, "HTTPS upload made no progress");
+                offset += written;
+                sent += written;
+                if (input.progress)
+                    input.progress(sent, upload_size);
+            }
         }
 
         http_checked(
@@ -448,7 +461,7 @@ class NativeHttp final : public Http {
                         received
                     );
                 consumed += received;
-                if (data.empty() && input.progress)
+                if (!upload_size && input.progress)
                     input.progress(consumed, total);
             }
         } while (received);
@@ -526,12 +539,15 @@ class NativeHttp final : public Http {
              */
             uint64_t received = 0;
 
+            /** The uploaded byte count for a streaming request body. */
+            uint64_t sent = 0;
+
             /**
              * The exception captured by a native callback and rethrown on the C++ call stack.
              */
             std::exception_ptr failure;
 
-        } transfer{input, cancel, {}, 0, {}};
+        } transfer{input, cancel, {}, 0, 0, {}};
 
         curl_slist* list = nullptr;
 
@@ -552,11 +568,44 @@ class NativeHttp final : public Http {
         curl_easy_setopt(handle.get(), CURLOPT_HTTPHEADER, list);
         curl_easy_setopt(handle.get(), CURLOPT_NOSIGNAL, 1L);
         curl_easy_setopt(handle.get(), CURLOPT_TIMEOUT_MS, long(input.timeout_ms));
-        curl_easy_setopt(handle.get(), CURLOPT_FOLLOWLOCATION, 0L);
+        curl_easy_setopt(handle.get(), CURLOPT_FOLLOWLOCATION, input.follow_download_redirects ? 1L : 0L);
+        if (input.follow_download_redirects) {
+            const bool secure = url.find(':') == 5;
+            curl_easy_setopt(handle.get(), CURLOPT_MAXREDIRS, 10L);
+#if LIBCURL_VERSION_NUM >= 0x075500
+            curl_easy_setopt(handle.get(), CURLOPT_REDIR_PROTOCOLS_STR, secure ? "https" : "http,https");
+#else
+            curl_easy_setopt(handle.get(), CURLOPT_REDIR_PROTOCOLS, secure ? long(CURLPROTO_HTTPS)
+                                                                           : long(CURLPROTO_HTTP | CURLPROTO_HTTPS));
+#endif
+        }
 
-        if (!data.empty()) {
+        if (input.upload) {
+            require(input.upload->size <= uint64_t(std::numeric_limits<curl_off_t>::max()),
+                    XMAX_INVALID_ARGUMENT, "Upload size is not representable by the HTTP transport");
+            curl_easy_setopt(handle.get(), CURLOPT_UPLOAD, 1L);
+            curl_easy_setopt(handle.get(), CURLOPT_INFILESIZE_LARGE, curl_off_t(input.upload->size));
+            curl_easy_setopt(handle.get(), CURLOPT_READDATA, &transfer);
+            curl_easy_setopt(handle.get(), CURLOPT_READFUNCTION,
+                +[](char* buffer, size_t size, size_t count, void* context) -> size_t {
+                    auto& value = *static_cast<Transfer*>(context);
+                    try {
+                        if (value.cancel())
+                            return CURL_READFUNC_ABORT;
+                        const auto& upload = *value.input.upload;
+                        const auto length = size_t(std::min<uint64_t>(size * count, upload.size - value.sent));
+                        if (length)
+                            upload.read(buffer, length);
+                        value.sent += length;
+                        return length;
+                    } catch (...) {
+                        value.failure = std::current_exception();
+                        return CURL_READFUNC_ABORT;
+                    }
+                });
+        } else if (!data.empty()) {
             curl_easy_setopt(handle.get(), CURLOPT_POSTFIELDS, data.data());
-            curl_easy_setopt(handle.get(), CURLOPT_POSTFIELDSIZE, long(data.size()));
+            curl_easy_setopt(handle.get(), CURLOPT_POSTFIELDSIZE_LARGE, curl_off_t(data.size()));
         }
 
         curl_easy_setopt(handle.get(), CURLOPT_WRITEDATA, &transfer);
@@ -594,6 +643,8 @@ class NativeHttp final : public Http {
                 const auto length = size * count;
                 try {
                     std::string line(bytes, length);
+                    if (line.rfind("HTTP/", 0) == 0)
+                        value.response.headers.clear();
                     const auto colon = line.find(':');
                     if (colon != std::string::npos) {
                         auto text = line.substr(colon + 1);
@@ -622,7 +673,7 @@ class NativeHttp final : public Http {
                     if (value.cancel())
                         return 1;
                     if (value.input.progress) {
-                        if (value.input.body.empty())
+                        if (!value.input.upload && value.input.body.empty())
                             value.input.progress(uint64_t(down), uint64_t(total_down));
                         else
                             value.input.progress(uint64_t(up), uint64_t(total_up));

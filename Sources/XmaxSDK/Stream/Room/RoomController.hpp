@@ -11,6 +11,8 @@
 #pragma once
 #include "Stream/Room/RoomEvent.hpp"
 #include "Stream/Room/RoomMessageSender.hpp"
+#include "Stream/Room/RoomHeartbeat.hpp"
+#include "Stream/Room/RoomCommandController.hpp"
 
 namespace xmax::detail {
 
@@ -27,34 +29,19 @@ class RoomController {
      * @param[in] factory The native RTC backend factory.
      */
     explicit RoomController(
-        RtcFactory factory = make_rtc
-    )
-        : factory_(std::move(factory)) {
-    }
+        RtcFactory factory = make_rtc,
+        std::chrono::milliseconds heartbeat_interval = std::chrono::seconds(10)
+    );
 
     /**
      * Drains room callbacks and releases the native backend.
      */
-    ~RoomController() {
-        leave();
-    }
+    ~RoomController();
 
     /**
      * Validates and allocates a native RTC backend before creating a server session.
      */
-    void allocate() {
-        require(
-            !rtc_,
-            XMAX_INVALID_STATE,
-            "An RTC backend is already allocated"
-        );
-        rtc_ = factory_();
-        require(
-            bool(rtc_),
-            XMAX_UNSUPPORTED,
-            "No RTC backend is available"
-        );
-    }
+    void allocate();
 
     /**
      * Joins the server-assigned room and enables media-thread publication only after success.
@@ -71,56 +58,12 @@ class RoomController {
         bool microphone,
         RtcCallbacks callbacks,
         const Cancel& cancel
-    ) {
-        require(
-            rtc_ && !joined_,
-            XMAX_INVALID_STATE,
-            "Allocate an RTC backend before joining"
-        );
-
-        connection = value;
-        try {
-            rtc_->join(
-                value,
-                encoding,
-                microphone,
-                std::move(callbacks),
-                cancel
-            );
-            require(
-                !cancel(),
-                XMAX_CANCELLED,
-                "RTC join cancelled"
-            );
-
-            joined_ = true;
-            std::atomic_store(
-                &media_rtc_,
-                rtc_
-            );
-        } catch (...) {
-            leave();
-            throw;
-        }
-    }
+    );
 
     /**
      * Disables media-thread access, leaves the room, and drains callbacks; safe to repeat.
      */
-    void leave() noexcept {
-        std::atomic_store(
-            &media_rtc_,
-            std::shared_ptr<Rtc>{}
-        );
-        if (rtc_) {
-            rtc_->leave();
-            rtc_.reset();
-        }
-        joined_ = false;
-        connection = {};
-        task.clear();
-        sender_.reset();
-    }
+    void leave() noexcept;
 
     /**
      * Reports whether room join has completed.
@@ -188,24 +131,26 @@ class RoomController {
      * @param[in] message The unfragmented business message.
      * @param[in] cancel The cooperative cancellation predicate.
      * @param[in] maintain The keepalive operation invoked while waiting for send budget.
+     * @param[in] deadline The latest completion time for a bounded startup send.
      */
     void send(
         const json& message,
         const Cancel& cancel,
-        const std::function<void()>& maintain = {}
-    ) {
-        require(
-            joined_,
-            XMAX_INVALID_STATE,
-            "No RTC room is connected"
-        );
-        sender_.send(
-            *rtc_,
-            message,
-            cancel,
-            maintain
-        );
-    }
+        const std::function<void()>& maintain = {},
+        Clock::time_point deadline = Clock::time_point::max()
+    );
+
+    /**
+     * Cancels all pending controls owned by the current task before sending stop.
+     */
+    void cancel_commands();
+
+    /**
+     * Installs the session-scoped HTTP copy for the next room join.
+     */
+    void event_relay(
+        RoomCommandController::Relay relay
+    );
 
     /**
      * Sends normalized points for the current task, rejecting empty or invalid coordinates.
@@ -218,21 +163,7 @@ class RoomController {
         const std::vector<xmax_point>& points,
         const Cancel& cancel,
         const std::function<void()>& maintain
-    ) {
-        require(
-            !task.empty(),
-            XMAX_INVALID_STATE,
-            "No generation task is active"
-        );
-        json values = json::array();
-        for (const auto& point : points)
-            values.push_back(json::array({point.x, point.y}));
-        send(
-            {{"event", "tracks"}, {"tracks", std::move(values)}, {"user_id", connection.user}, {"uid", task}},
-            cancel,
-            maintain
-        );
-    }
+    );
 
   private:
 
@@ -260,5 +191,21 @@ class RoomController {
      * The sender managing fragmentation and sliding-window budget.
      */
     RoomMessageSender sender_;
+
+    /** The interval between room keepalives. */
+    std::chrono::milliseconds heartbeat_interval_;
+
+    /** The room-scoped keepalive scheduler. */
+    RoomHeartbeat heartbeat_;
+
+    /**
+     * The current room's receipt and retry owner, invalidated before native leave.
+     */
+    std::shared_ptr<RoomCommandController> commands_;
+
+    /**
+     * The session-scoped independent HTTP relay used by the next room.
+     */
+    RoomCommandController::Relay relay_;
 };
 } // namespace xmax::detail

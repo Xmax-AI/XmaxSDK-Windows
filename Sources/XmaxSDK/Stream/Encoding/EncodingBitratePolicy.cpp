@@ -69,6 +69,17 @@ std::pair<int, int> bitrate(
         interpolate(f.fps, {{10, b15 * 0.8 * 2}, {15, b15 * 2}, {30, b30 * 2}, {60, b30 * 6500 / 3150}}) *
         0.6;
 
-    return {100, std::max(100, int(maximum))};
+    const auto integer = int(maximum);
+    const auto fraction = maximum - integer;
+    const auto upper = std::max(100, integer + (fraction > .5 || (fraction == .5 && integer % 2 != 0)));
+    return {std::min(500, upper), upper};
 }
+
+std::pair<int, int> downlink_bitrate(
+    xmax_video_format format
+) {
+    format.fps = 24;
+    return {500, std::clamp(bitrate(format).second, 500, 10000)};
+}
+
 } // namespace xmax::detail

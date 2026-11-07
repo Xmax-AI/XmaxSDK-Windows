@@ -28,6 +28,67 @@ public readonly record struct VideoFormat(
     uint FramesPerSecond = 30
 )
 {
+    /// <summary>Gets the optional minimum uplink bitrate in kbps.</summary>
+    public int? MinimumBitrateKbps { get; init; }
+
+    /// <summary>Gets the optional maximum uplink bitrate in kbps.</summary>
+    public int? MaximumBitrateKbps { get; init; }
+
+    /// <summary>Gets the uplink encoder's adaptation preference.</summary>
+    public EncodingPreference EncoderPreference { get; init; } = EncodingPreference.MaintainFramerate;
+
+    /// <summary>
+    /// Creates a video format with uplink encoder options.
+    /// </summary>
+    /// <param name="width">The width, in pixels.</param>
+    /// <param name="height">The height, in pixels.</param>
+    /// <param name="framesPerSecond">The nominal frame rate.</param>
+    /// <param name="minimumBitrateKbps">A positive minimum in kbps, or null for the SDK default.</param>
+    /// <param name="maximumBitrateKbps">A positive maximum in kbps, or null for the SDK default.</param>
+    /// <param name="encoderPreference">The encoder's quality adaptation preference.</param>
+    public VideoFormat(
+        uint width,
+        uint height,
+        uint framesPerSecond,
+        int? minimumBitrateKbps,
+        int? maximumBitrateKbps,
+        EncodingPreference encoderPreference = EncodingPreference.MaintainFramerate
+    ) : this(
+        width,
+        height,
+        framesPerSecond
+    )
+    {
+        MinimumBitrateKbps = minimumBitrateKbps;
+        MaximumBitrateKbps = maximumBitrateKbps;
+        EncoderPreference = encoderPreference;
+    }
+
+    internal unsafe xmax_encoding_config NativeEncoding
+    {
+        get
+        {
+            if (MinimumBitrateKbps is <= 0)
+                throw new ArgumentOutOfRangeException(nameof(MinimumBitrateKbps));
+            if (MaximumBitrateKbps is <= 0)
+                throw new ArgumentOutOfRangeException(nameof(MaximumBitrateKbps));
+            return new()
+            {
+                struct_size = (uint)sizeof(xmax_encoding_config),
+                minimum_bitrate_kbps = MinimumBitrateKbps ?? -1,
+                maximum_bitrate_kbps = MaximumBitrateKbps ?? 0,
+                preference = (int)(this == default ? EncodingPreference.MaintainFramerate : EncoderPreference)
+            };
+        }
+    }
+
+    internal VideoFormat WithEncoding(xmax_encoding_config encoding) => this with
+    {
+        MinimumBitrateKbps = encoding.minimum_bitrate_kbps > 0 ? encoding.minimum_bitrate_kbps : null,
+        MaximumBitrateKbps = encoding.maximum_bitrate_kbps > 0 ? encoding.maximum_bitrate_kbps : null,
+        EncoderPreference = (EncodingPreference)encoding.preference
+    };
+
     internal xmax_video_format Native => new() { width = Width, height = Height, fps = FramesPerSecond };
 
     internal static VideoFormat From(xmax_video_format value) => new(value.width, value.height, value.fps);

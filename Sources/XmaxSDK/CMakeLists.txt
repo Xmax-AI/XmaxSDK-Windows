@@ -1,3 +1,13 @@
+#
+#  CMakeLists.txt
+#  XmaxSDK
+#
+#  Author: 翁跃庭 (Yueting Weng)
+#  GitHub: https://github.com/Xmax-AI/XmaxSDK-Windows
+#
+#  Copyright (c) 2026 XMAX.AI PTE. LTD.
+#
+
 find_package(Threads REQUIRED)
 set(XMAX_SRC "${CMAKE_CURRENT_SOURCE_DIR}")
 set(XMAX_REPO_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../..")
@@ -20,6 +30,7 @@ endfunction()
 xmax_module(xmax_foundation
   Foundation/Logging/XmaxLogger.cpp
   Foundation/RTC/RtcStatsLogger.cpp
+  Foundation/RTC/MicrophoneDevices.cpp
   Foundation/Media/VideoFrame.cpp
   Foundation/Media/FrameConverter.cpp
   Foundation/Render/WindowRenderer.cpp
@@ -30,7 +41,15 @@ xmax_module(xmax_foundation
 target_link_libraries(xmax_foundation PUBLIC Threads::Threads)
 target_compile_definitions(xmax_foundation PRIVATE XMAX_VERSION="${PROJECT_VERSION}")
 if(WIN32)
-  target_sources(xmax_foundation PRIVATE Foundation/Media/Camera/MediaFoundationCamera.cpp)
+  target_sources(xmax_foundation PRIVATE
+    Foundation/Media/Camera/MediaFoundationCamera.cpp
+    Foundation/Media/Camera/CameraPositions.cpp)
+  if(MSVC)
+    # The Windows SDK projection uses standard C++ coroutines on current MSVC.
+    set_source_files_properties(Foundation/Media/Camera/CameraPositions.cpp
+      PROPERTIES COMPILE_OPTIONS "/std:c++20")
+    target_link_libraries(xmax_foundation PRIVATE runtimeobject)
+  endif()
   target_compile_definitions(xmax_foundation PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
   target_link_libraries(xmax_foundation PRIVATE winhttp bcrypt mf mfplat mfreadwrite mfuuid ole32 gdi32 msimg32 user32 shell32 uuid)
 else()
@@ -49,7 +68,7 @@ endif()
 if(XMAX_WITH_AGORA)
   find_path(AGORA_INCLUDE_DIR IAgoraRtcEngine.h HINTS "${XMAX_AGORA_ROOT}/high_level_api/include" "${XMAX_AGORA_ROOT}/include" REQUIRED)
   find_library(AGORA_LIBRARY NAMES agora_rtc_sdk.dll agora_rtc_sdk AgoraRtcKit HINTS "${XMAX_AGORA_ROOT}/x86_64" "${XMAX_AGORA_ROOT}/lib" REQUIRED)
-  target_sources(xmax_foundation PRIVATE Foundation/RTC/AgoraRtcPlatform.cpp)
+  target_sources(xmax_foundation PRIVATE Foundation/RTC/AgoraRtcPlatform.cpp Foundation/RTC/AgoraMicrophone.cpp)
   target_include_directories(xmax_foundation PRIVATE "${AGORA_INCLUDE_DIR}")
   target_link_libraries(xmax_foundation PRIVATE "${AGORA_LIBRARY}")
   target_compile_definitions(xmax_foundation PRIVATE XMAX_WITH_AGORA=1)
@@ -57,17 +76,66 @@ else()
   target_sources(xmax_foundation PRIVATE Foundation/RTC/UnavailableRtcPlatform.cpp)
 endif()
 
-xmax_module(xmax_service Service/Network/Config.cpp Service/Network/ApiService.cpp Service/Realtime/RealtimeSessionService.cpp Service/Storage/StorageService.cpp)
+xmax_module(xmax_service
+  Service/Media/MediaService.cpp
+  Service/Network/Config.cpp
+  Service/Network/ApiService.cpp
+  Service/Realtime/RealtimeSessionService.cpp
+  Service/Realtime/RealtimeSessionHeartbeat.cpp
+  Service/Realtime/RealtimeEventRelayService.cpp
+  Service/Storage/StorageService.cpp
+)
 target_link_libraries(xmax_service PUBLIC xmax_foundation)
-xmax_module(xmax_stream Stream/StreamController.cpp Stream/Encoding/EncodingBitratePolicy.cpp
+if(APPLE)
+  target_link_libraries(xmax_service PRIVATE "-framework CoreFoundation")
+endif()
+xmax_module(xmax_stream
+  Stream/StreamController.cpp
+  Stream/Encoding/EncodingBitratePolicy.cpp
   Stream/Quality/QualityController.cpp
-  Stream/Room/RoomEvent.cpp Stream/Room/MessageCodec.cpp Stream/Room/RoomMessageSender.cpp)
+  Stream/Room/RoomEvent.cpp
+  Stream/Room/MessageCodec.cpp
+  Stream/Room/RoomMessageSender.cpp
+  Stream/Room/RoomHeartbeat.cpp
+  Stream/Room/RoomMessageDecoder.cpp
+  Stream/Room/RoomController.cpp
+  Stream/Room/RoomCommandController.cpp
+  Stream/Room/RoomCommandController.Scheduling.cpp
+  Stream/Room/RoomCommandController.Transmission.cpp
+)
 target_link_libraries(xmax_stream PUBLIC xmax_service)
-xmax_module(xmax_media Media/External/ExternalVideoController.cpp Media/Camera/CameraController.cpp)
+xmax_module(xmax_media
+  Media/External/ExternalVideoController.cpp
+  Media/External/ExternalVideoFrame.cpp
+  Media/External/ExternalVideoResampler.cpp
+  Media/Camera/CameraController.cpp
+)
 target_link_libraries(xmax_media PUBLIC xmax_service)
-xmax_module(xmax_render Render/Video/RemoteVideoFramePipeline.cpp Render/Video/RemoteMediaFrameDispatcher.cpp)
+xmax_module(xmax_render Render/Video/RemoteVideoFramePipeline.cpp Render/Video/RemoteMediaFrameDispatcher.cpp
+  Render/Beauty/RemoteVideoBeautyPipeline.cpp Render/Beauty/VideoBeautyProcessor.cpp)
 target_link_libraries(xmax_render PUBLIC xmax_service)
-xmax_module(xmax_core Core/Realtime/XmaxRealtimeLifecycleManager.cpp Core/Realtime/XmaxRealtimeFactory.cpp Core/Realtime/XmaxRealtimeManager.cpp)
+if(WIN32 AND XMAX_WITH_AGORA)
+  find_path(AGORA_LOW_LEVEL_INCLUDE_DIR IAgoraService.h
+    HINTS "${XMAX_AGORA_LOW_LEVEL_INCLUDE_DIR}" "${XMAX_AGORA_ROOT}/low_level_api/include" "${AGORA_INCLUDE_DIR}" REQUIRED)
+  add_executable(XmaxVideoBeautyWorker "${XMAX_REPO_ROOT}/Sources/VideoBeautyWorker/main.cpp")
+  set_target_properties(XmaxVideoBeautyWorker PROPERTIES OUTPUT_NAME "Xmax.VideoBeautyWorker")
+  target_include_directories(XmaxVideoBeautyWorker PRIVATE "${AGORA_LOW_LEVEL_INCLUDE_DIR}")
+  target_link_libraries(XmaxVideoBeautyWorker PRIVATE "${AGORA_LIBRARY}")
+  target_compile_definitions(xmax_render PRIVATE XMAX_WITH_AGORA=1)
+  target_link_libraries(xmax_render PRIVATE advapi32 ole32)
+  add_dependencies(xmax_render XmaxVideoBeautyWorker)
+  install(TARGETS XmaxVideoBeautyWorker RUNTIME DESTINATION bin)
+endif()
+xmax_module(xmax_core
+  Core/Realtime/XmaxRealtimeConnectionManager.cpp
+  Core/Realtime/XmaxRealtimeLifecycleManager.cpp
+  Core/Realtime/XmaxRealtimeFactory.cpp
+  Core/Realtime/XmaxRealtimeManager.Camera.cpp
+  Core/Realtime/XmaxRealtimeManager.VideoTrack.cpp
+  Core/Realtime/XmaxRealtimeManager.Generation.cpp
+  Core/Realtime/XmaxRealtimeManager.Microphone.cpp
+  Core/Realtime/XmaxRealtimeManager.cpp
+)
 target_link_libraries(xmax_core PUBLIC xmax_service xmax_stream xmax_media xmax_render)
 
 # Header files are part of each module so IDE search and navigation include public models.
@@ -84,7 +152,7 @@ add_library(Xmax::SDK ALIAS XmaxSDK)
 target_include_directories(XmaxSDK PUBLIC $<BUILD_INTERFACE:${XMAX_REPO_ROOT}/include> $<INSTALL_INTERFACE:include> PRIVATE "${XMAX_SRC}" "${XMAX_JSON_INCLUDE_DIR}")
 target_link_libraries(XmaxSDK PRIVATE xmax_core)
 target_compile_definitions(XmaxSDK PRIVATE XMAX_BUILDING_SDK=1 XMAX_VERSION="${PROJECT_VERSION}")
-set_target_properties(XmaxSDK PROPERTIES EXPORT_NAME SDK VERSION ${PROJECT_VERSION} SOVERSION 0 CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN YES)
+set_target_properties(XmaxSDK PROPERTIES EXPORT_NAME SDK VERSION ${PROJECT_VERSION} SOVERSION 2 CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN YES)
 if(APPLE)
   # Older libc++ headers can force default visibility on template instantiations.
   # Limit the shared-library boundary to the public C entry points on every toolchain.
@@ -156,7 +224,7 @@ if(BUILD_TESTING)
   target_include_directories(xmax_layer_tests PRIVATE "${XMAX_SRC}" "${XMAX_JSON_INCLUDE_DIR}")
   target_link_libraries(xmax_layer_tests PRIVATE xmax_service xmax_stream xmax_media xmax_render)
   add_test(NAME layers COMMAND xmax_layer_tests)
-  foreach(suite IN ITEMS feature storage logging frame_conversion alignment realtime_extensions lifecycle camera_recovery)
+  foreach(suite IN ITEMS feature storage logging frame_conversion alignment realtime_extensions lifecycle camera_recovery video_beauty credit_balance signaling billing_heartbeat realtime_media_flow)
     add_executable(xmax_${suite}_tests ${XMAX_REPO_ROOT}/Tests/XmaxSDKTests/${suite}_tests.cpp)
     target_include_directories(xmax_${suite}_tests PRIVATE "${XMAX_SRC}" "${XMAX_JSON_INCLUDE_DIR}")
     target_link_libraries(xmax_${suite}_tests PRIVATE xmax_core)
@@ -169,6 +237,8 @@ if(BUILD_TESTING)
   target_link_libraries(xmax_alignment_tests PRIVATE XmaxSDK)
   # Compile the C boundary into the injected-backend fixture so its C++ RTTI and platform adapters have
   # one owner. Installed C and C++ consumers separately exercise the actual shared-library boundary.
+  target_sources(xmax_credit_balance_tests PRIVATE CAPI/xmax_c_api.cpp)
+  target_compile_definitions(xmax_credit_balance_tests PRIVATE XMAX_BUILDING_SDK=1 XMAX_VERSION="${PROJECT_VERSION}")
   target_sources(xmax_realtime_extensions_tests PRIVATE CAPI/xmax_c_api.cpp)
   target_compile_definitions(xmax_realtime_extensions_tests PRIVATE XMAX_BUILDING_SDK=1 XMAX_VERSION="${PROJECT_VERSION}")
   add_executable(xmax_c_consumer ${XMAX_REPO_ROOT}/Tests/XmaxSDKTests/c_consumer.c)

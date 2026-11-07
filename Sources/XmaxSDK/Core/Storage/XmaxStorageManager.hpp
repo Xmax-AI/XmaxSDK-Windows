@@ -15,8 +15,7 @@
 namespace xmax::detail {
 
 /**
- * Manages one storage transfer with cross-thread cancellation and progress snapshots; parallel transfers on
- * one instance are rejected.
+ * Runs independent typed storage transfers and maintains a snapshot of the most recently started transfer.
  */
 class XmaxStorageManager {
 
@@ -34,7 +33,7 @@ class XmaxStorageManager {
     }
 
     /**
-     * Invalidates the active transfer's cancellation revision without waiting for network completion.
+     * Invalidates all active transfers without waiting for network completion.
      */
     void cancel() {
         ++epoch_;
@@ -67,7 +66,10 @@ class XmaxStorageManager {
         const std::string& path,
         const std::string& name,
         const std::string& type,
-        bool safety
+        bool safety,
+        const TransferProgress& report = {},
+        const Cancel& caller_cancelled = {},
+        bool parallel = false
     ) {
         return run([&](const Cancel& cancel, const TransferProgress& progress) {
             return service_.upload_file(
@@ -78,7 +80,7 @@ class XmaxStorageManager {
                 cancel,
                 progress
             );
-        });
+        }, report, caller_cancelled, parallel);
     }
 
     /**
@@ -98,10 +100,13 @@ class XmaxStorageManager {
         size_t size,
         const std::string& name,
         const std::string& type,
-        bool safety
+        bool safety,
+        const TransferProgress& report = {},
+        const Cancel& caller_cancelled = {},
+        bool parallel = false
     ) {
         require(
-            bytes && size && size <= 256 * 1024 * 1024,
+            bytes && size,
             XMAX_INVALID_ARGUMENT,
             "Invalid upload data range"
         );
@@ -118,27 +123,40 @@ class XmaxStorageManager {
                 cancel,
                 progress
             );
-        });
+        }, report, caller_cancelled, parallel);
     }
 
     /**
      * Downloads an HTTPS file and returns the completed destination size.
      *
      * @param[in] url An absolute HTTPS URL allowed by the transport's URL policy.
-     * @param[in] path The UTF-8 destination path; the file must not already exist.
+     * @param[in] path The UTF-8 destination path; must not name a directory.
+     * @param[in] report The observer for this transfer's byte counts.
+     * @param[in] caller_cancelled The caller's cooperative cancellation predicate.
+     * @param[in] replace_existing Whether a successful download can replace the destination file.
+     * @return The completed size, in bytes.
      */
     uint64_t download(
         const std::string& url,
-        const std::string& path
+        const std::string& path,
+        const TransferProgress& report = {},
+        const Cancel& caller_cancelled = {},
+        bool replace_existing = false
     ) {
-        return run([&](const Cancel& cancel, const TransferProgress& progress) {
-            return service_.download(
-                url,
-                path,
-                cancel,
-                progress
-            );
-        });
+        return run(
+            [&](const Cancel& cancel, const TransferProgress& progress) {
+                return service_.download(
+                    url,
+                    path,
+                    cancel,
+                    progress,
+                    replace_existing
+                );
+            },
+            report,
+            caller_cancelled,
+            replace_existing
+        );
     }
 
   private:
@@ -154,14 +172,18 @@ class XmaxStorageManager {
     std::atomic<uint64_t> epoch_{0};
 
     /**
-     * The mutex limiting this storage controller to one transfer at a time.
-     */
-    std::mutex operation_mutex_;
-
-    /**
      * The mutex protecting transfer state and byte progress.
      */
     mutable std::mutex progress_mutex_;
+
+    /** The number of admitted transfers, including those awaiting cancellation cleanup. */
+    size_t active_ = 0;
+
+    /** Whether a legacy transfer currently holds exclusive controller-wide progress and cancellation. */
+    bool exclusive_ = false;
+
+    /** The identity of the transfer represented by the controller progress snapshot. */
+    uint64_t latest_ = 0;
 
     /**
      * The XMAX_TRANSFER_* state, protected by the progress mutex.
@@ -179,53 +201,69 @@ class XmaxStorageManager {
     uint64_t total_ = 0;
 
     /**
-     * Updates the final transfer state under the progress mutex.
+     * Releases transfer admission and updates the matching controller snapshot.
      *
+     * @param[in] id The identity assigned on transfer admission.
      * @param[in] value The new XMAX_TRANSFER_* state.
      */
-    void state(
+    void finish(
+        uint64_t id,
         int32_t value
     ) {
         std::lock_guard<std::mutex> lock(progress_mutex_);
-        state_ = value;
+        if (--active_ == 0)
+            exclusive_ = false;
+        if (id == latest_)
+            state_ = value;
     }
 
     /**
-     * Serializes a transfer and maps completion, cancellation, or failure to queryable state.
+     * Admits a transfer and keeps its cancellation and progress independent of other typed transfers.
      *
      * @tparam F The callable type for the operation.
      *
      * @param[in] operation The transfer operation receiving cancellation and progress callbacks and
      * returning its result.
+     * @param[in] report The per-transfer progress observer.
+     * @param[in] caller_cancelled The per-transfer cancellation predicate.
+     * @param[in] parallel Whether other typed transfers may overlap this transfer.
      *
      * @return The operation's result; failures and cancellation throw corresponding SDK exceptions.
      */
     template <class F>
     auto run(
-        F operation
+        F operation,
+        const TransferProgress& report,
+        const Cancel& caller_cancelled,
+        bool parallel
     ) -> decltype(operation(
         Cancel{},
         TransferProgress{}
     )) {
-        std::unique_lock<std::mutex> lock(
-            operation_mutex_,
-            std::try_to_lock
-        );
-        require(
-            lock.owns_lock(),
-            XMAX_INVALID_STATE,
-            "A storage operation is already running"
-        );
-
-        const auto epoch = epoch_.load();
-        const Cancel cancel = [this, epoch] { return epoch_.load() != epoch; };
-        const TransferProgress progress = [this](uint64_t bytes, uint64_t total) {
-            std::lock_guard<std::mutex> guard(progress_mutex_);
-            transferred_ = bytes;
-            total_ = total;
+        uint64_t epoch = 0;
+        const Cancel cancel = [this, &epoch, &caller_cancelled] {
+            return epoch_.load() != epoch || (caller_cancelled && caller_cancelled());
+        };
+        uint64_t id = 0;
+        const TransferProgress progress = [this, &report, &id](uint64_t bytes, uint64_t total) {
+            {
+                std::lock_guard<std::mutex> guard(progress_mutex_);
+                if (id == latest_) {
+                    transferred_ = bytes;
+                    total_ = total;
+                }
+            }
+            if (report)
+                report(bytes, total);
         };
         {
             std::lock_guard<std::mutex> guard(progress_mutex_);
+            require(!exclusive_ && (parallel || active_ == 0), XMAX_INVALID_STATE,
+                    "A storage operation is already running");
+            epoch = epoch_.load();
+            ++active_;
+            exclusive_ = !parallel;
+            id = ++latest_;
             state_ = XMAX_TRANSFER_RUNNING;
             transferred_ = total_ = 0;
         }
@@ -235,13 +273,13 @@ class XmaxStorageManager {
                 cancel,
                 progress
             );
-            state(XMAX_TRANSFER_SUCCEEDED);
+            finish(id, XMAX_TRANSFER_SUCCEEDED);
             return result;
         } catch (const Error& error) {
-            state(error.code == XMAX_CANCELLED ? XMAX_TRANSFER_CANCELLED : XMAX_TRANSFER_FAILED);
+            finish(id, error.code == XMAX_CANCELLED ? XMAX_TRANSFER_CANCELLED : XMAX_TRANSFER_FAILED);
             throw;
         } catch (...) {
-            state(XMAX_TRANSFER_FAILED);
+            finish(id, XMAX_TRANSFER_FAILED);
             throw;
         }
     }

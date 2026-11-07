@@ -1,3 +1,13 @@
+//
+//  VideoPanel.qml
+//  XmaxSDK
+//
+//  Author: 翁跃庭 (Yueting Weng)
+//  GitHub: https://github.com/Xmax-AI/XmaxSDK-Windows
+//
+//  Copyright (c) 2026 XMAX.AI PTE. LTD.
+//
+
 import QtQuick
 import QtQuick.Controls
 import QtMultimedia
@@ -18,7 +28,18 @@ Rectangle {
     VideoOutput {
         id: video; objectName: panel.result ? "remoteVideoOutput" : "localVideoOutput"
         anchors.fill: parent
-        fillMode: panel.result ? VideoOutput.PreserveAspectFit : VideoOutput.PreserveAspectCrop
+        fillMode: VideoOutput.PreserveAspectCrop
+        opacity: !panel.result || controller.remoteReady ? 1 : 0
+        Behavior on opacity {
+            enabled: panel.result && controller.remoteReady
+            NumberAnimation { duration: controller.reduceMotion() ? 0 : 300; easing.type: Easing.InOutCubic }
+        }
+    }
+    TrajectoryOverlay {
+        anchors.fill: parent
+        visible: panel.result
+        controller: panel.controller
+        videoRect: video.contentRect
     }
     Text {
         anchors.verticalCenter: parent.verticalCenter
@@ -67,5 +88,17 @@ Rectangle {
     Rectangle {
         x: 14; y: parent.height - 35; width: Math.min(tag.implicitWidth + 16, parent.width - 28); height: 23; color: "#59000000"; radius: 8
         Text { id: tag; anchors.centerIn: parent; width: parent.width - 16; text: panel.title; elide: Text.ElideRight; color: "#a6ffffff"; font.pixelSize: 12; font.family: Qt.platform.os === "windows" ? "Microsoft YaHei UI" : Qt.application.font.family }
+    }
+    Loader {
+        active: panel.result
+        anchors.right: parent.right; anchors.bottom: parent.bottom; anchors.margins: 12
+        sourceComponent: BeautyPanel {
+            objectName: "beautyPanel"
+            controller: panel.controller
+            opacity: controller.active && controller.beautyEnabled ? 1 : 0
+            visible: opacity > 0
+            enabled: controller.active && controller.beautyEnabled && !controller.closing
+            Behavior on opacity { NumberAnimation { duration: controller.reduceMotion() ? 0 : 180 } }
+        }
     }
 }

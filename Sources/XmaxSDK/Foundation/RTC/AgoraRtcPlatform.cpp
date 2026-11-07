@@ -10,6 +10,7 @@
 
 #include "Foundation/RTC/RtcStatsLogger.hpp"
 #include "Foundation/RTC/RtcPlatform.hpp"
+#include "Foundation/RTC/AgoraMicrophone.hpp"
 #include "Foundation/Text/Utf8.hpp"
 #include <IAgoraMediaEngine.h>
 #include <IAgoraRtcEngine.h>
@@ -20,6 +21,7 @@
 #include <mutex>
 #include <optional>
 #include <thread>
+#include <unordered_map>
 
 namespace xmax::detail {
 using namespace agora;
@@ -124,6 +126,7 @@ class AgoraRtc final : public Rtc,
      * Whether current native PCM callbacks should copy result-user audio for application output.
      */
     std::atomic<bool> audio_observing_{false};
+    std::atomic<bool> result_audio_enabled_{false};
 
     /**
      * Whether RTC successfully joined the current room.
@@ -133,12 +136,17 @@ class AgoraRtc final : public Rtc,
     /**
      * Whether the current generation has received its first result frame.
      */
-    bool first_frame_ = false;
+    bool generation_result_lost_ = false;
 
     /**
      * The result-user playback volume in [0, 1], protected by the native engine mutex.
      */
     float volume_ = 0;
+
+    /**
+     * The recording endpoint retained before engine initialization.
+     */
+    AgoraMicrophone microphone_;
 
     /**
      * The latest redacted RTC failure reason, shared with waiters and error callbacks.
@@ -164,6 +172,18 @@ class AgoraRtc final : public Rtc,
      * The resolved result user's UID used to filter frames and statistics.
      */
     std::atomic<uid_t> bot_uid_{0};
+
+    /** Publication notices received before the remote account has resolved, guarded by the engine mutex. */
+    std::unordered_map<uid_t, bool> video_publications_;
+
+    /** Whether the current result user's video is subscribed, guarded by the metadata mutex. */
+    bool result_video_subscribed_ = false;
+
+    /** Whether the current generation start command has been confirmed, guarded by the metadata mutex. */
+    bool generation_confirmed_ = false;
+
+    /** Invalidates decoded frames copied concurrently with publication and task changes. */
+    uint64_t result_video_revision_ = 0;
 
     /**
      * The reliable native data stream identifier used for room signaling.
@@ -191,28 +211,24 @@ class AgoraRtc final : public Rtc,
     std::shared_ptr<const std::string> log_token_;
 
     /**
-     * Waits for room join or the first result, checking cancellation and maintaining keepalives.
+     * Waits for room join or result publication until the operation deadline.
      *
-     * @param[in] first True waits for the first result; false waits for room join.
+     * @param[in] first True waits for result publication; false waits for room join.
      * @param[in] cancel A cooperative cancellation predicate; true requests termination of the operation.
-     * @param[in] keepalive The periodic keepalive callback; it must not hold a cross-thread lifecycle lock.
      */
     void wait(
-        bool first,
+        bool result,
         const Cancel& cancel,
-        const std::function<void()>& keepalive = [] {}
+        Clock::time_point deadline
     ) {
-        const auto deadline = Clock::now() + std::chrono::seconds(first ? 30 : 15);
         std::unique_lock<std::mutex> lock(metadata_mutex_);
-        while (!(first ? first_frame_ : joined_.load())) {
-            lock.unlock();
-            keepalive();
-            lock.lock();
+        for (;;) {
             require(
                 !cancel(),
                 XMAX_CANCELLED,
                 "RTC operation cancelled"
             );
+            require(!result || !generation_result_lost_, XMAX_CANCELLED, "Result video was unpublished");
             require(
                 failure_.empty(),
                 failure_code_,
@@ -221,12 +237,11 @@ class AgoraRtc final : public Rtc,
             require(
                 Clock::now() < deadline,
                 XMAX_TIMEOUT,
-                first ? "Timed out waiting for generated video" : "RTC join timed out"
+                result ? "Realtime generation start timed out" : "RTC join timed out"
             );
-            changed_.wait_for(
-                lock,
-                std::chrono::milliseconds(20)
-            );
+            if (result ? (generation_confirmed_ && result_video_subscribed_) : joined_.load())
+                return;
+            changed_.wait_until(lock, std::min(deadline, Clock::now() + std::chrono::milliseconds(20)));
         }
     }
 
@@ -294,6 +309,17 @@ class AgoraRtc final : public Rtc,
     }
 
     /**
+     * Retains the requested recording endpoint until the engine is initialized.
+     *
+     * @param[in] device The recording endpoint identifier, or empty for the system default.
+     */
+    void microphone_device(
+        const std::string& device
+    ) override {
+        microphone_.select(joined_ && !stopping_ ? engine_ : nullptr, device);
+    }
+
+    /**
      * Initializes RTC, configures external video and audio policy, and waits for room join.
      *
      * @param[in] c The validated app, room, user, token, and service-result account configuration.
@@ -339,10 +365,7 @@ class AgoraRtc final : public Rtc,
             engine_->enableLocalVideo(false),
             "enableLocalVideo"
         );
-        check_rtc(
-            engine_->enableLocalAudio(mic && !external_audio_),
-            "enableLocalAudio"
-        );
+        microphone_.prepare(*engine_, mic && !external_audio_);
         check_rtc(
             engine_->queryInterface(
                 AGORA_IID_MEDIA_ENGINE,
@@ -423,7 +446,7 @@ class AgoraRtc final : public Rtc,
         options.publishCustomAudioTrack = external_audio_;
         if (external_audio_)
             options.publishCustomAudioTrackId = int(audio_track_);
-        options.autoSubscribeVideo = true;
+        options.autoSubscribeVideo = false;
         options.autoSubscribeAudio = false;
         check_rtc(
             engine_->joinChannelWithUserAccount(
@@ -436,7 +459,8 @@ class AgoraRtc final : public Rtc,
         );
         wait(
             false,
-            cancel
+            cancel,
+            Clock::now() + std::chrono::seconds(15)
         );
 
         DataStreamConfig stream;
@@ -449,6 +473,24 @@ class AgoraRtc final : public Rtc,
             ),
             "createDataStream"
         );
+    }
+
+    /** Updates native capture and the published camera microphone track together. */
+    void microphone_enabled(bool enabled) override {
+        require(engine_ && joined_ && !stopping_ && !external_audio_,
+                XMAX_INVALID_STATE, "No camera microphone track is available");
+        microphone_.enable(*engine_, enabled);
+    }
+
+    /** Reports only the local physical input sample, excluding remote and custom PCM. */
+    void onAudioVolumeIndication(
+        const AudioVolumeInfo* speakers,
+        unsigned int count,
+        int
+    ) override {
+        if (!stopping_ && microphone_.accepts_samples() && speakers && count == 1 && speakers[0].uid == 0 &&
+            callbacks_.microphone_level)
+            callbacks_.microphone_level(std::clamp(int(speakers[0].volume), 0, 255));
     }
 
     /**
@@ -574,28 +616,44 @@ class AgoraRtc final : public Rtc,
     }
 
     /**
-     * Waits for the first real result frame, checking cancellation and maintaining keepalives.
+     * Waits for the selected result user to publish video.
      *
      * @param[in] cancel A cooperative cancellation predicate; true requests termination of the operation.
-     * @param[in] keepalive The periodic keepalive callback; it must not hold a cross-thread lifecycle lock.
      */
-    void wait_remote(
-        const Cancel& cancel,
-        const std::function<void()>& keepalive
-    ) override {
-        wait(
-            true,
-            cancel,
-            keepalive
-        );
+    void wait_remote(const Cancel& cancel, Clock::time_point deadline) override {
+        wait(true, cancel, deadline);
     }
 
     /**
-     * Clears first-result tracking for the next generation.
+     * Resets publication confirmation for the next generation.
      */
     void begin_generation() override {
+        end_generation();
+    }
+
+    void confirm_generation() override {
         std::lock_guard<std::mutex> lock(metadata_mutex_);
-        first_frame_ = false;
+        generation_confirmed_ = true;
+        changed_.notify_all();
+    }
+
+    void end_generation() override {
+        std::lock_guard<std::mutex> lock(metadata_mutex_);
+        ++result_video_revision_;
+        generation_confirmed_ = false;
+        generation_result_lost_ = false;
+    }
+
+    void result_audio(bool enabled) override {
+        std::lock_guard<std::mutex> lock(engine_mutex_);
+        const auto uid = bot_uid_.load();
+        bool subscribed;
+        {
+            std::lock_guard<std::mutex> result_lock(metadata_mutex_);
+            require(!enabled || !generation_result_lost_, XMAX_CANCELLED, "Result video was unpublished");
+            subscribed = result_video_subscribed_ && generation_confirmed_;
+        }
+        update_result_audio(uid, enabled && subscribed);
     }
 
     /**
@@ -694,6 +752,7 @@ class AgoraRtc final : public Rtc,
 
         // Engine release waits for callback threads; do not hold application mutexes here.
         audio_observing_ = false;
+        result_audio_enabled_ = false;
         if (media) {
             if (audio_track_ != 0xffffffff) {
                 if (engine)
@@ -777,6 +836,25 @@ class AgoraRtc final : public Rtc,
     }
 
     /**
+     * Copies bounded signaling from the resolved result account before returning to the native engine.
+     */
+    void onStreamMessage(
+        uid_t uid,
+        [[maybe_unused]] int stream_id,
+        const char* data,
+        size_t length,
+        [[maybe_unused]] uint64_t sent_at
+    ) override {
+        if (stopping_ || !data || length > 262144 || bot_uid_ == 0 || uid != bot_uid_ || !callbacks_.message)
+            return;
+        try {
+            callbacks_.message(bot_, std::string(data, length));
+        } catch (...) {
+            // Malformed receipts must not escape into the native RTC callback.
+        }
+    }
+
+    /**
      * Identifies the result user and applies the retained playback volume.
      *
      * @param[in] uid The native numeric RTC user identifier used to identify and filter the result stream.
@@ -817,24 +895,21 @@ class AgoraRtc final : public Rtc,
         uid_t uid,
         [[maybe_unused]] USER_OFFLINE_REASON_TYPE reason
     ) override {
-        if (stopping_ || uid != bot_uid_)
+        if (stopping_)
             return;
         {
             std::lock_guard<std::mutex> lock(engine_mutex_);
+            video_publications_.erase(uid);
             if (uid != bot_uid_)
                 return;
+            clear_result_video();
+            result_audio_enabled_ = false;
             bot_uid_ = 0;
-        }
-        if (callbacks_.statistics) {
-            xmax_video_statistics value{};
-            value.struct_size = sizeof(value);
-            value.direction = 1;
-            callbacks_.statistics(value);
         }
     }
 
     /**
-     * Resolves the result account, applies its retained volume, and enables its audio subscription.
+     * Resolves the result account and applies its retained volume and known publication state.
      *
      * @param[in] uid The native numeric RTC user identifier used to identify and filter the result stream.
      * @param[in] info The native RTC user information linking an account to its UID.
@@ -855,14 +930,129 @@ class AgoraRtc final : public Rtc,
                 engine_->adjustUserPlaybackSignalVolume(uid, int(std::lround(volume_ * 100))),
                 "adjustUserPlaybackSignalVolume"
             );
+            const auto previous_uid = bot_uid_.load();
+            if (previous_uid != uid) {
+                clear_result_video();
+                update_result_audio(previous_uid, false);
+                if (previous_uid)
+                    check_rtc(engine_->muteRemoteVideoStream(previous_uid, true), "muteRemoteVideoStream");
+            }
             bot_uid_ = uid;
-            check_rtc(
-                engine_->muteRemoteAudioStream(uid, false),
-                "muteRemoteAudioStream"
-            );
+            const auto published = video_publications_.find(uid);
+            if (published != video_publications_.end())
+                apply_video_publication(uid, published->second);
         } catch (const Error& error) {
             failure(error.what(), error.code);
         }
+    }
+
+    /** Reads publication flags before video subscription starts. */
+    void onUserStateChanged(uid_t uid, REMOTE_USER_STATE state) override {
+        const auto flags = static_cast<unsigned>(state);
+        remote_video_publication(uid, (flags & USER_STATE_MUTE_VIDEO) == 0 &&
+            (flags & USER_STATE_ENABLE_VIDEO) != 0 && (flags & USER_STATE_ENABLE_LOCAL_VIDEO) != 0);
+    }
+
+    /** Tracks explicit remote publication changes. */
+    void onUserMuteVideo(uid_t uid, bool muted) override {
+        remote_video_publication(uid, !muted);
+    }
+
+    /** Tracks whether the remote video module is enabled. */
+    void onUserEnableVideo(uid_t uid, bool enabled) override {
+        remote_video_publication(uid, enabled);
+    }
+
+    /** Tracks whether the remote source has video capture enabled. */
+    void onUserEnableLocalVideo(uid_t uid, bool enabled) override {
+        remote_video_publication(uid, enabled);
+    }
+
+    /** Handles remote video stops even when the result user remains in the room. */
+    void onRemoteVideoStateChanged(uid_t uid, REMOTE_VIDEO_STATE, REMOTE_VIDEO_STATE_REASON reason, int) override {
+        if (reason == REMOTE_VIDEO_STATE_REASON_REMOTE_OFFLINE)
+            onUserOffline(uid, USER_OFFLINE_QUIT);
+        else if (reason == REMOTE_VIDEO_STATE_REASON_REMOTE_MUTED)
+            remote_video_publication(uid, false);
+        else if (reason == REMOTE_VIDEO_STATE_REASON_REMOTE_UNMUTED)
+            remote_video_publication(uid, true);
+    }
+
+    /** Remembers publication and subscribes only after the selected account is resolved. */
+    void remote_video_publication(uid_t uid, bool published) {
+        if (stopping_)
+            return;
+        try {
+            std::lock_guard<std::mutex> lock(engine_mutex_);
+            if (!engine_ || stopping_)
+                return;
+            video_publications_[uid] = published;
+            if (uid == bot_uid_)
+                apply_video_publication(uid, published);
+        } catch (const Error& error) {
+            failure(error.what(), error.code);
+        }
+    }
+
+    /** Applies the selected user's publication under the engine mutex. */
+    void apply_video_publication(uid_t uid, bool published) {
+        bool subscribed;
+        {
+            std::lock_guard<std::mutex> lock(metadata_mutex_);
+            subscribed = result_video_subscribed_;
+        }
+        if (published == subscribed)
+            return;
+        if (!published) {
+            clear_result_video();
+            update_result_audio(uid, false);
+            check_rtc(engine_->muteRemoteVideoStream(uid, true), "muteRemoteVideoStream");
+            return;
+        }
+        check_rtc(engine_->muteRemoteVideoStream(uid, false), "muteRemoteVideoStream");
+        {
+            std::lock_guard<std::mutex> lock(metadata_mutex_);
+            result_video_subscribed_ = true;
+        }
+        changed_.notify_all();
+    }
+
+    /** Invalidates queued and in-flight frames before exposing the unpublish event. */
+    void clear_result_video() {
+        std::lock_guard<std::mutex> lock(metadata_mutex_);
+        if (!result_video_subscribed_)
+            return;
+        result_video_subscribed_ = false;
+        ++result_video_revision_;
+        if (std::exchange(generation_confirmed_, false)) {
+            generation_result_lost_ = true;
+            if (callbacks_.video_unpublished)
+                callbacks_.video_unpublished();
+            changed_.notify_all();
+        }
+        if (callbacks_.statistics) {
+            xmax_video_statistics value{};
+            value.struct_size = sizeof(value);
+            value.direction = 1;
+            callbacks_.statistics(value);
+        }
+        if (callbacks_.event) {
+            xmax_event event{};
+            event.type = XMAX_EVENT_STATISTICS;
+            event.direction = 1;
+            event.quality = -1;
+            event.width = event.height = event.fps = -1;
+            callbacks_.event(event);
+        }
+    }
+
+    /** Updates the current audio subscription under the engine mutex. */
+    void update_result_audio(uid_t uid, bool enabled) {
+        if (enabled == result_audio_enabled_)
+            return;
+        if (uid && engine_ && !stopping_)
+            check_rtc(engine_->muteRemoteAudioStream(uid, !enabled), "muteRemoteAudioStream");
+        result_audio_enabled_ = enabled;
     }
 
     /**
@@ -875,7 +1065,13 @@ class AgoraRtc final : public Rtc,
         LOCAL_AUDIO_STREAM_STATE state,
         LOCAL_AUDIO_STREAM_REASON reason
     ) override {
-        if (!stopping_ && state == LOCAL_AUDIO_STREAM_STATE_FAILED)
+        if (stopping_ || external_audio_)
+            return;
+        const bool available = state != LOCAL_AUDIO_STREAM_STATE_STOPPED && state != LOCAL_AUDIO_STREAM_STATE_FAILED;
+        microphone_.availability(available);
+        if (!available && callbacks_.microphone_level)
+            callbacks_.microphone_level(-1);
+        if (!joined_ && microphone_.enabled() && state == LOCAL_AUDIO_STREAM_STATE_FAILED)
             failure(
                 "Microphone capture failed; check device access and permissions",
                 reason == LOCAL_AUDIO_STREAM_REASON_DEVICE_NO_PERMISSION ? XMAX_MICROPHONE_PERMISSION_DENIED
@@ -948,7 +1144,8 @@ class AgoraRtc final : public Rtc,
     void onRemoteVideoStats(
         const RemoteVideoStats& stats
     ) override {
-        if (stopping_ || stats.uid != bot_uid_)
+        std::lock_guard<std::mutex> lock(metadata_mutex_);
+        if (stopping_ || stats.uid != bot_uid_ || !result_video_subscribed_ || !generation_confirmed_)
             return;
 
         xmax_event e{};
@@ -1003,17 +1200,22 @@ class AgoraRtc final : public Rtc,
         int up,
         int down
     ) override {
-        if (stopping_ || uid != 0)
+        if (stopping_ || uid != 0 || !callbacks_.event)
             return;
+
+        xmax_event sample{};
+        sample.type = XMAX_EVENT_NETWORK_QUALITY;
+        sample.quality = up;
+        sample.code = down;
+        callbacks_.event(sample);
+
         for (int direction = 0; direction < 2; ++direction) {
             xmax_event e{};
             e.type = XMAX_EVENT_STATISTICS;
             e.direction = direction;
             e.quality = direction ? down : up;
             e.width = e.height = e.fps = e.bitrate_kbps = e.packet_loss_percent = e.e2e_ms = -1;
-
-            if (callbacks_.event)
-                callbacks_.event(e);
+            callbacks_.event(e);
         }
     }
 
@@ -1196,10 +1398,22 @@ class AgoraRtc final : public Rtc,
         uid_t uid,
         NativeAudioFrame& native
     ) override {
-        if (stopping_ || !audio_observing_ || !channel || room_ != channel || bot_uid_ == 0 ||
+        if (stopping_ || !audio_observing_ || !result_audio_enabled_ || !channel || room_ != channel || bot_uid_ == 0 ||
             uid != bot_uid_ || !callbacks_.audio)
             return true;
 
+        uint64_t revision;
+        {
+            std::lock_guard<std::mutex> lock(metadata_mutex_);
+            if (!result_video_subscribed_ || !generation_confirmed_)
+                return true;
+            revision = result_video_revision_;
+        }
+        const auto deliver = [&](xmax::detail::AudioFrame frame) {
+            std::lock_guard<std::mutex> lock(metadata_mutex_);
+            if (revision == result_video_revision_ && !stopping_ && result_audio_enabled_ && uid == bot_uid_)
+                callbacks_.audio(std::move(frame));
+        };
         try {
             xmax::detail::AudioFrame frame;
             frame.sample_rate = uint32_t(native.samplesPerSec);
@@ -1216,11 +1430,11 @@ class AgoraRtc final : public Rtc,
                     bytes + size
                 );
             }
-            callbacks_.audio(std::move(frame));
+            deliver(std::move(frame));
         } catch (...) {
             // Invalid or unavailable PCM must break output continuity without interrupting native playback.
             try {
-                callbacks_.audio({});
+                deliver({});
             } catch (...) {
             }
         }
@@ -1281,6 +1495,13 @@ class AgoraRtc final : public Rtc,
     ) override {
         if (stopping_ || !channel || room_ != channel || bot_uid_ == 0 || uid != bot_uid_)
             return true;
+        uint64_t revision;
+        {
+            std::lock_guard<std::mutex> lock(metadata_mutex_);
+            if (!generation_confirmed_ || !result_video_subscribed_)
+                return true;
+            revision = result_video_revision_;
+        }
         try {
             require(
                 video.type == media_base::VIDEO_PIXEL_BGRA && video.width > 0 && video.height > 0 &&
@@ -1315,14 +1536,13 @@ class AgoraRtc final : public Rtc,
             for (size_t i = 3; i < frame.planes[0].size(); i += 4)
                 frame.planes[0][i] = 255;
 
-            if (callbacks_.frame)
-                callbacks_.frame(std::move(frame));
-
             {
                 std::lock_guard<std::mutex> lock(metadata_mutex_);
-                first_frame_ = true;
+                if (revision != result_video_revision_ || stopping_ || uid != bot_uid_)
+                    return true;
+                if (callbacks_.frame)
+                    callbacks_.frame(std::move(frame));
             }
-            changed_.notify_all();
         } catch (const std::exception&) {
             failure("Cannot copy a decoded RTC video frame");
         }

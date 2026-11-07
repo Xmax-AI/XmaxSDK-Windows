@@ -202,19 +202,20 @@ class XmaxRealtimeLifecycleManager {
      */
     using CleanupHandler = std::function<CleanupResult(TerminationScope)>;
 
+    /** Requests capture release independently of the realtime worker. */
+    using StopCaptureHandler = std::function<std::future<void>()>;
+
     /**
      * Receives committed state on the lifecycle worker before its application event is queued.
      */
     using StateHandler = std::function<void(const RealtimeState&)>;
 
     /**
-     * Starts the serial worker with heartbeat and asynchronous failure receivers.
+     * Starts the serial worker with an asynchronous failure receiver.
      *
-     * @param[in] tick The due-heartbeat handler.
      * @param[in] failure The handler for unexpected asynchronous exceptions.
      */
     explicit XmaxRealtimeLifecycleManager(
-        std::function<void()> tick,
         std::function<void(Error)> failure = {}
     );
 
@@ -229,11 +230,13 @@ class XmaxRealtimeLifecycleManager {
      * @param[in] errors The error manager, which outlives this lifecycle manager.
      * @param[in] cleanup The resource-release handler; it must not submit blocking lifecycle work.
      * @param[in] state_handler Optional state bookkeeping performed before event delivery.
+     * @param[in] stop_capture Optional nonblocking request to stop local capture on full termination.
      */
     void configure(
         XmaxRealtimeErrorManager& errors,
         CleanupHandler cleanup,
-        StateHandler state_handler = {}
+        StateHandler state_handler = {},
+        StopCaptureHandler stop_capture = {}
     );
 
     /**
@@ -270,6 +273,9 @@ class XmaxRealtimeLifecycleManager {
         TerminationScope scope,
         xmax_realtime_reason reason = XMAX_REASON_NORMAL
     );
+
+    /** Disconnects active connection work while retaining local media and the requested reason. */
+    bool disconnect(xmax_realtime_reason reason, std::optional<Error> reason_error = {});
 
     /**
      * Schedules a scoped runtime failure while rejecting notifications from released resources.
@@ -401,25 +407,7 @@ class XmaxRealtimeLifecycleManager {
         xmax_event_info& info
     );
 
-    /**
-     * Updates the worker-owned heartbeat deadline.
-     *
-     * @param[in] value The next deadline on the monotonic clock.
-     */
-    void deadline(
-        Clock::time_point value
-    ) {
-        deadline_ = value;
-    }
-
-    /**
-     * Returns the worker-owned heartbeat deadline.
-     */
-    Clock::time_point deadline() const {
-        return deadline_;
-    }
-
-  private:
+          private:
 
     /**
      * A merged termination request shared by all synchronous termination callers.
@@ -441,6 +429,12 @@ class XmaxRealtimeLifecycleManager {
          */
         std::optional<Error> error;
 
+        /** A failure supplied by the caller as the final state reason. */
+        std::optional<Error> reason_error;
+
+        /** Completes once local capture is released, independently of remote cleanup. */
+        std::shared_future<void> capture_stopped;
+
         /**
          * Completes after resource release and final state publication.
          */
@@ -461,12 +455,7 @@ class XmaxRealtimeLifecycleManager {
         }
     };
 
-    /**
-     * The due-heartbeat handler executed by the worker.
-     */
-    std::function<void()> tick_;
-
-    /**
+        /**
      * The fallback receiver for unexpected asynchronous failures.
      */
     std::function<void(Error)> failure_;
@@ -480,6 +469,9 @@ class XmaxRealtimeLifecycleManager {
      * The injected resource cleanup operation.
      */
     CleanupHandler cleanup_;
+
+    /** The nonblocking local-capture stop operation. */
+    StopCaptureHandler stop_capture_;
 
     /**
      * The resource bookkeeping callback invoked after a state commit.
@@ -571,13 +563,8 @@ class XmaxRealtimeLifecycleManager {
      */
     std::deque<xmax_event_info> events_;
 
-    /**
-     * The next heartbeat deadline, confined to the worker.
-     */
-    Clock::time_point deadline_ = Clock::time_point::max();
-
-    /**
-     * Executes foreground work, low-priority adaptation, and due heartbeats.
+        /**
+     * Executes foreground work and low-priority adaptation.
      */
     void worker_loop();
 
@@ -603,6 +590,7 @@ class XmaxRealtimeLifecycleManager {
      * @param[in] origin The failed operation, or an empty reference for explicit termination.
      * @param[in] schedule Whether to enqueue cleanup instead of executing it on the current worker.
      * @param[in] current Optional producer validation checked atomically with termination admission.
+     * @param[in] explicit_disconnect Whether to skip idle connections and treat the error as a caller reason.
      */
     std::shared_ptr<Termination> request_termination(
         TerminationScope scope,
@@ -610,7 +598,8 @@ class XmaxRealtimeLifecycleManager {
         std::optional<Error> error = {},
         std::shared_ptr<Lease> origin = {},
         bool schedule = true,
-        Cancel current = {}
+        Cancel current = {},
+        bool explicit_disconnect = false
     );
 
     /**
@@ -637,9 +626,11 @@ class XmaxRealtimeLifecycleManager {
      * Publishes state after current work or coordinated cleanup has committed its resources.
      *
      * @param[in] value The new phase and business identifiers.
+     * @param[in] transient A disconnecting state published at admission, before worker-side cleanup.
      */
     void publish(
-        RealtimeState value
+        RealtimeState value,
+        bool transient = false
     );
 };
 } // namespace xmax::detail

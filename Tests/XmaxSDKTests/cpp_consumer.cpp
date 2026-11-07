@@ -1,3 +1,13 @@
+//
+//  cpp_consumer.cpp
+//  XmaxSDK
+//
+//  Author: 翁跃庭 (Yueting Weng)
+//  GitHub: https://github.com/Xmax-AI/XmaxSDK-Windows
+//
+//  Copyright (c) 2026 XMAX.AI PTE. LTD.
+//
+
 #include <iostream>
 #include <type_traits>
 #include <vector>
@@ -13,22 +23,27 @@ int main() {
     xmax::client client("");
     if (!(client.capabilities().flags & XMAX_CAP_STORAGE))
         return 3;
-    auto files = client.create_storage();
+    auto files = xmax::client("offline-test").create_storage();
     auto moved_files = std::move(files);
     if (files || moved_files.progress().state != XMAX_TRANSFER_IDLE)
         return 4;
     moved_files.cancel();
     auto session = client.create_realtime();
-    session.prepare({1920, 1024, 30});
+    session.prepare({1920, 1024, 90});
     xmax_log_record log{};
     if (!xmax::logger::poll(log) || log.sequence == 0)
         return 21;
     xmax::logger::configure(XMAX_LOG_NONE);
     if (xmax::logger::poll(log))
         return 22;
+    const auto binding = session.local_stream();
+    const auto track = binding.video_track();
     auto moved = std::move(session);
-    if (session || moved.state().state != XMAX_READY || moved.format().height != 1024)
+    if (session || moved.state().connection_state != xmax::realtime_connection_state::ready || moved.format().height != 1024)
         return 5;
+    const auto format = track.video_format();
+    if (track.id().empty() || !format || format->fps != 90 || track.device() || track.position())
+        return 28;
     moved.volume(.4f);
     moved.video_mirror(true, true);
     if (!moved.video_mirror().local_preview || moved.video_mirror().published_video)
@@ -48,16 +63,31 @@ int main() {
     input.strides[0] = 1920 * 4;
     input.plane_sizes[0] = pixels.size();
     moved.push(input);
-    auto local = moved.acquire_local_frame();
+    try {
+        moved.start_generation(xmax::realtime_context{"requires an existing connection", std::nullopt});
+        return 24;
+    } catch (const xmax::error& e) {
+        if (e.code() != XMAX_INVALID_STATE || moved.state().connection_state != xmax::realtime_connection_state::ready)
+            return 25;
+    }
+    auto other = client.create_realtime();
+    try {
+        other.connect(binding);
+        return 26;
+    } catch (const xmax::error& e) {
+        if (e.code() != XMAX_INVALID_ARGUMENT)
+            return 27;
+    }
+    auto local = moved.acquire_stream_frame(binding);
     auto kept = std::move(local);
     if (local || !kept || !kept.mirrored() || kept.view().planes[0][0] != 37)
         return 7;
     moved.disconnect();
     moved.close();
-    if (kept.view().planes[0][0] != 37 || moved.acquire_local_frame())
+    if (kept.view().planes[0][0] != 37 || moved.acquire_local_frame() || track.video_format())
         return 8;
     try {
-        moved.start("test");
+        moved.start_generation(binding, xmax::realtime_context{"test", std::nullopt});
         return 1;
     } catch (const xmax::error& e) {
         if (e.code() != XMAX_INVALID_STATE)

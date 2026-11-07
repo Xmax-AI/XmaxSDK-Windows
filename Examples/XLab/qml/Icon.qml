@@ -11,6 +11,7 @@ Image {
         statistics: '<path d="M4 20V11M12 20V4M20 20v-6"/>',
         volume: '<path d="m11 5-6 4H2v6h3l6 4V5ZM15 8a6 6 0 0 1 0 8M18 5a10 10 0 0 1 0 14"/>',
         muted: '<path d="m11 5-6 4H2v6h3l6 4V5ZM16 9l6 6M22 9l-6 6"/>',
+        sparkles: '<path d="m12 2 2.5 7.5L22 12l-7.5 2.5L12 22l-2.5-7.5L2 12l7.5-2.5Z"/>',
         bolt: '<path d="m13 2-8 12h6l-1 8 9-13h-6l1-7Z"/>',
         plus: '<path d="M12 4v16M4 12h16"/>',
         arrow: '<path d="M4 12h16m-6-6 6 6-6 6"/>',

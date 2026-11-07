@@ -1,3 +1,13 @@
+//
+//  MainWindow.cs
+//  XmaxSDK
+//
+//  Author: 翁跃庭 (Yueting Weng)
+//  GitHub: https://github.com/Xmax-AI/XmaxSDK-Windows
+//
+//  Copyright (c) 2026 XMAX.AI PTE. LTD.
+//
+
 using System.ComponentModel;
 using System.Diagnostics;
 using Microsoft.UI.Xaml;
@@ -29,7 +39,8 @@ public sealed partial class MainWindow : Window
     private readonly TextBlock terms = Theme.Text("", 13, "#9CA3AF");
     private readonly StackPanel workspace = new();
     private readonly Grid localPanel = new() { Background = Theme.Brush("#000000") }, remotePanel = new() { Background = Theme.Brush("#000000") };
-    internal readonly XmaxRealtimeVideoView LocalView = new() { ContentMode = VideoContentMode.Fill }, RemoteView = new();
+    internal readonly XmaxRealtimeVideoView LocalView = new();
+    private readonly XmaxRealtimeVideoView RemoteView = new();
     private readonly TextBlock localPlaceholder = Theme.Text("", 14, "#B3FFFFFF"), resultPlaceholder = Theme.Text("", 14, "#B3FFFFFF");
     private readonly StackPanel localStatistics = new(), remoteStatistics = new();
     private readonly Grid referenceArea = new() { Height = 190 };
@@ -51,6 +62,8 @@ public sealed partial class MainWindow : Window
     private readonly Pill sessionModelLabel = new() { Passive = true, IsHitTestVisible = false };
     private readonly Pill keyButton = new() { Glyph = "key", LabelVerticalOffset = 2.75 };
     private readonly Pill statisticsButton = new() { Glyph = "statistics", Secondary = true };
+    private readonly Pill beautyButton = new() { Text = "Beauty", Glyph = "sparkles" };
+    private readonly BeautyPanel beautyPanel = new() { HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Bottom, Margin = new(12) };
     private readonly Pill volumeButton = new() { Glyph = "muted", Secondary = true };
     private readonly Pill elapsed = new() { Passive = true, MinWidth = 72, IsHitTestVisible = false };
     private readonly Pill recordButton = new() { Text = "Record", Glyph = "record", Secondary = true, IconSize = 12, ContentSpacing = 7, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold };
@@ -148,6 +161,9 @@ public sealed partial class MainWindow : Window
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(recordButton, Model.RecordLabel);
         stopButton.IsEnabled = !closing;
         StartButton.Text = Model.StartLabel; stopButton.Text = Model.StopLabel;
+        beautyButton.Accent = Model.BeautyEnabled; beautyButton.IsEnabled = Model.BeautyCanEdit && !closing;
+        beautyPanel.Visibility = Model.BeautyPanelVisible ? Visibility.Visible : Visibility.Collapsed;
+        beautyPanel.IsEnabled = Model.BeautyCanEdit && !closing;
         statisticsButton.Accent = Model.StatisticsVisible; volumeButton.Glyph = Model.VolumeGlyph; elapsed.Text = Model.Elapsed;
         localPlaceholder.Text = Model.LocalPlaceholder; resultPlaceholder.Text = Model.ResultPlaceholder;
         localStatistics.Visibility = remoteStatistics.Visibility = Model.StatisticsVisible ? Visibility.Visible : Visibility.Collapsed;
@@ -171,7 +187,12 @@ public sealed partial class MainWindow : Window
         {
             previousActive = Model.Active; ClosePopups(); scroller.ChangeView(null, 0, null, true);
             if (root.IsLoaded)
-            { ArrangePage(); PageEntry.Reveal(Model.Active ? workspace : landing); if (!Model.Active) PageEntry.Reveal(footer); }
+            {
+                ArrangePage();
+                root.UpdateLayout();
+                PageEntry.Reveal(Model.Active ? workspace : landing);
+                if (!Model.Active) PageEntry.Reveal(footer);
+            }
         }
         RequestLayout();
     }

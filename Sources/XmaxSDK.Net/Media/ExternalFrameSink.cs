@@ -28,7 +28,34 @@ public sealed class ExternalFrameSink : IDisposable
     /// </summary>
     public VideoFormat Format { get; }
 
-    internal ExternalFrameSink(NativeHandle handle, VideoFormat format) { this.handle = handle; Format = format; }
+    /// <summary>Gets the resolved preview and publication format.</summary>
+    public VideoFormat VideoFormat { get; }
+
+    internal ExternalFrameSink(
+        NativeHandle handle,
+        VideoFormat format,
+        VideoFormat? processingFormat = null
+    )
+    {
+        this.handle = handle;
+        Format = format;
+        VideoFormat = processingFormat ?? format;
+    }
+
+    internal void CompleteStartup()
+    {
+        using var lease = handle.Borrow();
+        NativeError.Check(NativeMethods.xmax_external_frame_sink_complete_startup(lease.Value));
+    }
+
+    internal bool IsActive
+    {
+        get
+        {
+            try { return !handle.IsClosed && IsRequestingFrames; }
+            catch (ObjectDisposedException) { return false; }
+        }
+    }
 
     /// <summary>
     /// Gets whether this binding still accepts input, including preview frames while disconnected.

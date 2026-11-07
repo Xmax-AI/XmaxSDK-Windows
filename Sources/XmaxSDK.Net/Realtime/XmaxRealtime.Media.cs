@@ -17,7 +17,7 @@ public sealed partial class XmaxRealtime
 {
 
     /// <summary>
-    /// Registers one serialized listener for result-user PCM and decoded video on a shared rendering timeline.
+    /// Registers one serialized listener for result-user PCM and generated video after SDK beauty on a shared rendering timeline.
     /// </summary>
     /// <param name="listener">The background callback owning each received packet; dispose or transfer every packet. Null clears the listener and queued output.</param>
     /// <returns>A task completing after listener registration changes.</returns>
@@ -44,7 +44,7 @@ public sealed partial class XmaxRealtime
     public Task<ExternalFrameSink> BindExternalAsync(
         VideoFormat format,
         bool hasAudio = false
-    ) => operations.Run(value => BindExternal(value, format, hasAudio));
+    ) => ChangeLocalMediaAsync(() => operations.Run(value => BindExternal(value, format, hasAudio)));
 
     private static unsafe ExternalFrameSink BindExternal(nint value, VideoFormat format, bool hasAudio)
     {
@@ -74,6 +74,36 @@ public sealed partial class XmaxRealtime
         uint videoWidth,
         uint videoHeight,
         VideoContentMode mode = VideoContentMode.Fit
+    ) => SubmitInteractionCore(points, viewportWidth, viewportHeight, videoWidth, videoHeight, null, mode);
+
+    /// <summary>Submits trajectory samples using the mirror state of the displayed frame.</summary>
+    /// <param name="points">Viewport points in sampling order.</param>
+    /// <param name="viewportWidth">The viewport width.</param>
+    /// <param name="viewportHeight">The viewport height.</param>
+    /// <param name="videoWidth">The displayed frame width.</param>
+    /// <param name="videoHeight">The displayed frame height.</param>
+    /// <param name="mirrored">Whether the viewport displayed horizontally mirrored pixels.</param>
+    /// <param name="mode">The displayed video's aspect-ratio layout.</param>
+    public unsafe void SubmitInteraction(
+        ReadOnlySpan<TrajectoryPoint> points,
+        double viewportWidth,
+        double viewportHeight,
+        uint videoWidth,
+        uint videoHeight,
+        bool mirrored,
+        VideoContentMode mode = VideoContentMode.Fit
+    )
+        => SubmitInteractionCore(points, viewportWidth, viewportHeight, videoWidth, videoHeight, mirrored, mode);
+
+    private unsafe void SubmitInteractionCore(
+        ReadOnlySpan<TrajectoryPoint> points,
+        double viewportWidth,
+        double viewportHeight,
+        uint videoWidth,
+        uint videoHeight,
+        bool? mirrored,
+        VideoContentMode mode,
+        ulong remoteRevision = 0
     )
     {
         using var lease = handle.Borrow();
@@ -83,7 +113,15 @@ public sealed partial class XmaxRealtime
         var native = new xmax_interaction_frame { struct_size = (uint)sizeof(xmax_interaction_frame), points = nativePoints,
             point_count = (nuint)points.Length, viewport_width = viewportWidth, viewport_height = viewportHeight,
             displayed_video_width = videoWidth, displayed_video_height = videoHeight, content_mode = (int)mode };
-        NativeError.Check(NativeMethods.xmax_realtime_submit_interaction(lease.Value, &native));
+        int result;
+        if (remoteRevision != 0)
+            result = NativeMethods.xmax_realtime_submit_stream_interaction(
+                lease.Value, remoteRevision, &native, mirrored == true ? 1 : 0);
+        else if (mirrored.HasValue)
+            result = NativeMethods.xmax_realtime_submit_interaction_view(lease.Value, &native, mirrored.Value ? 1 : 0);
+        else
+            result = NativeMethods.xmax_realtime_submit_interaction(lease.Value, &native);
+        NativeError.Check(result);
     }
 
     /// <summary>
@@ -100,4 +138,28 @@ public sealed partial class XmaxRealtime
         for (int i = 0; i < result.Length; ++i) result[i] = new(points[i].x, points[i].y);
         return result;
     }
+
+    /// <summary>
+    /// Reads the current local input or camera encoding format.
+    /// </summary>
+    /// <returns>A task containing the bound format; camera capture frames may have different dimensions.</returns>
+    /// <remarks>
+    /// This query may wait for native lifecycle work.
+    /// </remarks>
+    public Task<VideoFormat> GetFormatAsync() => operations.Run(GetFormat);
+
+    private static unsafe VideoFormat GetFormat(nint value)
+    { xmax_video_format format; NativeError.Check(NativeMethods.xmax_realtime_get_format(value, &format)); return VideoFormat.From(format); }
+
+    /// <summary>
+    /// Reads the playback volume retained for the current or next connection.
+    /// </summary>
+    /// <returns>A task containing a volume from 0 through 1, initially 0.</returns>
+    /// <remarks>
+    /// This query does not wait for native connection or generation admission.
+    /// </remarks>
+    public Task<float> GetRemoteVolumeAsync() => operations.Run(GetVolume);
+
+    private static unsafe float GetVolume(nint value)
+    { float volume; NativeError.Check(NativeMethods.xmax_realtime_get_remote_volume(value, &volume)); return volume; }
 }

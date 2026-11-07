@@ -5,7 +5,7 @@ using System.Windows.Threading;
 
 namespace XLabWpf.Controls;
 
-// Matches Qt PageEntry/macOS animateEntry: 450 ms, 14 DIP, CSS ease-out.
+// Page entry fades in and moves 14 DIP over 450 ms using ease-out.
 public static class PageEntry
 {
     public static readonly DependencyProperty EnabledProperty = DependencyProperty.RegisterAttached(

@@ -1,3 +1,13 @@
+//
+//  MainWindow.Menus.cs
+//  XmaxSDK
+//
+//  Author: 翁跃庭 (Yueting Weng)
+//  GitHub: https://github.com/Xmax-AI/XmaxSDK-Windows
+//
+//  Copyright (c) 2026 XMAX.AI PTE. LTD.
+//
+
 using System.ComponentModel;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
@@ -10,6 +20,7 @@ using Windows.System;
 using XLab.Shared.ViewModels;
 using XLabWinUI.Controls;
 using XLabWinUI.Platform;
+using Xmax.SDK;
 
 namespace XLabWinUI;
 
@@ -50,14 +61,15 @@ public sealed partial class MainWindow
     private void OpenModels()
     {
         var list = new StackPanel { Spacing = 2 };
-        foreach (string identifier in MainViewModel.Models)
+        foreach (RealtimeModel model in MainViewModel.Models)
         {
-            bool selected = Model.SelectedModel == identifier;
-            var row = new Grid(); row.Children.Add(Theme.Text("X" + identifier[1..], 13, selected ? "#2F46E2" : "#111318"));
+            bool selected = Model.SelectedModel == model;
+            var modelInfo = XmaxClient.GetModelInfo(model);
+            var row = new Grid(); row.Children.Add(Theme.Text(modelInfo.DisplayName, 13, selected ? "#2F46E2" : "#111318"));
             if (selected) { var check = Theme.Text("✓", 13, "#2F46E2"); check.FontFamily = new("Segoe UI Symbol"); check.HorizontalAlignment = HorizontalAlignment.Right; row.Children.Add(check); }
             var option = new Button { Template = Theme.ButtonTemplate, Content = row, Height = 36, Background = Theme.Brush(selected ? "#EEF1FF" : "#00FFFFFF"), BorderThickness = new(0), CornerRadius = new(8), HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch, Padding = new(10, 0, 10, 0) };
-            AutomationProperties.SetName(option, identifier);
-            option.Click += (_, _) => { Model.SelectedModel = identifier; ClosePopups(); }; list.Children.Add(option);
+            AutomationProperties.SetName(option, modelInfo.Identifier);
+            option.Click += (_, _) => { Model.SelectedModel = model; ClosePopups(); }; list.Children.Add(option);
         }
         OpenPopup(modelButton, list, 256, 7);
     }

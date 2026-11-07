@@ -1,3 +1,13 @@
+//
+//  controller.hpp
+//  XmaxSDK
+//
+//  Author: 翁跃庭 (Yueting Weng)
+//  GitHub: https://github.com/Xmax-AI/XmaxSDK-Windows
+//
+//  Copyright (c) 2026 XMAX.AI PTE. LTD.
+//
+
 #pragma once
 #include "recording.hpp"
 #include <QFuture>
@@ -11,18 +21,25 @@
 #include <atomic>
 #include <map>
 #include <memory>
-#include <xmax/xmax.h>
+#include <xmax/realtime.hpp>
 struct SdkHandles {
     xmax_client client = nullptr;
-    xmax_realtime realtime = nullptr;
-    ~SdkHandles() {
-        xmax_realtime_destroy(realtime);
-        xmax_client_destroy(client);
+    xmax::realtime realtime;
+    std::shared_ptr<const xmax::realtime_media_stream> local_stream;
+    std::shared_ptr<const xmax::realtime_media_stream> remote_stream;
+    xmax_result create_realtime() {
+        xmax_realtime controller = nullptr;
+        const auto result = xmax_realtime_create(client, &controller);
+        if (result == XMAX_OK) realtime = xmax::realtime(controller);
+        return result;
     }
+
+    ~SdkHandles() { xmax_client_destroy(client); }
 };
 struct SdkUploadJob {
     xmax_storage storage = nullptr;
     double shown_progress = -1;
+    std::atomic<double> progress{-1};
     std::atomic<bool> cancelled{false};
     void cancel() {
         cancelled = true;
@@ -44,6 +61,9 @@ class XLabController final : public QObject {
     Q_PROPERTY(QString cameraName READ cameraName NOTIFY camerasChanged)
     Q_PROPERTY(bool videoMirrored READ videoMirrored WRITE setVideoMirrored NOTIFY changed)
     Q_PROPERTY(bool statisticsVisible MEMBER statisticsVisible NOTIFY changed)
+    Q_PROPERTY(bool beautyEnabled READ beautyEnabled WRITE setBeautyEnabled NOTIFY changed)
+    Q_PROPERTY(bool beautyApplying READ beautyApplying NOTIFY changed)
+    Q_PROPERTY(QVariantMap beautyOptions READ beautyOptions NOTIFY changed)
     Q_PROPERTY(QString error MEMBER error NOTIFY changed)
     Q_PROPERTY(QString mode READ mode WRITE setMode NOTIFY changed)
     Q_PROPERTY(QString prompt MEMBER prompt NOTIFY changed)
@@ -89,6 +109,13 @@ class XLabController final : public QObject {
     /// @brief Refresh SDK devices while stopped without opening capture or a cloud session.
     Q_INVOKABLE void refreshCameras();
 
+    bool beautyEnabled() const { return beauty_enabled_; }
+    bool beautyApplying() const { return bool(handles_) && (beauty_updating_ || beauty_debounce_.isActive()); }
+    QVariantMap beautyOptions() const;
+    void setBeautyEnabled(bool enabled);
+    Q_INVOKABLE void setBeautyStrength(const QString& name, float value);
+
+
     /// Returns whether the system requests reduced interface animation.
     Q_INVOKABLE bool reduceMotion() const;
 
@@ -129,6 +156,7 @@ class XLabController final : public QObject {
     Q_INVOKABLE void saveRecording(const QUrl& destination);
     Q_INVOKABLE void discardRecording();
     Q_INVOKABLE void requestClose();
+    Q_INVOKABLE bool submitTrajectory(qreal x, qreal y, qreal width, qreal height);
     bool microphone = false, active = false, busy = false, closing = false, preview = false,
          statisticsVisible = true, remoteReady = false;
     QString error, prompt, selected;
@@ -142,6 +170,7 @@ class XLabController final : public QObject {
     void recordingReady();
     void recordingSaveFailed(QString message);
     void readyToClose();
+    void trajectoryReset();
 
   private:
 #ifdef XLAB_TEST_SUPPORT
@@ -158,6 +187,14 @@ class XLabController final : public QObject {
     QString key_, model_ = "x2.1", mode_ = "charx";
     float volume_ = 0;
     bool volume_updating_ = false, volume_ready_ = false;
+    bool beauty_enabled_ = true, beauty_updating_ = false, beauty_ready_ = false;
+    xmax_realtime_video_beauty_options beauty_options_{sizeof(beauty_options_), 0, 0, 0, 0};
+    quint64 beauty_revision_ = 0;
+    QTimer beauty_debounce_;
+    void saveBeautyPreferences();
+    void applyBeauty();
+    void beautyFailed(quint64 epoch);
+    void registerBeautyListener(quint64 epoch);
     QVariantList presets_, uploads_;
     QVariantList cameras_;
     QString camera_id_;
@@ -165,6 +202,11 @@ class XLabController final : public QObject {
     std::shared_ptr<SdkHandles> handles_;
     QVideoSink* local_sink_ = nullptr;
     QVideoSink* remote_sink_ = nullptr;
+    enum class InitialGeneration { None, AttachPreview, AwaitReady };
+    InitialGeneration initial_generation_ = InitialGeneration::None;
+    uint64_t result_content_revision_ = 0;
+    uint32_t result_width_ = 0, result_height_ = 0;
+    int32_t result_mirrored_ = 0;
     QTimer poll_, elapsed_timer_;
     QElapsedTimer session_clock_;
     quint64 lifecycle_ = 0, intent_ = 0;

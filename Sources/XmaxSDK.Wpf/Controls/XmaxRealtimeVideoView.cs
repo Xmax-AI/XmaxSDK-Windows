@@ -22,7 +22,7 @@ namespace Xmax.SDK.Wpf;
 /// Create and access this control on its UI thread. Assign only one independent consumer to each video source.
 /// Unloading or replacing VideoSource stops the old frame pump; your app still owns and disposes the realtime session.
 /// </remarks>
-public sealed class XmaxRealtimeVideoView : FrameworkElement
+public sealed partial class XmaxRealtimeVideoView : FrameworkElement
 {
 
     /// <summary>
@@ -35,13 +35,16 @@ public sealed class XmaxRealtimeVideoView : FrameworkElement
     /// Identifies the ContentMode dependency property.
     /// </summary>
     public static readonly DependencyProperty ContentModeProperty = DependencyProperty.Register(nameof(ContentMode), typeof(VideoContentMode),
-        typeof(XmaxRealtimeVideoView), new FrameworkPropertyMetadata(VideoContentMode.Fit, FrameworkPropertyMetadataOptions.AffectsRender));
+        typeof(XmaxRealtimeVideoView), new FrameworkPropertyMetadata(VideoContentMode.Fill, FrameworkPropertyMetadataOptions.AffectsRender));
 
     private readonly WriteableBitmapPresenter presenter = new();
 
     private VideoFramePump? pump;
+    private ulong contentRevision;
 
-    private bool mirrored;
+    private bool frameMirrored;
+    private bool isMirrored;
+    private bool DisplayMirrored => IsMirrored || frameMirrored;
 
     private bool rendering;
 
@@ -58,7 +61,7 @@ public sealed class XmaxRealtimeVideoView : FrameworkElement
     }
 
     /// <summary>
-    /// Gets or sets aspect-fit or aspect-fill layout; the default is Fit.
+    /// Gets or sets aspect-fit or aspect-fill layout; the default is Fill.
     /// </summary>
     public VideoContentMode ContentMode
     {
@@ -91,6 +94,19 @@ public sealed class XmaxRealtimeVideoView : FrameworkElement
     /// </summary>
     public event Action<Exception>? PlaybackFailed;
 
+    /// <summary>Mirrors this view and maps interactions back to unmirrored video coordinates.</summary>
+    public bool IsMirrored
+    {
+        get => isMirrored;
+        set
+        {
+            if (isMirrored == value) return;
+            isMirrored = value;
+            ResetTrajectory();
+            InvalidateVisual();
+        }
+    }
+
     /// <summary>
     /// Creates an unbound video control with a black background.
     /// </summary>
@@ -98,25 +114,40 @@ public sealed class XmaxRealtimeVideoView : FrameworkElement
     {
         ClipToBounds = true;
         Loaded += (_, _) => Restart();
-        Unloaded += (_, _) => Stop();
+        Unloaded += (_, _) =>
+        {
+            Stop();
+            ResetFirstFramePresentation();
+        };
     }
 
     private void Restart()
     {
         Stop();
-        presenter.Clear();
-        VideoWidth = VideoHeight = 0;
-        PresentedFrameCount = 0;
-        LastPresentedTimestampMicroseconds = 0;
-        InvalidateVisual();
+        contentRevision = 0;
+        ClearPresentation();
+        if (VideoSource is RealtimeVideoTrack { IsRemote: false } track)
+            _ = ConfirmPreviewAsync(track);
         if (!IsLoaded || VideoSource is null) return;
         pump = new(VideoSource, error => Dispatcher.InvokeAsync(() => PlaybackFailed?.Invoke(error)));
         CompositionTarget.Rendering += RenderFrame;
     }
 
+    private void ClearPresentation()
+    {
+        presenter.Clear();
+        frameMirrored = false;
+        VideoWidth = VideoHeight = 0;
+        PresentedFrameCount = 0;
+        LastPresentedTimestampMicroseconds = 0;
+        InvalidateVisual();
+        ResetFirstFramePresentation();
+    }
+
     private void Stop()
     {
         CompositionTarget.Rendering -= RenderFrame;
+        ResetTrajectory();
         var previous = pump;
         pump = null;
         if (previous is not null) _ = previous.DisposeAsync();
@@ -124,18 +155,26 @@ public sealed class XmaxRealtimeVideoView : FrameworkElement
 
     private void RenderFrame(object? sender, EventArgs args)
     {
-        if (rendering) return;
-        using var frame = pump?.Frames.Take();
+        if (rendering || pump is null) return;
+        using var frame = pump.Frames.Take(out var revision);
+        if (revision != contentRevision)
+        {
+            contentRevision = revision;
+            ResetTrajectory();
+            ClearPresentation();
+        }
+        if (trajectory.Update(ResultTrack, Viewport)) InvalidateVisual();
         if (frame is null) return;
         rendering = true;
         try
         {
             presenter.Present(frame);
-            mirrored = frame.Mirrored;
+            frameMirrored = frame.Mirrored;
             VideoWidth = frame.Width; VideoHeight = frame.Height;
             ++PresentedFrameCount;
             LastPresentedTimestampMicroseconds = frame.TimestampMicroseconds;
             InvalidateVisual();
+            if (PresentedFrameCount == 1) PresentFirstFrame();
         }
         catch (Exception error) { Stop(); PlaybackFailed?.Invoke(error); }
         finally { rendering = false; }
@@ -156,8 +195,9 @@ public sealed class XmaxRealtimeVideoView : FrameworkElement
             : Math.Max(ActualWidth / image.PixelWidth, ActualHeight / image.PixelHeight);
         double width = image.PixelWidth * scale, height = image.PixelHeight * scale;
         var rect = new Rect((ActualWidth - width) / 2, (ActualHeight - height) / 2, width, height);
-        if (mirrored) drawing.PushTransform(new ScaleTransform(-1, 1, ActualWidth / 2, 0));
+        if (DisplayMirrored) drawing.PushTransform(new ScaleTransform(-1, 1, ActualWidth / 2, 0));
         drawing.DrawImage(image, rect);
-        if (mirrored) drawing.Pop();
+        if (DisplayMirrored) drawing.Pop();
+        DrawTrajectory(drawing);
     }
 }

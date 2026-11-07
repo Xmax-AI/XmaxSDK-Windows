@@ -31,7 +31,7 @@ class MediaService {
     /**
      * Validates external input while preserving its aspect ratio.
      *
-     * @param[in] format The input dimensions and frame rate, with frame rate in [1, 60].
+     * @param[in] format The input dimensions and positive nominal frame rate.
      *
      * @return The validated original input format.
      */
@@ -53,6 +53,21 @@ class MediaService {
     }
 
     /**
+     * Resolves a requested external processing format to the model area limits and four-pixel alignment.
+     */
+    static xmax_video_format external_input(
+        xmax_video_format requested,
+        const xmax_model_info& model
+    );
+
+    /** Resolves the downlink dimensions within the tier bounds. */
+    static xmax_video_format target(
+        xmax_video_format source,
+        double maximum_width,
+        double maximum_height
+    );
+
+    /**
      * Validates camera targets against the five X2.1 formats without substituting dimensions.
      *
      * @param[in] format The requested camera encoding dimensions and frame rate; capture may use other
@@ -64,6 +79,7 @@ class MediaService {
         xmax_model_info model = RealtimeModelDefinition::capabilities
     ) {
         const auto result = input(format);
+        require(result.fps <= 60, XMAX_INVALID_ARGUMENT, "Camera target requires a frame rate in [1, 60]");
         bool supported = false;
         for (uint32_t i = 0; i < model.format_count; ++i) {
             const auto& value = model.supported_formats[i];

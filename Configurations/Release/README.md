@@ -3,7 +3,8 @@
 本目录保存需要随源码版本固定的构建输入：
 
 - `dependencies.json`：Agora 下载地址、JSON 头文件与许可证的 SHA-256，以及 Qt 和构建工具版本。
-- `abi-v1.json`：公开 C ABI 的兼容性基线。
+- `abi-v2.json`：当前公开 C ABI 的兼容性基线。
+- `abi-v1.json`：历史基线。v2 删除旧摄像头准备接口，应用与原生 DLL 必须配套重新构建。
 
 CMake 从依赖锁定文件获取 JSON 头文件与许可证，校验后缓存在构建目录中。原生独立接入样例位于
 [`Examples/NativeConsumer`](../../Examples/NativeConsumer)。

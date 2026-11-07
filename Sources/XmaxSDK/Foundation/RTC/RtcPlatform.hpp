@@ -51,6 +51,22 @@ class Rtc {
     ) = 0;
 
     /**
+     * Retains a recording endpoint before join; empty follows the system default.
+     *
+     * @param[in] device The Windows recording endpoint identifier, or empty for the default.
+     */
+    virtual void microphone_device(
+        const std::string& device
+    ) {
+        require(device.empty(), XMAX_UNSUPPORTED, "Recording device selection is unavailable");
+    }
+
+    /** Changes physical microphone capture and publication while connected. */
+    virtual void microphone_enabled(bool enabled) {
+        require(!enabled, XMAX_UNSUPPORTED, "Runtime microphone capture is unavailable");
+    }
+
+    /**
      * Sends an encoded room-signaling fragment and reports transport failures.
      *
      * @param[in] bytes The encoded bytes to process; they must remain valid until this synchronous call
@@ -105,16 +121,22 @@ class Rtc {
      */
     virtual void begin_generation() = 0;
 
+    /** Enables result frames after the start command has been confirmed. */
+    virtual void confirm_generation() {}
+
+    /** Invalidates frame delivery for the ending generation task. */
+    virtual void end_generation() {}
+
     /**
-     * Waits for a real first result, checking cancellation and running periodic keepalives.
+     * Waits for the selected result user's published video after start signaling.
      *
      * @param[in] cancel A cooperative cancellation predicate; true requests termination of the operation.
-     * @param[in] keepalive The periodic keepalive callback; it must not hold a cross-thread lifecycle lock.
+     * @param[in] deadline The monotonic generation startup deadline.
      */
-    virtual void wait_remote(
-        const Cancel& cancel,
-        const std::function<void()>& keepalive
-    ) = 0;
+    virtual void wait_remote(const Cancel& cancel, Clock::time_point deadline) = 0;
+
+    /** Changes result audio subscription at a generation boundary. */
+    virtual void result_audio(bool enabled) { (void)enabled; }
 
     /**
      * Retains result-user playback volume and applies it when remote audio is available.

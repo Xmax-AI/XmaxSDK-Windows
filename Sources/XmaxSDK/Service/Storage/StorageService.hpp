@@ -80,12 +80,13 @@ class StorageService {
     );
 
     /**
-     * Downloads HTTPS content to a temporary file and publishes it to a nonexistent destination on success.
+     * Downloads HTTPS content to a temporary file and publishes it to the destination on success.
      *
      * @param[in] url An absolute HTTPS URL allowed by the transport's URL policy.
-     * @param[in] path The UTF-8 destination path; the file must not already exist.
+     * @param[in] path The UTF-8 destination path; must not name a directory.
      * @param[in] cancel A cooperative cancellation predicate; true requests termination of the operation.
      * @param[in] progress The byte-progress callback, receiving completed bytes followed by total bytes.
+     * @param[in] replace_existing Whether a successful download can replace an existing file.
      *
      * @return The size of the completed destination file, in bytes.
      */
@@ -93,7 +94,8 @@ class StorageService {
         const std::string& url,
         const std::string& path,
         const Cancel& cancel,
-        const TransferProgress& progress
+        const TransferProgress& progress,
+        bool replace_existing = false
     );
 
     /**
@@ -108,6 +110,16 @@ class StorageService {
     );
 
   private:
+
+    /** Uploads a body after validating metadata and obtaining temporary COS credentials. */
+    StoredFile upload_source(
+        HttpRequest request,
+        std::string name,
+        std::string type,
+        bool safety,
+        const Cancel& cancel,
+        const TransferProgress& progress
+    );
 
     /**
      * Retains the shared API service so child controllers survive destruction of the client handle.

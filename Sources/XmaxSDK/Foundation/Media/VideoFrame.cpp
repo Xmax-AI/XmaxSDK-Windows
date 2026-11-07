@@ -16,16 +16,16 @@ namespace xmax::detail {
 /**
  * Validates video layout dimensions and frame rate independently of generation model limits.
  *
- * @param[in] f Even dimensions in [2, 8192] and a frame rate in [1, 60].
+ * @param[in] f Even dimensions in [2, 8192] and a positive nominal frame rate.
  */
 void validate_format(
     xmax_video_format f
 ) {
     require(
         f.width >= 2 && f.height >= 2 && f.width <= 8192 && f.height <= 8192 && f.width % 2 == 0 &&
-            f.height % 2 == 0 && f.fps >= 1 && f.fps <= 60,
+            f.height % 2 == 0 && f.fps > 0,
         XMAX_INVALID_ARGUMENT,
-        "Video format requires even dimensions in [2, 8192] and 1-60 fps"
+        "Video format requires even dimensions in [2, 8192] and a positive frame rate"
     );
 }
 

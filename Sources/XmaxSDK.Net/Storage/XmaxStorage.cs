@@ -17,10 +17,10 @@ namespace Xmax.SDK;
 /// An owner of cloud upload and download operations with progress and cancellation.
 /// </summary>
 /// <remarks>
-/// Each controller permits one active transfer. Use independent storage controllers for concurrent transfers.
+/// Typed image and video methods support concurrent transfers with per-operation progress and cancellation.
 /// Await operations instead of blocking the UI thread; native failures are reported as XmaxException.
 /// </remarks>
-public sealed class XmaxStorage : IAsyncDisposable
+public sealed partial class XmaxStorage : IAsyncDisposable
 {
     private readonly NativeHandle handle;
 
@@ -36,7 +36,7 @@ public sealed class XmaxStorage : IAsyncDisposable
     /// <param name="cancellationToken">Cancels this controller's active transfer and waits for cancellation cleanup.</param>
     /// <returns>A task containing copied metadata for the uploaded object.</returns>
     /// <remarks>
-    /// Image and video size limits are 20 MiB and 256 MiB, respectively. Files are read into memory; resumable multipart upload is not provided.
+    /// File contents are streamed to storage.
     /// </remarks>
     public Task<UploadedFile> UploadFileAsync(
         string path,

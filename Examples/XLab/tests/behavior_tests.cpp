@@ -1,3 +1,13 @@
+//
+//  behavior_tests.cpp
+//  XmaxSDK
+//
+//  Author: 翁跃庭 (Yueting Weng)
+//  GitHub: https://github.com/Xmax-AI/XmaxSDK-Windows
+//
+//  Copyright (c) 2026 XMAX.AI PTE. LTD.
+//
+
 #include "controller.hpp"
 #include "rounded_image.hpp"
 #include <QFile>
@@ -16,6 +26,78 @@ class BehaviorTests : public QObject {
     void init() {
         QSettings().remove("xmax.xlab.cameraId");
         QSettings().remove("xmax.xlab.videoMirrored");
+        for (const auto* key : {"enabled", "smoothness", "lightening", "sharpness", "redness"})
+            QSettings().remove(QString("xmax.xlab.beauty.") + key);
+    }
+
+    void beautyPreferencesAndValidationDoNotRequireCapture() {
+        XLabController controller;
+        QVERIFY(controller.beautyEnabled());
+        const auto defaults = controller.beautyOptions();
+        for (const auto& value : defaults) QCOMPARE(value.toFloat(), 0.f);
+        controller.setBeautyStrength("smoothness", .7f);
+        controller.setBeautyStrength("lightening", .2f);
+        controller.setBeautyStrength("sharpness", .4f);
+        controller.setBeautyStrength("redness", .1f);
+        const auto edited = controller.beautyOptions();
+        for (float invalid : {-1.f, 2.f, std::numeric_limits<float>::quiet_NaN()})
+            controller.setBeautyStrength("smoothness", invalid);
+        controller.setBeautyStrength("unknown", .5f);
+        QCOMPARE(controller.beautyOptions(), edited);
+        controller.setBeautyEnabled(false);
+        controller.saveBeautyPreferences();
+        XLabController restored;
+        QVERIFY(!restored.beautyEnabled());
+        QCOMPARE(restored.beautyOptions(), edited);
+        QVERIFY(!restored.active && !restored.handles_ && !restored.beautyApplying());
+        XLabController preview(true, true);
+        QVERIFY(preview.beautyEnabled());
+        preview.setBeautyStrength("smoothness", .9f);
+        preview.setBeautyEnabled(false);
+        preview.saveBeautyPreferences();
+        XLabController unchanged;
+        QCOMPARE(unchanged.beautyOptions(), edited);
+    }
+
+    void beautyFailureKeepsGenerationAndIgnoresOldSessions() {
+        XLabController controller(true, true);
+        controller.handles_ = std::make_shared<SdkHandles>();
+        controller.setBeautyStrength("smoothness", .6f);
+        controller.beautyFailed(controller.lifecycle_ + 1);
+        QVERIFY(controller.beautyEnabled() && controller.error.isEmpty());
+        controller.beautyFailed(controller.lifecycle_);
+        QVERIFY(!controller.beautyEnabled() && controller.active);
+        QCOMPARE(controller.beautyOptions().value("smoothness").toFloat(), .6f);
+        QVERIFY(controller.error.contains("Generation will continue"));
+    }
+
+    void beautySdkConfigurationAndStopPreservePreferences() {
+        XLabController controller;
+        auto handles = std::make_shared<SdkHandles>();
+        const xmax_client_config config{sizeof(config), XMAX_ABI_VERSION, "test", "x2.1", 100};
+        QCOMPARE(xmax_client_create(&config, &handles->client), XMAX_OK);
+        QCOMPARE(handles->create_realtime(), XMAX_OK);
+        int32_t available = 0;
+        QCOMPARE(xmax_client_has_rtc(handles->client, &available), XMAX_OK);
+        if (!available) QSKIP("Offline ClearVision integration requires the Windows Agora build");
+        controller.handles_ = handles;
+        controller.beauty_ready_ = true;
+        controller.setBeautyStrength("smoothness", .4f);
+        controller.applyBeauty();
+        controller.setBeautyStrength("smoothness", .7f);
+        QTRY_VERIFY_WITH_TIMEOUT(!controller.beautyApplying(), 10000);
+        QVERIFY2(controller.error.isEmpty(), qPrintable(controller.error));
+        QVERIFY(controller.beautyEnabled());
+        xmax_event state{}; state.struct_size = sizeof(state);
+        QCOMPARE(xmax_realtime_get_state(handles->realtime.get(), &state), XMAX_OK);
+        QCOMPARE(state.state, XMAX_IDLE);
+        controller.setBeautyStrength("smoothness", .8f);
+        controller.applyBeauty();
+        controller.stop();
+        QTRY_VERIFY_WITH_TIMEOUT(!controller.closing, 10000);
+        QVERIFY(controller.beautyEnabled());
+        QCOMPARE(controller.beautyOptions().value("smoothness").toFloat(), .8f);
+        QVERIFY(controller.error.isEmpty());
     }
 
     void onlyX21IsSelectableAndDoesNotStartCapture() {
@@ -34,7 +116,7 @@ class BehaviorTests : public QObject {
         auto handles = std::make_shared<SdkHandles>();
         const xmax_client_config config{sizeof(config), XMAX_ABI_VERSION, "test", "x2.1", 100};
         QCOMPARE(xmax_client_create(&config, &handles->client), XMAX_OK);
-        QCOMPARE(xmax_realtime_create(handles->client, &handles->realtime), XMAX_OK);
+        QCOMPARE(handles->create_realtime(), XMAX_OK);
         controller.handles_ = handles;
         controller.busy = true;
 
@@ -55,7 +137,7 @@ class BehaviorTests : public QObject {
 
         QTRY_VERIFY_WITH_TIMEOUT(!controller.volume_updating_, 2000);
         float applied = -1;
-        QCOMPARE(xmax_realtime_get_remote_volume(handles->realtime, &applied), XMAX_OK);
+        QCOMPARE(xmax_realtime_get_remote_volume(handles->realtime.get(), &applied), XMAX_OK);
         QCOMPARE(applied, .75f);
         QVERIFY(controller.error.isEmpty());
         controller.busy = false;
@@ -68,7 +150,7 @@ class BehaviorTests : public QObject {
         auto handles = std::make_shared<SdkHandles>();
         const xmax_client_config config{sizeof(config), XMAX_ABI_VERSION, "test", "x2.1", 100};
         QCOMPARE(xmax_client_create(&config, &handles->client), XMAX_OK);
-        QCOMPARE(xmax_realtime_create(handles->client, &handles->realtime), XMAX_OK);
+        QCOMPARE(handles->create_realtime(), XMAX_OK);
         controller.handles_ = handles;
         controller.volume_ready_ = true;
         controller.setVolume(.6f);

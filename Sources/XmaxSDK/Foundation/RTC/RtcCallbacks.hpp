@@ -24,6 +24,9 @@ struct RtcCallbacks {
      */
     std::function<void(Frame)> frame;
 
+    /** Invalidates the result binding when the selected remote user stops publishing video. */
+    std::function<void()> video_unpublished;
+
     /**
      * The receiver for RTC state, statistics, and network-quality events.
      */
@@ -44,9 +47,17 @@ struct RtcCallbacks {
      */
     std::function<void(AudioFrame)> audio;
 
+    /** A sampled physical microphone volume in the range 0..255. */
+    std::function<void(int)> microphone_level;
+
     /**
      * The full directional video statistics, including each native processing-stage frame rate.
      */
     std::function<void(xmax_video_statistics)> statistics;
+
+    /**
+     * The copied room-signaling sender account and UTF-8 payload, delivered on a native RTC thread.
+     */
+    std::function<void(std::string, std::string)> message;
 };
 } // namespace xmax::detail

@@ -37,7 +37,7 @@ public sealed partial class XmaxRealtime : IAsyncDisposable
     public IXmaxVideoSource LocalVideo { get; }
 
     /// <summary>
-    /// Gets the single-consumer latest-frame mailbox for generated result video.
+    /// Gets the single-consumer latest-frame mailbox for generated result video after SDK beauty.
     /// </summary>
     public IXmaxVideoSource RemoteVideo { get; }
 
@@ -57,46 +57,28 @@ public sealed partial class XmaxRealtime : IAsyncDisposable
     /// </remarks>
     public event Action<Exception>? CallbackFaulted;
 
-    internal XmaxRealtime(NativeHandle handle)
+    /// <summary>Gets the configuration supplied when creating this controller.</summary>
+    public RealtimeConfiguration Configuration { get; }
+
+    /// <summary>Gets the initial realtime configuration.</summary>
+    public RealtimeConfiguration Options => Configuration;
+
+    internal XmaxRealtime(NativeHandle handle, RealtimeConfiguration? options = null)
     {
         this.handle = handle;
+        Configuration = options ?? new();
         operations = new(handle);
         LocalVideo = new VideoSource(handle, true);
         RemoteVideo = new VideoSource(handle, false);
+        stateListener.Publish(new(RealtimeConnectionState.Idle));
         eventsWorker = Task.Run(PumpEventsAsync);
     }
 
-    private Task Run(Action<nint> action, CancellationToken token = default, bool disconnectOnCancel = false) =>
-        operations.Run(value => NativeCancellation.Run(token, () => { action(value); return 0; },
-            () => { if (disconnectOnCancel) NativeMethods.xmax_realtime_disconnect(value); }), token);
-
-    /// <summary>
-    /// Prepares local camera video and waits for its first real frame without creating a cloud session.
-    /// </summary>
-    /// <param name="deviceId">The enumerated device identifier; null or empty selects the system default camera.</param>
-    /// <param name="format">The camera encoding target; an all-zero format selects the model default. Actual capture dimensions may differ.</param>
-    /// <param name="microphone">Whether to request microphone capture when a connection is subsequently established.</param>
-    /// <param name="cancellationToken">Cancels startup by closing the controller connection and local media.</param>
-    /// <returns>A task completing when camera media is ready.</returns>
-    /// <remarks>
-    /// Prepare media before connecting. Capture frames retain device-supported dimensions; the RTC encoder handles the encoding target.
-    /// </remarks>
-    public Task PrepareCameraAsync(
-        string? deviceId = null,
-        VideoFormat format = default,
-        bool microphone = false,
-        CancellationToken cancellationToken = default
-    ) => operations.Run(value =>
-        NativeCancellation.Run(cancellationToken, () => { PrepareCamera(value, deviceId, format, microphone); return 0; },
-            () => NativeMethods.xmax_realtime_close(value)), cancellationToken);
-
-    private static unsafe void PrepareCamera(nint handle, string? device, VideoFormat format, bool microphone)
+    private Task Run(Action<nint> action) => operations.Run(value =>
     {
-        using var text = new Utf8(device);
-        var config = new xmax_camera_config { struct_size = (uint)sizeof(xmax_camera_config), device_id = text.Pointer,
-            format = format.Native, use_microphone = microphone ? 1 : 0 };
-        NativeError.Check(NativeMethods.xmax_realtime_prepare_camera(handle, &config));
-    }
+        action(value);
+        return 0;
+    });
 
     /// <summary>
     /// Prepares disconnected video input supplied by your app, replacing existing local media.
@@ -108,88 +90,10 @@ public sealed partial class XmaxRealtime : IAsyncDisposable
     /// </remarks>
     public Task PrepareExternalAsync(
         VideoFormat format
-    ) => Run(value => PrepareExternal(value, format));
+    ) => ChangeLocalMediaAsync(() => Run(value => PrepareExternal(value, format)));
 
     private static unsafe void PrepareExternal(nint value, VideoFormat format)
     { var native = format.Native; NativeError.Check(NativeMethods.xmax_realtime_prepare_external(value, &native)); }
-
-    /// <summary>
-    /// Creates a server session and joins RTC without starting generation.
-    /// </summary>
-    /// <param name="microphone">Whether to request microphone capture; the camera preparation option also applies.</param>
-    /// <param name="cancellationToken">Cancels by disconnecting the whole connection, not an individual generation task.</param>
-    /// <returns>A task completing when the connection is ready.</returns>
-    /// <remarks>
-    /// Prepare local media first.
-    /// </remarks>
-    public Task ConnectAsync(
-        bool microphone = false,
-        CancellationToken cancellationToken = default
-    ) =>
-        Run(value => NativeError.Check(NativeMethods.xmax_realtime_connect(value, microphone ? 1 : 0)), cancellationToken, true);
-
-    /// <summary>
-    /// Connects as needed, starts generation, and waits for the first result frame.
-    /// </summary>
-    /// <param name="context">The generation prompt, reference image, and face-restoration conditions.</param>
-    /// <param name="microphone">Whether to request microphone capture when connecting.</param>
-    /// <param name="cancellationToken">Cancels by disconnecting the whole connection; cleanup finishes before the task completes.</param>
-    /// <returns>A task completing when the first result frame is committed.</returns>
-    /// <remarks>
-    /// Prepare media first. For external input, continue submitting frames on another execution path while awaiting this task.
-    /// A newer generation request cancels an unfinished request; only successful requests replace cached conditions.
-    /// </remarks>
-    public Task StartAsync(
-        GenerationContext context,
-        bool microphone = false,
-        CancellationToken cancellationToken = default
-    ) =>
-        Run(value => Generate(value, context, 0, microphone), cancellationToken, true);
-
-    /// <summary>
-    /// Starts or updates generation with supplied conditions, or reuses the last successful conditions.
-    /// </summary>
-    /// <param name="context">The new generation conditions; null reuses cached conditions and requires a prior successful request.</param>
-    /// <param name="cancellationToken">Cancels by disconnecting the whole connection; cleanup finishes before the task completes.</param>
-    /// <returns>A task completing when the native generation operation succeeds.</returns>
-    /// <remarks>
-    /// Ready media connects as needed. Continue supplying external frames during startup.
-    /// A newer generation request cancels an unfinished request; only successful requests replace cached conditions.
-    /// </remarks>
-    public Task GenerateAsync(
-        GenerationContext? context = null,
-        CancellationToken cancellationToken = default
-    ) =>
-        Run(value => Generate(value, context, 1, false), cancellationToken, true);
-
-    /// <summary>
-    /// Replaces conditions for the currently running generation task.
-    /// </summary>
-    /// <param name="context">The generation prompt, reference image, and face-restoration conditions.</param>
-    /// <param name="cancellationToken">Cancels by disconnecting the whole connection; cleanup finishes before the task completes.</param>
-    /// <returns>A task completing when the native update succeeds.</returns>
-    /// <remarks>
-    /// Generation must already be active. A newer generation request cancels an unfinished update; failed requests do not replace cached conditions.
-    /// </remarks>
-    public Task UpdateAsync(
-        GenerationContext context,
-        CancellationToken cancellationToken = default
-    ) =>
-        Run(value => Generate(value, context, 2, false), cancellationToken, true);
-
-    private static unsafe void Generate(nint value, GenerationContext? context, int kind, bool microphone)
-    {
-        using var prompt = new Utf8(context?.Prompt);
-        using var reference = new Utf8(context?.ReferenceImage);
-        var native = new xmax_generation_context { struct_size = (uint)sizeof(xmax_generation_context), prompt = prompt.Pointer,
-            reference_path = reference.Pointer, face_restoration = context?.FaceRestoration == true ? 1 : 0 };
-        NativeError.Check(kind switch
-        {
-            0 => NativeMethods.xmax_realtime_start(value, &native, microphone ? 1 : 0),
-            1 => NativeMethods.xmax_realtime_generate(value, context is null ? null : &native),
-            _ => NativeMethods.xmax_realtime_update(value, &native)
-        });
-    }
 
     /// <summary>
     /// Switches camera capture while retaining the connection and restoring generation conditions.
@@ -197,11 +101,16 @@ public sealed partial class XmaxRealtime : IAsyncDisposable
     /// <param name="deviceId">The enumerated camera identifier; an empty string selects the default device.</param>
     /// <returns>A task completing when capture and any generation restart finish.</returns>
     /// <remarks>
-    /// The operation waits for the new camera. Failure releases the connection and local media.
+    /// The operation waits for the new camera and restarts any active generation. If the camera fails,
+    /// the SDK attempts to restore local capture. A failure during generation closes the connection.
     /// </remarks>
-    public Task SwitchCameraAsync(
+    public Task<RealtimeMediaStream> SwitchCameraAsync(
         string deviceId
-    ) => Run(value => SwitchCamera(value, deviceId));
+    ) => ChangeLocalMediaAsync(() => operations.Run(value =>
+    {
+        SwitchCamera(value, deviceId);
+        return CreateLocalStream(value, cameraDeviceId: deviceId, isCamera: true);
+    }));
 
     private static unsafe void SwitchCamera(nint value, string deviceId)
     { using var text = new Utf8(deviceId); NativeError.Check(NativeMethods.xmax_realtime_switch_camera(value, text.Pointer)); }
@@ -213,25 +122,9 @@ public sealed partial class XmaxRealtime : IAsyncDisposable
     /// <remarks>
     /// Disconnect an active connection before calling this method.
     /// </remarks>
-    public Task StopMediaAsync() => Run(value => NativeError.Check(NativeMethods.xmax_realtime_stop_media(value)));
-
-    /// <summary>
-    /// Disconnects the server session and RTC while retaining local preview and successful generation conditions.
-    /// </summary>
-    /// <returns>A task completing after disconnection.</returns>
-    /// <remarks>
-    /// Requests cancellation of in-flight lifecycle work. Prepared local media can be used for reconnection.
-    /// </remarks>
-    public Task DisconnectAsync() => Run(value => NativeError.Check(NativeMethods.xmax_realtime_disconnect(value)));
-
-    /// <summary>
-    /// Disconnects and releases local media and cached generation conditions.
-    /// </summary>
-    /// <returns>A task completing after native resources are closed.</returns>
-    /// <remarks>
-    /// The controller remains usable: prepare media again before starting a new session. This method requests cancellation of in-flight startup.
-    /// </remarks>
-    public Task CloseAsync() => Run(value => NativeError.Check(NativeMethods.xmax_realtime_close(value)));
+    public Task StopMediaAsync() => ChangeLocalMediaAsync(
+        () => Run(value => NativeError.Check(NativeMethods.xmax_realtime_stop_media(value)))
+    );
 
     /// <summary>
     /// Sets remote playback volume for the current or next connection.
@@ -270,6 +163,25 @@ public sealed partial class XmaxRealtime : IAsyncDisposable
     ) => Run(value => NativeError.Check(NativeMethods.xmax_realtime_set_uplink_quality_level(value, level)));
 
     /// <summary>
+    /// Applies a uplink quality target during generation.
+    /// </summary>
+    /// <param name="level">The transport quality target.</param>
+    /// <returns>A task completing when the target has been applied.</returns>
+    public Task SetUplinkQualityLevelAsync(
+        RealtimeQualityLevel level
+    ) => SetUplinkQualityLevelAsync((int)level);
+
+    /// <summary>
+    /// Reads the applied uplink quality level.
+    /// </summary>
+    /// <returns>The level, or null while the RTC connection is inactive.</returns>
+    public Task<RealtimeQualityLevel?> GetUplinkQualityLevelAsync() => operations.Run(value =>
+    {
+        int level = GetQuality(value).UplinkLevel;
+        return level == 0 ? (RealtimeQualityLevel?)null : (RealtimeQualityLevel)level;
+    });
+
+    /// <summary>
     /// Sets the downlink quality level during generation.
     /// </summary>
     /// <param name="level">The level from 1 for highest quality through 5 for lowest bandwidth use.</param>
@@ -279,7 +191,30 @@ public sealed partial class XmaxRealtime : IAsyncDisposable
     /// </remarks>
     public Task SetDownlinkQualityLevelAsync(
         int level
-    ) => Run(value => NativeError.Check(NativeMethods.xmax_realtime_set_downlink_quality_level(value, level)));
+    ) => Run(value =>
+    {
+        NativeError.Check(NativeMethods.xmax_realtime_set_downlink_quality_level(value, level));
+        RefreshResultTrackFormat(value);
+    });
+
+    /// <summary>
+    /// Applies a downlink quality target during generation.
+    /// </summary>
+    /// <param name="level">The transport quality target.</param>
+    /// <returns>A task completing when the target has been applied.</returns>
+    public Task SetDownlinkQualityLevelAsync(
+        RealtimeQualityLevel level
+    ) => SetDownlinkQualityLevelAsync((int)level);
+
+    /// <summary>
+    /// Reads the applied downlink quality level.
+    /// </summary>
+    /// <returns>The level, or null while the RTC connection is inactive.</returns>
+    public Task<RealtimeQualityLevel?> GetDownlinkQualityLevelAsync() => operations.Run(value =>
+    {
+        int level = GetQuality(value).DownlinkLevel;
+        return level == 0 ? (RealtimeQualityLevel?)null : (RealtimeQualityLevel)level;
+    });
 
     /// <summary>
     /// Changes a ready, disconnected camera encoding target while retaining the device and preview binding.
@@ -287,14 +222,19 @@ public sealed partial class XmaxRealtime : IAsyncDisposable
     /// <param name="format">The model-supported target dimensions and nominal frame rate.</param>
     /// <returns>A task completing after reconfiguration or recovery.</returns>
     /// <remarks>
-    /// Existing bitrate preferences are retained. Preparation failure attempts to restore the previous format and reports the original error.
+    /// Preparation failure attempts to restore the previous format and reports the original error.
     /// </remarks>
     public Task UpdateCameraFormatAsync(
         VideoFormat format
-    ) => Run(value => UpdateCameraFormat(value, format));
+    ) => ChangeLocalMediaAsync(() => Run(value => UpdateCameraFormat(value, format)));
 
-    private static unsafe void UpdateCameraFormat(nint value, VideoFormat format)
-    { var native = format.Native; NativeError.Check(NativeMethods.xmax_realtime_update_camera_format(value, &native)); }
+    private unsafe void UpdateCameraFormat(nint value, VideoFormat format)
+    {
+        var native = format.Native;
+        var encoding = format.NativeEncoding;
+        NativeError.Check(NativeMethods.xmax_realtime_update_camera_format_with_encoding(value, &native, &encoding));
+        RefreshLocalTrackFormat(value);
+    }
 
     /// <summary>
     /// Sets RTC bitrate limits and encoding preference.
@@ -305,11 +245,12 @@ public sealed partial class XmaxRealtime : IAsyncDisposable
         EncodingConfiguration config
     ) => Run(value => SetEncoding(value, config));
 
-    private static unsafe void SetEncoding(nint value, EncodingConfiguration config)
+    private unsafe void SetEncoding(nint value, EncodingConfiguration config)
     {
         var native = new xmax_encoding_config { struct_size = (uint)sizeof(xmax_encoding_config),
             minimum_bitrate_kbps = config.MinimumBitrateKbps, maximum_bitrate_kbps = config.MaximumBitrateKbps, preference = (int)config.Preference };
         NativeError.Check(NativeMethods.xmax_realtime_set_encoding(value, &native));
+        RefreshLocalTrackFormat(value);
     }
 
     /// <summary>
@@ -353,15 +294,15 @@ public sealed partial class XmaxRealtime : IAsyncDisposable
     /// </summary>
     /// <returns>A task containing the state snapshot.</returns>
     /// <remarks>
-    /// This query may wait for native lifecycle work.
+    /// The snapshot is available while connection, generation, or cleanup is in progress.
     /// </remarks>
-    public Task<RealtimeEvent> GetStateAsync() => operations.Run(GetState);
+    public Task<RealtimeState> GetStateAsync() => operations.Run(GetState);
 
-    private static unsafe RealtimeEvent GetState(nint value)
+    private static unsafe RealtimeState GetState(nint value)
     {
         var native = new xmax_event_info { struct_size = (uint)sizeof(xmax_event_info) };
         NativeError.Check(NativeMethods.xmax_realtime_get_state_info(value, &native));
-        return RealtimeEvent.From(native);
+        return RealtimeState.From(RealtimeEvent.From(native));
     }
 
     private async Task PumpEventsAsync()
@@ -371,13 +312,20 @@ public sealed partial class XmaxRealtime : IAsyncDisposable
             while (!eventsStop.IsCancellationRequested)
             {
                 foreach (var item in PollEvents())
+                {
+                    if (item.State == RealtimeConnectionState.Idle && Volatile.Read(ref externalAttachment) is not null)
+                        _ = ReconcileExternalSourceAsync();
+                    try { DispatchTypedEvent(item); } catch (Exception error) { NotifyCallbackFault(error); }
                     foreach (Action<RealtimeEvent> callback in EventReceived?.GetInvocationList() ?? [])
                         try { callback(item); } catch (Exception error) { NotifyCallbackFault(error); }
+                }
+                ApplyStateRegistrations();
                 await Task.Delay(25, eventsStop.Token).ConfigureAwait(false);
             }
         }
         catch (OperationCanceledException) when (eventsStop.IsCancellationRequested) { }
         catch (Exception error) { NotifyCallbackFault(error); }
+        finally { CloseStateRegistrations(); }
     }
 
     private unsafe List<RealtimeEvent> PollEvents()
@@ -406,25 +354,35 @@ public sealed partial class XmaxRealtime : IAsyncDisposable
     /// New operations are rejected once disposal starts. Acquired frame owners remain independently valid.
     /// Do not synchronously wait for this operation inside an SDK event or media callback.
     /// </remarks>
-    public ValueTask DisposeAsync() => new(operations.DisposeAsync(
-        value => NativeError.Check(NativeMethods.xmax_realtime_close(value)), async () =>
+    public ValueTask DisposeAsync()
+    {
+        BeginExternalClose(disposing: true);
+        return new(operations.DisposeAsync(CloseNative, async () =>
         {
+            await FinishExternalCloseAsync().ConfigureAwait(false);
             eventsStop.Cancel();
             await eventsWorker.ConfigureAwait(false);
+            ClearTypedListeners();
             eventsStop.Dispose();
         }));
+    }
 
-    private sealed class VideoSource(NativeHandle handle, bool local) : IXmaxVideoSource
+    private sealed class VideoSource(NativeHandle handle, bool local, ulong revision = 0) : IXmaxVideoSource
     {
         public unsafe XmaxVideoFrame? TryAcquireFrame()
         {
             if (handle.IsClosed) return null;
             using var lease = handle.Borrow();
             nint frame = 0;
-            int result = local ? NativeMethods.xmax_realtime_acquire_local_frame(lease.Value, &frame)
-                : NativeMethods.xmax_realtime_acquire_frame(lease.Value, &frame);
+            int result = revision != 0
+                ? NativeMethods.xmax_realtime_acquire_stream_frame(lease.Value, local ? 1 : 0, revision, &frame)
+                : local ? NativeMethods.xmax_realtime_acquire_local_frame(lease.Value, &frame)
+                        : NativeMethods.xmax_realtime_acquire_frame(lease.Value, &frame);
             NativeError.Check(result);
-            return result == 1 || frame == 0 ? null : new(new(frame, HandleKind.Frame));
+            if (result == 1 || frame == 0)
+                return null;
+
+            return new(new NativeHandle(frame, HandleKind.Frame));
         }
     }
 }

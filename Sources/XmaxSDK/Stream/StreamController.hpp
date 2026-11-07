@@ -31,9 +31,10 @@ class StreamController {
      */
     explicit StreamController(
         RtcFactory factory = make_rtc,
-        std::shared_ptr<QualityHistory> history = {}
+        std::shared_ptr<QualityHistory> history = {},
+        std::chrono::milliseconds heartbeat_interval = std::chrono::seconds(10)
     )
-        : room_(std::move(factory)), history_(std::move(history)) {
+        : room_(std::move(factory), heartbeat_interval), history_(std::move(history)) {
     }
 
     /**
@@ -68,33 +69,41 @@ class StreamController {
     );
 
     /**
-     * Creates a task and sends start signaling, performing maintenance while waiting.
+     * Configures the session-scoped HTTP command relay before joining RTC.
+     */
+    void event_relay(
+        RoomCommandController::Relay relay
+    ) {
+        room_.event_relay(std::move(relay));
+    }
+
+    /**
+     * Creates a task and sends start signaling before the startup deadline.
      *
      * @param[in] prompt The generation prompt, encoded as UTF-8.
      * @param[in] reference A reference image path or service-supported URL; empty omits the reference.
      * @param[in] face Whether to enable face restoration for generation.
      * @param[in] cancel A cooperative cancellation predicate; true requests termination of the operation.
-     * @param[in] maintain The maintenance callback invoked while waiting or throttled; empty omits
-     * maintenance.
+     * @param[in] deadline The startup deadline shared with remote publication confirmation.
      */
     void start(
         const std::string& prompt,
         const std::string& reference,
         bool face,
         const Cancel& cancel,
-        const std::function<void()>& maintain = {}
+        Clock::time_point deadline = Clock::time_point::max()
     );
 
     /**
-     * Waits for the first real result frame, checking cancellation and maintaining keepalives.
+     * Waits for the selected result user to publish video after the start signal.
      *
      * @param[in] cancel A cooperative cancellation predicate; true requests termination of the operation.
-     * @param[in] keepalive The periodic keepalive callback; it must not hold a cross-thread lifecycle lock.
+     * @param[in] deadline The startup deadline shared with the start send.
      */
-    void wait_remote(
-        const Cancel& cancel,
-        const std::function<void()>& keepalive
-    );
+    void wait_remote(const Cancel& cancel, Clock::time_point deadline);
+
+    /** Starts result audio once a processed result frame is available. */
+    void activate_result_audio();
 
     /**
      * Sends updated generation conditions using the current task identifier.
@@ -137,6 +146,25 @@ class StreamController {
     void push(
         const Frame& frame
     );
+
+    /**
+     * Retains the camera microphone endpoint for the next room join.
+     *
+     * @param[in] device The recording endpoint identifier, or empty for the system default.
+     */
+    void microphone_device(
+        std::string device
+    ) {
+        if (room_.joined())
+            room_.backend()->microphone_device(device);
+        microphone_device_ = std::move(device);
+    }
+
+    /** Applies camera microphone capture and publication to the joined room. */
+    void microphone_enabled(bool enabled) {
+        if (room_.joined())
+            room_.backend()->microphone_enabled(enabled);
+    }
 
     /**
      * Sets external PCM publication for the next room join.
@@ -200,6 +228,9 @@ class StreamController {
     void encoding(
         xmax_encoding_config value
     );
+
+    /** Returns the current encoder overrides. */
+    xmax_encoding_config encoding() const { return encoding_.config(); }
 
     /**
      * Retains or updates uplink mirroring, applied by the RTC encoder when connected.
@@ -296,7 +327,7 @@ class StreamController {
     void tracks(
         const std::vector<xmax_point>& points,
         const Cancel& cancel,
-        const std::function<void()>& maintain
+        const std::function<void()>& maintain = {}
     ) {
         require(
             room_.joined() && !room_.task.empty(),
@@ -380,6 +411,11 @@ class StreamController {
      * Whether the next room publishes custom PCM without microphone capture.
      */
     bool external_audio_ = false;
+
+    /**
+     * The Windows recording endpoint selected before the next RTC join.
+     */
+    std::string microphone_device_;
 
     /**
      * The uplink bitrate limits and degradation preference specified by your app.

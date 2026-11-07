@@ -1,3 +1,13 @@
+//
+//  alignment_tests.cpp
+//  XmaxSDK
+//
+//  Author: 翁跃庭 (Yueting Weng)
+//  GitHub: https://github.com/Xmax-AI/XmaxSDK-Windows
+//
+//  Copyright (c) 2026 XMAX.AI PTE. LTD.
+//
+
 #include "Core/Realtime/XmaxRealtimeManager.hpp"
 #include "Core/XmaxClient.hpp"
 #include "Service/Media/MediaService.hpp"
@@ -18,7 +28,7 @@ static void model_and_environment() {
     const auto model = RealtimeModelDefinition::info(RealtimeModelDefinition::parse("x2.1"));
     CHECK(std::string(model.identifier) == "x2.1" && std::string(model.display_name) == "X2.1");
     CHECK(model.format_count == 5 && model.default_frame_rate == 30);
-    CHECK(model.default_camera_format.width == 1080 && model.default_camera_format.height == 1920);
+    CHECK(model.default_camera_format.width == 1920 && model.default_camera_format.height == 1080);
     CHECK(model.default_camera_format.fps == 30);
     CHECK(model.minimum_input_pixels == 200000 && model.maximum_input_pixels == 2100000);
     CHECK(model.input_size_alignment == 32);
@@ -104,9 +114,10 @@ static void error_details() {
         reason_found = reason_found || (event.reason == XMAX_REASON_FAILURE && event.error.http_status == 403);
     CHECK(reason_found);
     manager.disconnect_reason(XMAX_REASON_ORIENTATION_CHANGED);
-    CHECK(manager.state_info().reason == XMAX_REASON_ORIENTATION_CHANGED);
+    CHECK(manager.state_info().reason == XMAX_REASON_FAILURE);
+    CHECK(manager.state_info().error.api_code == 1234);
     manager.prepare({1280, 720, 30});
-    CHECK(manager.state_info().reason == XMAX_REASON_NORMAL);
+    CHECK(manager.state_info().reason == XMAX_REASON_NONE);
 }
 
 struct CameraProbe {
@@ -140,7 +151,7 @@ static void camera_configuration() {
     XmaxRealtimeManager manager(std::make_shared<ApiService>(config), [] { return std::make_shared<FakeRtc>(); },
         std::chrono::seconds(10), [probe] { return std::make_unique<ProbeCamera>(probe); });
     CHECK(manager.camera_format().width == 0);
-    manager.prepare_camera("one", {1920, 1080, 24}, false);
+    manager.create_local_camera_stream("one", {1920, 1080, 24}, false);
     manager.update_camera_format({1080, 1920, 24});
     CHECK(manager.camera_format().height == 1920 && manager.camera_format().fps == 24);
     CHECK(manager.acquire_local_frame()->width == 640);
@@ -348,7 +359,7 @@ static void public_configuration() {
     xmax_model_info info{};
     info.struct_size = sizeof(info);
     CHECK(xmax_model_get_info(nullptr, &info) == XMAX_OK);
-    CHECK(std::string(info.identifier) == "x2.1" && info.default_camera_format.width == 1080 && info.default_camera_format.height == 1920 && info.format_count == 5);
+    CHECK(std::string(info.identifier) == "x2.1" && info.default_camera_format.width == 1920 && info.default_camera_format.height == 1080 && info.format_count == 5);
     CHECK(xmax_model_get_info("x2.1", &info) == XMAX_OK);
     CHECK(xmax_model_get_info("x2.1.1-preview-cn", &info) == XMAX_INVALID_ARGUMENT);
     CHECK(xmax_model_get_info("x2.1.1-preview-us", &info) == XMAX_INVALID_ARGUMENT);
@@ -361,11 +372,11 @@ static void public_configuration() {
     auto realtime = client.create_realtime(xmax::RealtimeConfiguration{xmax::RealtimeModel::x2_1});
     auto overseas = client.create_realtime(xmax::RealtimeConfiguration{xmax::RealtimeModel::x2_1});
     overseas.prepare({1280, 720, 30});
-    CHECK(overseas.state_info().event.state == XMAX_READY);
+    CHECK(overseas.state().connection_state == xmax::realtime_connection_state::ready);
     CHECK(realtime.camera_preset() == xmax::RealtimeCameraPreset::none);
     realtime.prepare({1280, 720, 30});
-    const auto state = realtime.state_info();
-    CHECK(state.event.state == XMAX_READY && state.reason == XMAX_REASON_NORMAL);
+    const auto state = realtime.state();
+    CHECK(state.connection_state == xmax::realtime_connection_state::ready && !state.reason);
 }
 
 int main() {

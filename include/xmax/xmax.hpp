@@ -34,6 +34,8 @@
 #include "camera_device.hpp"
 #include "uploaded_file_info.hpp"
 #include "uploaded_file.hpp"
+#include "downloaded_file.hpp"
+#include "storage_transfer_callbacks.hpp"
 #include "storage.hpp"
 #include "realtime.hpp"
 #include "client.hpp"

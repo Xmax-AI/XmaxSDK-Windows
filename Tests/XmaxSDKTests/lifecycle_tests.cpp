@@ -1,3 +1,13 @@
+//
+//  lifecycle_tests.cpp
+//  XmaxSDK
+//
+//  Author: 翁跃庭 (Yueting Weng)
+//  GitHub: https://github.com/Xmax-AI/XmaxSDK-Windows
+//
+//  Copyright (c) 2026 XMAX.AI PTE. LTD.
+//
+
 #include "Core/Realtime/XmaxRealtimeFactory.hpp"
 #include "Service/Media/MediaService.hpp"
 #include "TestSupport.hpp"
@@ -20,7 +30,7 @@ struct Fixture {
     XmaxRealtimeErrorManager errors;
     std::vector<Scope> released;
     std::function<Lifecycle::CleanupResult(Scope)> release;
-    Lifecycle lifecycle{[] {}};
+    Lifecycle lifecycle;
 
     Fixture() {
         XmaxRealtimeFactory::assemble(lifecycle, errors, [this](Scope scope) {
@@ -246,7 +256,7 @@ static void completion_is_staged_and_cancel_safe() {
     CHECK(f.lifecycle.snapshot().event.state == XMAX_IDLE);
 }
 
-static void failed_generation_cleanup_releases_connection() {
+static void failed_generation_cleanup_retains_connection() {
     Fixture f;
     f.lifecycle.sync([&] { f.lifecycle.commit({XMAX_GENERATING, "session", "task"}); });
     f.release = [](Scope scope) {
@@ -255,15 +265,15 @@ static void failed_generation_cleanup_releases_connection() {
         return Lifecycle::CleanupResult{"session", true, true};
     };
     CHECK(!f.lifecycle.terminate(Scope::Generation));
-    CHECK(f.released == std::vector<Scope>({Scope::Generation, Scope::Connection}));
-    CHECK(f.lifecycle.snapshot().event.state == XMAX_READY);
-    CHECK(f.lifecycle.snapshot().error.code == XMAX_RTC_ERROR);
+    CHECK(f.released == std::vector<Scope>{Scope::Generation});
+    CHECK(f.lifecycle.snapshot().event.state == XMAX_CONNECTED);
+    CHECK(f.lifecycle.snapshot().reason == XMAX_REASON_NONE);
 }
 
 int main() {
     try {
         completion_is_staged_and_cancel_safe();
-        failed_generation_cleanup_releases_connection();
+        failed_generation_cleanup_retains_connection();
         scoped_cancellation_and_admission();
         replacement_keeps_connection();
         cancelled_conditions_keep_generation();

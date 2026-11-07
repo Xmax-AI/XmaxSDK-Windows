@@ -1,3 +1,13 @@
+//
+//  core_tests.cpp
+//  XmaxSDK
+//
+//  Author: 翁跃庭 (Yueting Weng)
+//  GitHub: https://github.com/Xmax-AI/XmaxSDK-Windows
+//
+//  Copyright (c) 2026 XMAX.AI PTE. LTD.
+//
+
 #include "Core/Realtime/XmaxRealtimeManager.hpp"
 #include "Foundation/Runtime/RuntimeInfo.hpp"
 #include "Stream/Encoding/EncodingBitratePolicy.hpp"
@@ -25,7 +35,7 @@ static void protocol() {
     auto changed = generation_event("change_condition", room, "task", {1280, 720, 30}, "p", "", false);
     CHECK(!changed["params"].contains("mirror"));
     CHECK(!changed["params"].contains("ref_image_path"));
-    CHECK(changed["params"]["target_size"] == json::array({1280, 720}));
+    CHECK(!changed["params"].contains("target_size"));
     CHECK(bitrate({1920, 1080, 30}).second == 3780);
     expect_error(XMAX_INVALID_ARGUMENT,
                  [&] { api.request("GET", "https://evil.invalid", nullptr, [] { return false; }); });
@@ -34,14 +44,16 @@ static void protocol() {
     expect_error(XMAX_INVALID_ARGUMENT,
                  [&] { api.request("GET", "/../secret", nullptr, [] { return false; }); });
     CHECK(http->calls.empty());
-    CHECK(parse_connection({{"sessionUid", "id"},
-                            {"modelExtra", json{{"rtc_app_id", "app"},
-                                                {"room_id", "r"},
-                                                {"rtc_user_id", "u"},
-                                                {"room_token", "t"},
-                                                {"rtc_bot_id", "b"}}
-                                               .dump()}})
-              .room.user == "u");
+    json extra{{"rtc_app_id", std::string(realtime_rtc_app_id) + "\n"}, {"room_id", " r "},
+               {"rtc_user_id", u8"\u3000u\u200b"}, {"room_token", "\tt"}, {"rtc_bot_id", "b\r"}};
+    const auto parsed = parse_connection({{"sessionUid", " id "}, {"modelExtra", extra.dump()}});
+    CHECK(parsed.id == "id" && parsed.room.app_id == realtime_rtc_app_id && parsed.room.room == "r" &&
+          parsed.room.user == "u" && parsed.room.token == "t" && parsed.room.bot == "b");
+    extra["rtc_app_id"] = "different-app";
+    expect_error(XMAX_SESSION_ERROR, [&] { parse_connection({{"sessionUid", "id"}, {"modelExtra", extra}}); });
+    extra["rtc_app_id"] = realtime_rtc_app_id;
+    extra["room_token"] = u8"\u3000\t";
+    expect_error(XMAX_SESSION_ERROR, [&] { parse_connection({{"sessionUid", "id"}, {"modelExtra", extra}}); });
 }
 static void chunks() {
     std::string prompt;
@@ -108,8 +120,11 @@ static void lifecycle() {
     frame.strides[0] = 16;
     frame.planes[0].resize(64);
     frame.timestamp_us = 1;
+    CHECK(s.acquire_frame() != nullptr); // Start waits for the processed first frame.
     rtc->callbacks.frame(frame);
-    CHECK(s.acquire_frame() != nullptr);
+    std::shared_ptr<Frame> received;
+    for (int i = 0; i < 2000 && !received; ++i) { received = s.acquire_frame(); std::this_thread::sleep_for(std::chrono::milliseconds(1)); }
+    CHECK(received != nullptr);
     CHECK(s.acquire_frame() == nullptr);
     const auto old_frame_callback = rtc->callbacks.frame;
     s.disconnect(false);
@@ -119,6 +134,7 @@ static void lifecycle() {
     rtc->callbacks.frame(frame);
     CHECK(!s.acquire_frame());
     s.start("again", "", false, false);
+    CHECK(s.acquire_frame() != nullptr);
     old_frame_callback(frame);
     CHECK(!s.acquire_frame());
     s.disconnect(true);
@@ -199,15 +215,21 @@ static void startup_heartbeat_and_close_failure() {
         std::make_shared<ApiService>(c, h), [rtc] { return rtc; }, std::chrono::milliseconds(5));
     s.prepare({1920, 1024, 30});
     s.start("p", "", false, false);
+    const auto heartbeat_deadline = Clock::now() + std::chrono::seconds(2);
+    while (h->count("PUT /session/session-1/heartbeat") == 0 && Clock::now() < heartbeat_deadline)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
     CHECK(h->count("PUT /session/session-1/heartbeat") > 0);
     h->close_failure = true;
-    expect_error(XMAX_API_ERROR, [&] { s.disconnect(true); });
+    XmaxLogger::configure(XMAX_LOG_BUSINESS, XMAX_LOG_ENGLISH);
+    s.disconnect(true);
     CHECK(!s.requesting());
+    CHECK(s.state_info().event.state == XMAX_IDLE && s.state_info().reason == XMAX_REASON_NORMAL);
     bool reported = false;
-    xmax_event event{};
-    while (s.poll(event))
-        if (event.type == XMAX_EVENT_ERROR && std::string(event.session_id) == "session-1")
+    xmax_log_record entry{};
+    while (XmaxLogger::poll(entry))
+        if (entry.level == XMAX_LOG_ERROR && std::string(entry.message).find("Close unavailable") != std::string::npos)
             reported = true;
+    XmaxLogger::configure(XMAX_LOG_NONE, XMAX_LOG_ENGLISH);
     CHECK(reported);
     expect_error(XMAX_SESSION_ERROR, [] { parse_connection({{"sessionUid", "s"}, {"modelExtra", "{broken"}}); });
 }

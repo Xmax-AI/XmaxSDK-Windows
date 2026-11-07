@@ -44,5 +44,13 @@ public enum RealtimeEventType
     /// <summary>
     /// A device-performance limitation or recovery.
     /// </summary>
-    Performance = 6
+    Performance = 6,
+
+    /// <summary>A physical microphone level, or an unavailable sample.</summary>
+    MicrophoneLevel = 7,
+
+    /// <summary>
+    /// One paired uplink and downlink network quality sample.
+    /// </summary>
+    NetworkQuality = 8
 }

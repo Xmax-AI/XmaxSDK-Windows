@@ -1,3 +1,13 @@
+//
+//  realtime_extensions_tests.cpp
+//  XmaxSDK
+//
+//  Author: 翁跃庭 (Yueting Weng)
+//  GitHub: https://github.com/Xmax-AI/XmaxSDK-Windows
+//
+//  Copyright (c) 2026 XMAX.AI PTE. LTD.
+//
+
 #include "CAPI/RealtimeHandle.hpp"
 #include "Render/Video/RemoteMediaFrameDispatcher.hpp"
 #include "Render/Video/RemoteAudioTimeline.hpp"
@@ -86,12 +96,13 @@ static void disabled_quality() {
 
 struct WaitingRtc : FakeRtc {
     std::atomic<int> waits{0};
-    void wait_remote(const Cancel& cancel, const std::function<void()>& keepalive) override {
-        if (++waits != 1)
+    void wait_remote(const Cancel& cancel, Clock::time_point) override {
+        if (++waits != 1) {
+            display_result();
             return;
+        }
         const auto deadline = Clock::now() + 5s;
         while (!cancel() && Clock::now() < deadline) {
-            keepalive();
             std::this_thread::sleep_for(1ms);
         }
         throw Error(XMAX_CANCELLED, "Generation cancelled");
@@ -153,6 +164,74 @@ static void replacement_during_connect() {
     CHECK(manager.state_snapshot().state == XMAX_GENERATING);
 }
 
+static void scoped_connect_and_cleanup_contract() {
+    auto http = std::make_shared<FakeHttp>();
+    auto rtc = std::make_shared<FakeRtc>();
+    auto* native = new xmax_realtime_impl(std::make_unique<XmaxRealtimeManager>(api(http), [rtc] { return rtc; }));
+    xmax::realtime controller(native);
+    controller.prepare({640, 480, 30});
+    const auto local = controller.local_stream();
+    std::atomic<bool> cancelled{false};
+    const auto cancel = [](void* value) -> int32_t {
+        return static_cast<std::atomic<bool>*>(value)->load();
+    };
+    rtc->block_join = true;
+    auto pending = std::async(std::launch::async, [&]() -> xmax_result {
+        try {
+            controller.connect(local, cancel, &cancelled);
+            return XMAX_OK;
+        } catch (const xmax::error& failure) {
+            return failure.code();
+        }
+    });
+    bool read_while_connecting = false;
+    std::future<xmax::realtime_state> state;
+    try {
+        eventually([&] { return rtc->joins == 1; });
+        state = std::async(std::launch::async, [&] { return controller.state(); });
+        read_while_connecting = state.wait_for(2s) == std::future_status::ready;
+    } catch (...) { cancelled = true; throw; }
+    cancelled = true;
+    CHECK(pending.get() == XMAX_CANCELLED);
+    CHECK(read_while_connecting && state.get().connection_state == xmax::realtime_connection_state::connecting);
+    CHECK(controller.state().connection_state == xmax::realtime_connection_state::ready);
+    CHECK(rtc->leaves == 1);
+
+    rtc->block_join = false;
+    const auto remote = controller.connect(local);
+    CHECK(!remote.is_local() && rtc->joins == 2);
+    CHECK(controller.state().session_id == "session-1");
+    controller.start_generation(xmax::realtime_context{u8"\u200b prompt\u3000", u8"\u00a0\r\n"});
+    {
+        std::lock_guard<std::mutex> lock(rtc->mutex);
+        const auto params = json::parse(rtc->messages.back())["params"];
+        CHECK(params["prompt"] == "prompt" && !params.contains("ref_image_path"));
+    }
+    http->close_failure = true;
+    controller.disconnect(xmax::realtime_stop_reason::orientation_changed);
+    const auto disconnected = controller.state();
+    CHECK(disconnected.connection_state == xmax::realtime_connection_state::ready);
+    CHECK(disconnected.reason && std::get<xmax::realtime_stop_reason>(*disconnected.reason) ==
+          xmax::realtime_stop_reason::orientation_changed);
+    controller.disconnect();
+    const auto repeated = controller.state();
+    CHECK(repeated.reason && std::get<xmax::realtime_stop_reason>(*repeated.reason) ==
+          xmax::realtime_stop_reason::orientation_changed);
+    CHECK(rtc->leaves == 2);
+    controller.connect(local);
+    xmax_error_info detail{};
+    detail.api_code = 42;
+    detail.http_status = 403;
+    controller.disconnect(xmax::realtime_reason{xmax::error(XMAX_API_ERROR, "Caller stopped", detail)});
+    const auto failed = controller.state();
+    CHECK(failed.reason && std::holds_alternative<xmax::error>(*failed.reason));
+    const auto& reason = std::get<xmax::error>(*failed.reason);
+    CHECK(reason.code() == XMAX_API_ERROR && reason.api_code() == 42 && reason.http_status() == 403);
+    CHECK(std::string(reason.what()) == "Caller stopped");
+    controller.close();
+    CHECK(controller.state().connection_state == xmax::realtime_connection_state::idle);
+}
+
 static void explicit_disconnect_cancels_request() {
     auto rtc = std::make_shared<WaitingRtc>();
     XmaxRealtimeManager manager(api(), [rtc] { return rtc; });
@@ -195,7 +274,7 @@ struct FailingCamera : CameraCapture {
 static void camera_startup_failure_contract() {
     XmaxRealtimeManager manager(api(), [] { return std::make_shared<FakeRtc>(); }, 10s,
         [] { return std::make_unique<FailingCamera>(); });
-    expect_error(XMAX_MEDIA_ERROR, [&] { manager.prepare_camera("", {1080, 1920, 30}, false); });
+    expect_error(XMAX_MEDIA_ERROR, [&] { manager.create_local_camera_stream("", {1080, 1920, 30}, false); });
     const auto state = manager.state_info();
     CHECK(state.event.state == XMAX_IDLE && state.error.code == XMAX_MEDIA_ERROR);
     CHECK(std::string(state.error.message).find("native capture failure") != std::string::npos);
@@ -209,7 +288,7 @@ static void external_source_failures() {
     CHECK(active != stale);
     manager.push({}, stale);
     manager.external_failure(stale, Error(XMAX_MEDIA_ERROR, "stale capture"));
-    CHECK(manager.state_info().reason == XMAX_REASON_NORMAL);
+    CHECK(manager.state_info().reason == XMAX_REASON_NONE);
     manager.connect(false);
     CHECK(!manager.requesting(stale) && manager.requesting(active));
     auto pending = std::async(std::launch::async, [&] {
@@ -221,21 +300,25 @@ static void external_source_failures() {
     manager.external_failure(active, Error(XMAX_MEDIA_ERROR, "duplicate"));
     CHECK(pending.wait_for(5s) == std::future_status::ready);
     pending.get();
+    eventually([&] { return manager.state_info().event.state == XMAX_IDLE; });
     const auto state = manager.state_info();
     CHECK(state.event.state == XMAX_IDLE && state.reason == XMAX_REASON_FAILURE);
     CHECK(state.error.code == XMAX_MEDIA_ERROR && state.error.api_code == 1234 && state.error.http_status == 503);
     int failures = 0;
     xmax_event_info event{};
-    while (manager.poll(event))
-        if (event.event.type == XMAX_EVENT_ERROR && event.event.code == XMAX_MEDIA_ERROR)
-            ++failures;
+    eventually([&] {
+        while (manager.poll(event))
+            if (event.event.type == XMAX_EVENT_ERROR && event.event.code == XMAX_MEDIA_ERROR)
+                ++failures;
+        return failures != 0;
+    });
     CHECK(failures == 1 && !manager.requesting(active));
     const auto latest = manager.prepare({640, 480, 30});
     CHECK(latest != active);
     manager.push({}, active);
     manager.external_failure(active, Error(XMAX_MEDIA_ERROR, "late capture failure"));
     CHECK(manager.state_info().event.state == XMAX_READY);
-    CHECK(manager.state_info().reason == XMAX_REASON_NORMAL);
+    CHECK(manager.state_info().reason == XMAX_REASON_NONE);
 }
 
 struct CollectedFrames {
@@ -448,14 +531,16 @@ static void public_options_and_external_sink() {
     CHECK(!original.requesting() && latest.requesting() && original.format().width == 640);
     original.push({});
     original.report_error(XMAX_MEDIA_ERROR, "old source");
-    CHECK(controller.state_info().reason == XMAX_REASON_NORMAL);
+    CHECK(!controller.state().reason);
     auto pixels = video(1, 640, 480);
     latest.push(pixels.view());
     CHECK(controller.acquire_local_frame());
     latest.report_error(XMAX_MEDIA_ERROR, "current source", 47, 503);
-    const auto state = controller.state_info();
-    CHECK(state.event.state == XMAX_IDLE && state.reason == XMAX_REASON_FAILURE);
-    CHECK(state.error.api_code == 47 && state.error.http_status == 503);
+    eventually([&] { return controller.state().connection_state == xmax::realtime_connection_state::idle; });
+    const auto state = controller.state();
+    CHECK(state.connection_state == xmax::realtime_connection_state::idle && state.reason);
+    const auto& failure = std::get<xmax::error>(*state.reason);
+    CHECK(failure.api_code() == 47 && failure.http_status() == 503);
 
     const xmax_realtime_options invalid{sizeof(invalid), "x2.1", 2};
     xmax_realtime missing = reinterpret_cast<xmax_realtime>(1);
@@ -475,6 +560,27 @@ static void public_options_and_external_sink() {
     expired.push({});
     expired.report_error(XMAX_MEDIA_ERROR, "controller already destroyed");
     CHECK(expired.format().height == 480);
+}
+
+/**
+ * Rejects malformed camera creation options before opening a physical device.
+ */
+static void public_camera_creation_validation() {
+    xmax::client client("");
+    auto controller = client.create_realtime();
+    xmax_local_camera_options options{};
+    options.struct_size = sizeof(options);
+    options.mirror = 2;
+    CHECK(xmax_realtime_create_local_camera_stream(controller.get(), &options) == XMAX_INVALID_ARGUMENT);
+    options.mirror = 0;
+    options.microphone = 3;
+    CHECK(xmax_realtime_create_local_camera_stream(controller.get(), &options) == XMAX_INVALID_ARGUMENT);
+    options.microphone = XMAX_MICROPHONE_DEVICE;
+    CHECK(xmax_realtime_create_local_camera_stream(controller.get(), &options) == XMAX_INVALID_ARGUMENT);
+    options.microphone = XMAX_MICROPHONE_DISABLED;
+    options.microphone_device_id = "unexpected-endpoint";
+    CHECK(xmax_realtime_create_local_camera_stream(controller.get(), &options) == XMAX_INVALID_ARGUMENT);
+    CHECK(controller.state().connection_state == xmax::realtime_connection_state::idle);
 }
 
 static void destruction_with_inflight_source_reference() {
@@ -553,11 +659,12 @@ static void public_media_bridge() {
     auto probe = std::make_shared<MediaProbe>();
     auto native = new xmax_realtime_impl(std::make_unique<XmaxRealtimeManager>(api(), [rtc] { return rtc; }));
     xmax::realtime controller(native);
+    controller.remote_video_beauty(std::nullopt); // This fixture verifies lossless raw transport.
     auto* context = new MediaContext{probe, native};
     const xmax_remote_media_listener listener{sizeof(listener), media_callback, context, release_media_context};
     CHECK(xmax_realtime_set_remote_media_frame_listener(native, &listener) == XMAX_OK);
     controller.prepare({640, 480, 30});
-    controller.connect();
+    controller.connect(controller.local_stream());
     CHECK(rtc->observing_media && rtc->remote_volume == 0);
     auto pcm = audio();
     rtc->callbacks.audio(pcm);
@@ -586,7 +693,7 @@ static void public_media_bridge() {
 
     const auto previous = rtc->callbacks;
     controller.disconnect();
-    controller.connect();
+    controller.connect(controller.local_stream());
     previous.audio(audio(2000));
     previous.frame(video(2000000));
     rtc->callbacks.audio(audio(2000));
@@ -720,8 +827,8 @@ static void external_audio_public_bridge() {
     auto malformed = pcm_view(samples, 44100, 1, 40000);
     CHECK(xmax_external_frame_sink_push_audio_frame(sink.get(), &malformed) == XMAX_MEDIA_ERROR);
     CHECK(!sink.requesting());
-    CHECK(controller.state_info().event.state == XMAX_IDLE);
-    CHECK(controller.state_info().reason == XMAX_REASON_FAILURE);
+    eventually([&] { return controller.state().connection_state == xmax::realtime_connection_state::idle; });
+    CHECK(std::holds_alternative<xmax::error>(*controller.state().reason));
     auto replacement = controller.bind_external_media(config);
     CHECK(replacement.requesting() && !sink.requesting());
     sink.push_audio({});
@@ -731,7 +838,8 @@ static void external_audio_public_bridge() {
     auto bad_frame = video(1, 4, 4);
     auto bad_pixels = bad_frame.view();
     CHECK(xmax_external_frame_sink_push_video_frame(silent.get(), &bad_pixels) == XMAX_MEDIA_ERROR);
-    CHECK(!silent.requesting() && controller.state_info().event.state == XMAX_IDLE);
+    CHECK(!silent.requesting());
+    eventually([&] { return controller.state().connection_state == xmax::realtime_connection_state::idle; });
     controller.close();
     CHECK(!silent.requesting());
 }
@@ -743,7 +851,7 @@ static void full_video_statistics() {
     CHECK(!controller.video_statistics(0).available && controller.video_statistics(0).capture_fps == -1);
     CHECK(!controller.video_statistics(1).available && controller.video_statistics(1).render_fps == -1);
     auto sink = controller.bind_external({640, 480, 30});
-    controller.connect();
+    controller.connect(controller.local_stream());
     xmax_video_statistics value{};
     value.struct_size = sizeof(value);
     value.available = 1;
@@ -765,7 +873,7 @@ static void full_video_statistics() {
     controller.disconnect();
     old(value);
     CHECK(!controller.video_statistics(0).available && !controller.video_statistics(1).available);
-    controller.connect();
+    controller.connect(controller.local_stream());
     old(value);
     CHECK(!controller.video_statistics(1).available);
     CHECK(xmax_realtime_get_video_statistics(controller.get(), 2, &value) == XMAX_INVALID_ARGUMENT);
@@ -927,6 +1035,7 @@ int main() {
         generation_replacement();
         replacement_during_connect();
         explicit_disconnect_cancels_request();
+        scoped_connect_and_cleanup_contract();
         source_preview_revision();
         camera_startup_failure_contract();
         external_source_failures();
@@ -937,6 +1046,7 @@ int main() {
         listener_replacement_and_reentrancy();
         external_video_entry_contracts();
         public_options_and_external_sink();
+        public_camera_creation_validation();
         destruction_with_inflight_source_reference();
         public_media_bridge();
         std::cout << "Realtime request replacement, quality options, external failures and remote media output passed\n";
