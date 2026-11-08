@@ -365,10 +365,10 @@ a controller. Use `RealtimeCamera.Device(id)` to select a specific camera. Camer
 native mode that supports the requested frame rate. Omitted microphone selection disables capture;
 `RealtimeMicrophone.Device(id)` selects a Windows recording endpoint. Mirroring applies to local
 preview and published camera video together, preserving the independent generated-result display
-setting. Creation starts no cloud session and returns after the first camera frame. You can pass
-the returned stream to connection or generation immediately. A bound preview can report Ready
-before connection starts. The controller owns capture lifetime. Use `StopLocalCameraStreamAsync` after
-disconnection, or `CloseAsync`, to release it.
+setting. Creation starts no cloud session and returns once native capture starts. You can pass
+the returned stream to connection or generation immediately. Preview readiness requires an attached
+view and the first usable frame. The controller owns capture lifetime. Use
+`StopLocalCameraStreamAsync` after disconnection, or `CloseAsync`, to release it.
 Windows checks microphone privacy and endpoint access when an enabled camera stream is created.
 The SDK captures microphone audio through WASAPI on connection and publishes timestamped PCM
 through the RTC custom audio track. Microphone level callbacks report the local capture level.
