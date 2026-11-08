@@ -18,9 +18,9 @@ namespace Xmax.SDK;
 /// </summary>
 /// <remarks>
 /// Submission copies input before returning. Replaced or closed bindings ignore subsequent input.
-/// Your app owns capture, permissions, pacing, and capture shutdown; disposing this receiver does not unbind the source.
+/// Your app owns capture, permissions, pacing, and capture shutdown. The SDK releases the receiver after stopping delivery.
 /// </remarks>
-public sealed class ExternalFrameSink : IDisposable
+internal sealed class ExternalFrameSink : IRealtimeExternalFrameSink
 {
     private readonly NativeHandle handle;
 
@@ -49,13 +49,12 @@ public sealed class ExternalFrameSink : IDisposable
         NativeError.Check(NativeMethods.xmax_external_frame_sink_complete_startup(lease.Value));
     }
 
-    internal bool IsActive
+    private NativeHandle.Lease? TryBorrow()
     {
-        get
-        {
-            try { return !handle.IsClosed && IsRequestingFrames; }
-            catch (ObjectDisposedException) { return false; }
-        }
+        if (handle.IsClosed)
+            return null;
+        try { return handle.Borrow(); }
+        catch (ObjectDisposedException) { return null; }
     }
 
     /// <summary>
@@ -65,7 +64,8 @@ public sealed class ExternalFrameSink : IDisposable
     {
         get
         {
-            using var lease = handle.Borrow();
+            using var lease = TryBorrow();
+            if (lease is null) return false;
             int value = 0;
             NativeError.Check(NativeMethods.xmax_external_frame_sink_is_requesting_frames(lease.Value, &value));
             return value != 0;
@@ -87,12 +87,13 @@ public sealed class ExternalFrameSink : IDisposable
         long timestampMicroseconds
     )
     {
-        using var lease = handle.Borrow();
+        using var lease = TryBorrow();
+        if (lease is null) return;
         fixed (byte* data = pixels)
         {
             var frame = new xmax_video_frame { struct_size = (uint)sizeof(xmax_video_frame), pixel_format = 1,
                 width = Format.Width, height = Format.Height, timestamp_us = timestampMicroseconds,
-                planes_0 = data, strides_0 = checked((nuint)stride), plane_sizes_0 = (nuint)pixels.Length };
+                planes_0 = data, strides_0 = (nuint)Math.Max(stride, 0), plane_sizes_0 = (nuint)pixels.Length };
             NativeError.Check(NativeMethods.xmax_external_frame_sink_push_video_frame(lease.Value, &frame));
         }
     }
@@ -136,13 +137,14 @@ public sealed class ExternalFrameSink : IDisposable
         long timestampMicroseconds
     )
     {
-        using var lease = handle.Borrow();
+        using var lease = TryBorrow();
+        if (lease is null) return;
         fixed (byte* yp = y, uvp = uv)
         {
             var frame = new xmax_video_frame { struct_size = (uint)sizeof(xmax_video_frame), pixel_format = 2,
                 width = Format.Width, height = Format.Height, timestamp_us = timestampMicroseconds,
-                planes_0 = yp, strides_0 = checked((nuint)yStride), plane_sizes_0 = (nuint)y.Length,
-                planes_1 = uvp, strides_1 = checked((nuint)uvStride), plane_sizes_1 = (nuint)uv.Length };
+                planes_0 = yp, strides_0 = (nuint)Math.Max(yStride, 0), plane_sizes_0 = (nuint)y.Length,
+                planes_1 = uvp, strides_1 = (nuint)Math.Max(uvStride, 0), plane_sizes_1 = (nuint)uv.Length };
             NativeError.Check(NativeMethods.xmax_external_frame_sink_push_video_frame(lease.Value, &frame));
         }
     }
@@ -170,14 +172,15 @@ public sealed class ExternalFrameSink : IDisposable
         long timestampMicroseconds
     )
     {
-        using var lease = handle.Borrow();
+        using var lease = TryBorrow();
+        if (lease is null) return;
         fixed (byte* yp = y, up = u, vp = v)
         {
             var frame = new xmax_video_frame { struct_size = (uint)sizeof(xmax_video_frame), pixel_format = 3,
                 width = Format.Width, height = Format.Height, timestamp_us = timestampMicroseconds,
-                planes_0 = yp, strides_0 = checked((nuint)yStride), plane_sizes_0 = (nuint)y.Length,
-                planes_1 = up, strides_1 = checked((nuint)uStride), plane_sizes_1 = (nuint)u.Length,
-                planes_2 = vp, strides_2 = checked((nuint)vStride), plane_sizes_2 = (nuint)v.Length };
+                planes_0 = yp, strides_0 = (nuint)Math.Max(yStride, 0), plane_sizes_0 = (nuint)y.Length,
+                planes_1 = up, strides_1 = (nuint)Math.Max(uStride, 0), plane_sizes_1 = (nuint)u.Length,
+                planes_2 = vp, strides_2 = (nuint)Math.Max(vStride, 0), plane_sizes_2 = (nuint)v.Length };
             NativeError.Check(NativeMethods.xmax_external_frame_sink_push_video_frame(lease.Value, &frame));
         }
     }
@@ -213,6 +216,8 @@ public sealed class ExternalFrameSink : IDisposable
         long timestampMicroseconds
     )
     {
+        using var lease = TryBorrow();
+        if (lease is null) return;
         int sampleSize = format switch
         {
             ExternalAudioSampleFormat.Pcm16 or ExternalAudioSampleFormat.PlanarPcm16 => 2,
@@ -220,11 +225,11 @@ public sealed class ExternalFrameSink : IDisposable
             ExternalAudioSampleFormat.Pcm32 or ExternalAudioSampleFormat.PlanarPcm32 or
                 ExternalAudioSampleFormat.Float32 or ExternalAudioSampleFormat.PlanarFloat32 => 4,
             ExternalAudioSampleFormat.Float64 or ExternalAudioSampleFormat.PlanarFloat64 => 8,
-            _ => throw new ArgumentOutOfRangeException(nameof(format))
+            _ => 0
         };
-        if (channels is 0 or > 8 || data.Length % (sampleSize * (int)channels) != 0)
-            throw new ArgumentException("PCM must contain complete samples for every channel.", nameof(data));
-        using var lease = handle.Borrow();
+        uint samplesPerChannel = sampleSize > 0 && channels is > 0 and <= 8
+            ? (uint)(data.Length / sampleSize) / channels
+            : 0;
         fixed (byte* samples = data)
         {
             var frame = new xmax_external_audio_frame
@@ -233,7 +238,7 @@ public sealed class ExternalFrameSink : IDisposable
                 sample_format = (int)format,
                 sample_rate = sampleRate,
                 channels = channels,
-                samples_per_channel = (uint)(data.Length / sampleSize) / channels,
+                samples_per_channel = samplesPerChannel,
                 timestamp_us = timestampMicroseconds,
                 data = samples,
                 data_size = (nuint)data.Length
@@ -245,30 +250,28 @@ public sealed class ExternalFrameSink : IDisposable
     /// <summary>
     /// Reports an unrecoverable capture-source failure and schedules media and connection cleanup.
     /// </summary>
-    /// <param name="code">A negative SDK result code describing the source failure.</param>
-    /// <param name="message">The diagnostic text, copied and truncated at a UTF-8 boundary if needed.</param>
+    /// <param name="error">The source exception whose message describes the failure.</param>
     /// <remarks>
     /// The call does not wait for cleanup. Observe realtime events for completion. Stale and repeated reports are ignored.
     /// </remarks>
     public unsafe void ReportError(
-        int code,
-        string message
+        Exception error
     )
     {
-        using var lease = handle.Borrow();
-        var error = new xmax_error_info { struct_size = (uint)sizeof(xmax_error_info), code = code };
-        byte[] text = System.Text.Encoding.UTF8.GetBytes(message);
+        ArgumentNullException.ThrowIfNull(error);
+        using var lease = TryBorrow();
+        if (lease is null) return;
+        var native = new xmax_error_info
+        {
+            struct_size = (uint)sizeof(xmax_error_info),
+            code = (int)XmaxErrorCode.MediaError
+        };
+        byte[] text = System.Text.Encoding.UTF8.GetBytes(error.Message);
         int count = Math.Min(text.Length, 1023);
         while (count < text.Length && count > 0 && (text[count] & 0xc0) == 0x80) --count;
-        text.AsSpan(0, count).CopyTo(new Span<byte>(error.message, 1024));
-        NativeError.Check(NativeMethods.xmax_external_frame_sink_report_error(lease.Value, &error));
+        text.AsSpan(0, count).CopyTo(new Span<byte>(native.message, 1024));
+        NativeError.Check(NativeMethods.xmax_external_frame_sink_report_error(lease.Value, &native));
     }
 
-    /// <summary>
-    /// Releases the receiver without stopping caller-owned capture or unbinding the source.
-    /// </summary>
-    /// <remarks>
-    /// Stop submitting and wait for in-flight calls before disposal.
-    /// </remarks>
-    public void Dispose() => handle.Dispose();
+    internal void Dispose() => handle.Dispose();
 }

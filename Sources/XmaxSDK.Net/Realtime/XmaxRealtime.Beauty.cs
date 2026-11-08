@@ -14,7 +14,7 @@ using Xmax.SDK.Interop;
 
 namespace Xmax.SDK;
 
-public sealed partial class XmaxRealtime
+internal sealed partial class XmaxRealtime
 {
     private long beautyConfigurationRevision;
     /// <summary>Configures result beauty; null disables processing and releases its helper.</summary>
@@ -37,13 +37,13 @@ public sealed partial class XmaxRealtime
 
     /// <summary>Registers recoverable beauty failures after the SDK restores original-frame output.</summary>
     /// <remarks>
-    /// Capture the caller's synchronization context for UI delivery; otherwise use the thread pool.
-    /// Callback exceptions go to CallbackFaulted. Null unregisters; full close also clears this listener.
+    /// Uses the controller or registering synchronization context; otherwise uses the thread pool.
+    /// Callback exceptions are logged. Null unregisters; full close also clears this listener.
     /// A queued notification is discarded when its listener is released. Generation errors use the existing events.
     /// </remarks>
     public Task SetRemoteVideoBeautyErrorListenerAsync(Action<XmaxException>? listener)
     {
-        var context = listener is null ? null : new BeautyListener(listener, SynchronizationContext.Current, NotifyCallbackFault, () => Volatile.Read(ref beautyConfigurationRevision));
+        var context = listener is null ? null : new BeautyListener(listener, CallbackContext, NotifyCallbackFault, () => Volatile.Read(ref beautyConfigurationRevision));
         return operations.Run(value => RegisterBeautyListener(value, context));
     }
     private sealed class BeautyListener(Action<XmaxException> callback, SynchronizationContext? context, Action<Exception> failure, Func<long> revision)

@@ -257,46 +257,4 @@ public sealed partial class MainWindow
         Check(target.Opacity == 1 && ((TranslateTransform)target.RenderTransform).Y == 0, "Page entry did not settle.");
         return new { page = active ? "generation" : "landing", sampledOpacity = opacity, sampledOffset = offset, durationMilliseconds = 450, offsetDip = 14, settled = true };
     }
-    private async Task VerifyFramesAsync()
-    {
-        using var client = new XmaxClient(); await using var realtime = client.CreateRealtime();
-        using var sink = await realtime.BindExternalAsync(new(16, 8));
-        Model.StatisticsVisible = false;
-        LocalView.Width = 160; LocalView.Height = 80; LocalView.FirstFrameFadeInDuration = 0;
-        LocalView.VideoSource = realtime.LocalVideo;
-        byte[] pixels = new byte[64 * 8];
-        for (int y = 0; y < 8; ++y) for (int x = 0; x < 16; ++x) { int i = y * 64 + x * 4; pixels[i + (x < 8 ? 2 : 0)] = 255; pixels[i + 3] = 255; }
-        workspace.Visibility = Visibility.Collapsed;
-        sink.PushBgra(pixels, 64, 1000);
-        await UntilAsync(() => LocalView.PresentedFrameCount >= 1);
-        workspace.Visibility = Visibility.Visible;
-        await Task.Delay(100);
-        await VerifyFramePixelsAsync(false); await SaveScreenshotAsync("render-bgra", LocalView);
-        await realtime.SetVideoMirrorAsync(new(true, false, false)); sink.PushBgra(pixels, 64, 2000);
-        await UntilAsync(() => LocalView.PresentedFrameCount >= 2); await Task.Delay(100); await VerifyFramePixelsAsync(true); await SaveScreenshotAsync("render-mirrored", LocalView);
-        await Task.Run(() => { for (int i = 3; i <= 100; ++i) sink.PushBgra(pixels, 64, i * 1000); });
-        await UntilAsync(() => LocalView.LastPresentedTimestampMicroseconds == 100000);
-        localPanel.Children.Remove(LocalView); await Task.Delay(50); localPanel.Children.Insert(0, LocalView);
-        sink.PushBgra(pixels, 64, 101000); await UntilAsync(() => LocalView.LastPresentedTimestampMicroseconds == 101000);
-        LocalView.VideoSource = null;
-
-        // Use the result panel itself to check the single-view first-frame transition.
-        RemoteView.FirstFrameFadeInDuration = 0.6;
-        RemoteView.VideoSource = realtime.LocalVideo;
-        Check(RemoteView.PresentedFrameCount == 0, "The result panel presented before receiving a frame.");
-        sink.PushBgra(pixels, 64, 102000);
-        await UntilAsync(() => RemoteView.LastPresentedTimestampMicroseconds == 102000);
-        if (new Windows.UI.ViewManagement.UISettings().AnimationsEnabled)
-            await UntilAsync(() => RemoteView.Opacity is > 0 and < 1);
-        await UntilAsync(() => RemoteView.Opacity == 1);
-        RemoteView.VideoSource = null;
-    }
-    private async Task VerifyFramePixelsAsync(bool mirrored)
-    {
-        var bitmap = new RenderTargetBitmap(); await bitmap.RenderAsync(LocalView, 160, 80);
-        using var reader = DataReader.FromBuffer(await bitmap.GetPixelsAsync()); byte[] bytes = new byte[reader.UnconsumedBufferLength]; reader.ReadBytes(bytes);
-        int left = (bitmap.PixelHeight / 2 * bitmap.PixelWidth + bitmap.PixelWidth / 8) * 4;
-        int right = (bitmap.PixelHeight / 2 * bitmap.PixelWidth + bitmap.PixelWidth * 7 / 8) * 4;
-        Check(bytes[left + (mirrored ? 0 : 2)] > 200 && bytes[right + (mirrored ? 2 : 0)] > 200, "WinUI displayed pixels or mirror metadata differ from the input.");
-    }
 }

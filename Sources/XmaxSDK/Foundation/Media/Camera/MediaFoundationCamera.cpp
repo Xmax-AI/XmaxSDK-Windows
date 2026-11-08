@@ -12,6 +12,7 @@
 #include "Foundation/Logging/XmaxLogger.hpp"
 #include "Foundation/Media/Camera/CameraCapture.hpp"
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <limits>
 // clang-format off
@@ -22,9 +23,39 @@
 #include <mfreadwrite.h>
 // clang-format on
 #include <mutex>
+#include <vector>
 
 namespace xmax::detail {
 namespace {
+
+constexpr double camera_rate_tolerance = 0.1;
+
+double media_type_rate(IMFMediaType* type, REFGUID attribute) {
+    UINT32 numerator = 0, denominator = 0;
+    if (FAILED(MFGetAttributeRatio(type, attribute, &numerator, &denominator)) || denominator == 0)
+        return 0;
+    return double(numerator) / denominator;
+}
+
+bool request_capture_rate(IMFMediaType* type, UINT32 fps) {
+    const auto nominal = media_type_rate(type, MF_MT_FRAME_RATE);
+    if (std::abs(nominal - fps) <= camera_rate_tolerance)
+        return true;
+
+    const auto minimum = media_type_rate(type, MF_MT_FRAME_RATE_RANGE_MIN);
+    const auto maximum = media_type_rate(type, MF_MT_FRAME_RATE_RANGE_MAX);
+    if (minimum <= 0 || maximum < minimum)
+        return false;
+    const auto supported = std::clamp(double(fps), minimum, maximum);
+    if (std::abs(supported - fps) > camera_rate_tolerance)
+        return false;
+    if (supported == fps)
+        return SUCCEEDED(MFSetAttributeRatio(type, MF_MT_FRAME_RATE, fps, 1));
+
+    UINT64 ratio = 0;
+    const auto& boundary = fps < minimum ? MF_MT_FRAME_RATE_RANGE_MIN : MF_MT_FRAME_RATE_RANGE_MAX;
+    return SUCCEEDED(type->GetUINT64(boundary, &ratio)) && SUCCEEDED(type->SetUINT64(MF_MT_FRAME_RATE, ratio));
+}
 
 /**
  * Checks an HRESULT, preserving its code and diagnosing camera access denial.
@@ -383,14 +414,15 @@ struct CaptureState {
     UINT32 height = 0;
 
     /**
-     * The negotiated RGB row stride, in bytes; negative indicates reverse row layout.
+     * The negotiated luma or BGRA row stride, in bytes.
      */
     LONG stride = 0;
+    bool nv12 = false;
     UINT32 native_rotation = MFVideoRotationFormat_0;
     UINT32 rotation = MFVideoRotationFormat_0;
 
     /**
-     * Reads and validates negotiated dimensions and RGB byte stride.
+     * Reads and validates negotiated dimensions, pixel format, and byte stride.
      */
     void type() {
         Com<IMFMediaType> output;
@@ -416,6 +448,14 @@ struct CaptureState {
             "Camera output dimensions exceed the frame budget"
         );
 
+        GUID subtype{};
+        checked(output->GetGUID(MF_MT_SUBTYPE, &subtype), "Read camera pixel format");
+        nv12 = subtype == MFVideoFormat_NV12;
+        require(
+            subtype == MFVideoFormat_RGB32 || (nv12 && width % 2 == 0 && height % 2 == 0),
+            XMAX_MEDIA_ERROR,
+            "Camera returned an unsupported pixel layout"
+        );
         rotation = MFGetAttributeUINT32(output.get(), MF_MT_VIDEO_ROTATION, native_rotation);
         UINT32 raw = 0;
 
@@ -424,7 +464,7 @@ struct CaptureState {
         else
             checked(
                 MFGetStrideForBitmapInfoHeader(
-                    MFVideoFormat_RGB32.Data1,
+                    subtype.Data1,
                     width,
                     &stride
                 ),
@@ -432,8 +472,48 @@ struct CaptureState {
             );
     }
 
+    void copy_nv12(IMFMediaBuffer* buffer, Frame& frame) {
+        const auto chroma_rows = height / 2;
+        frame.format = XMAX_NV12;
+        frame.strides[0] = frame.strides[1] = width;
+        frame.planes[0].resize(size_t(width) * height);
+        frame.planes[1].resize(size_t(width) * chroma_rows);
+
+        Com<IMF2DBuffer2> surface;
+        BYTE* pixels = nullptr;
+        BYTE* base = nullptr;
+        LONG pitch = stride;
+        DWORD size = 0;
+        const bool locked_2d = SUCCEEDED(buffer->QueryInterface(IID_IMF2DBuffer2, reinterpret_cast<void**>(surface.put()))) &&
+            SUCCEEDED(surface->Lock2DSize(MF2DBuffer_LockFlags_Read, &pixels, &pitch, &base, &size));
+        if (!locked_2d) {
+            checked(buffer->Lock(&pixels, nullptr, &size), "Lock NV12 camera buffer");
+            base = pixels;
+            Com<IMF2DBuffer> legacy_surface;
+            if (SUCCEEDED(buffer->QueryInterface(IID_IMF2DBuffer, reinterpret_cast<void**>(legacy_surface.put()))))
+                pitch = LONG(width); // IMFMediaBuffer::Lock returns the contiguous representation of a 2D buffer.
+        }
+
+        const auto offset = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(pixels) - reinterpret_cast<uintptr_t>(base));
+        const auto total_rows = height + chroma_rows;
+        const bool valid = pitch >= LONG(width) && offset <= size &&
+            uint64_t(pitch) * (total_rows - 1) + width <= size - offset;
+        if (valid) {
+            for (UINT32 y = 0; y < height; ++y)
+                std::memcpy(frame.planes[0].data() + size_t(y) * width, pixels + size_t(y) * pitch, width);
+            const auto* chroma = pixels + size_t(height) * pitch;
+            for (UINT32 y = 0; y < chroma_rows; ++y)
+                std::memcpy(frame.planes[1].data() + size_t(y) * width, chroma + size_t(y) * pitch, width);
+        }
+        if (locked_2d)
+            surface->Unlock2D();
+        else
+            buffer->Unlock();
+        require(valid, XMAX_MEDIA_ERROR, "NV12 camera buffer is shorter than its layout");
+    }
+
     /**
-     * Copies BGRA pixels using the native sample's row stride into an independently owned frame.
+     * Copies the negotiated pixels into an independently owned frame.
      *
      * @param[in] sample The borrowed native video sample, valid only during the callback or synchronous
      * copy.
@@ -452,6 +532,20 @@ struct CaptureState {
         frame.height = height;
         frame.timestamp_us =
             std::chrono::duration_cast<std::chrono::microseconds>(Clock::now().time_since_epoch()).count();
+        if (nv12)
+            copy_nv12(buffer.get(), frame);
+        else
+            copy_bgra(buffer.get(), frame);
+
+        const auto sample_rotation = MFGetAttributeUINT32(sample, MF_MT_VIDEO_ROTATION, rotation);
+        const auto angle = sample_rotation == MFVideoRotationFormat_90 ? 90u
+                         : sample_rotation == MFVideoRotationFormat_180 ? 180u
+                         : sample_rotation == MFVideoRotationFormat_270 ? 270u : 0u;
+        // Undo the camera's counter-clockwise rotation before delivering upright pixels.
+        return rotate_camera_frame(std::move(frame), angle);
+    }
+
+    void copy_bgra(IMFMediaBuffer* buffer, Frame& frame) {
         frame.strides[0] = size_t(width) * 4;
         frame.planes[0].resize(frame.strides[0] * height);
 
@@ -523,14 +617,14 @@ struct CaptureState {
         for (size_t i = 3; i < frame.planes[0].size(); i += 4)
             owned_pixels[i] = 255;
 
-        const auto sample_rotation = MFGetAttributeUINT32(sample, MF_MT_VIDEO_ROTATION, rotation);
-        if (sample_rotation == MFVideoRotationFormat_0)
-            return frame;
-        const auto angle = sample_rotation == MFVideoRotationFormat_90 ? 90u
-                         : sample_rotation == MFVideoRotationFormat_180 ? 180u
-                         : sample_rotation == MFVideoRotationFormat_270 ? 270u : 0u;
-        // Undo the camera's counter-clockwise rotation before delivering upright pixels.
-        return rotate_bgra(std::move(frame), angle);
+    }
+
+    void disconnected() {
+        if (stopping)
+            return;
+        stopping = true;
+        if (callbacks.failure)
+            callbacks.failure(Error(XMAX_MEDIA_ERROR, "The active camera was disconnected"));
     }
 
     void interrupt() {
@@ -719,12 +813,16 @@ class ReaderCallback final : public IMFSourceReaderCallback {
         IMFMediaEvent* media_event
     ) override {
         MediaEventType type = MEUnknown;
-        if (!media_event || FAILED(media_event->GetType(&type)) || type != MEVideoCaptureDevicePreempted)
+        if (!media_event || FAILED(media_event->GetType(&type)) ||
+            (type != MEVideoCaptureDevicePreempted && type != MEVideoCaptureDeviceRemoved))
             return S_OK;
         if (auto state = state_.lock()) {
             try {
                 std::lock_guard<std::mutex> lock(state->mutex);
-                state->interrupt();
+                if (type == MEVideoCaptureDeviceRemoved)
+                    state->disconnected();
+                else
+                    state->interrupt();
             } catch (...) {}
         }
         return S_OK;
@@ -745,7 +843,7 @@ class ReaderCallback final : public IMFSourceReaderCallback {
 };
 
 /**
- * Enumerates and captures Media Foundation cameras, delivering continuous BGRA frames.
+ * Enumerates and captures Media Foundation cameras, preferring NV12 output.
  */
 class MfCamera final : public CameraCapture {
 
@@ -801,7 +899,7 @@ class MfCamera final : public CameraCapture {
     }
 
     /**
-     * Opens the selected camera, negotiates BGRA output, and starts asynchronous reading.
+     * Opens the selected camera, negotiates its output, and starts asynchronous reading.
      *
      * @param[in] id The UTF-8 camera identifier; an empty string selects the default camera.
      * @param[in] format The requested pixel dimensions and frame rate, subject to the interface's format
@@ -915,79 +1013,65 @@ class MfCamera final : public CameraCapture {
             "Select camera video"
         );
 
-        Com<IMFMediaType> best;
-        uint64_t best_score = std::numeric_limits<uint64_t>::max();
-
+        struct CaptureMode {
+            Com<IMFMediaType> type;
+            bool wide;
+            uint64_t area;
+        };
+        std::vector<CaptureMode> modes;
         for (DWORD i = 0;; ++i) {
             Com<IMFMediaType> type;
-
-            if (FAILED(
-                    state_->reader->GetNativeMediaType(MF_SOURCE_READER_FIRST_VIDEO_STREAM, i, type.put())
-                ))
+            if (FAILED(state_->reader->GetNativeMediaType(MF_SOURCE_READER_FIRST_VIDEO_STREAM, i, type.put())))
                 break;
 
-            UINT32 w = 0, h = 0, numerator = 0, denominator = 1;
-
-            if (FAILED(MFGetAttributeSize(type.get(), MF_MT_FRAME_SIZE, &w, &h)) || w < 2 || h < 2 || w % 2 ||
-                h % 2 || uint64_t(w) * h > 2100000)
+            UINT32 width = 0, height = 0;
+            if (FAILED(MFGetAttributeSize(type.get(), MF_MT_FRAME_SIZE, &width, &height)) ||
+                width < 2 || height < 2 || width % 2 || height % 2)
                 continue;
 
-            MFGetAttributeRatio(
-                type.get(),
-                MF_MT_FRAME_RATE,
-                &numerator,
-                &denominator
-            );
+            const auto long_side = std::max(width, height);
+            const auto short_side = std::min(width, height);
+            if (long_side > 1920 || short_side > 1440 || !request_capture_rate(type.get(), format.fps))
+                continue;
 
-            const double fps = denominator ? double(numerator) / denominator : 0;
-            const auto score = uint64_t(
-                                   std::abs(int64_t(std::max(w, h)) - std::max(format.width, format.height)) +
-                                   std::abs(int64_t(std::min(w, h)) - std::min(format.width, format.height))
-                               ) +
-                               uint64_t(std::abs(fps - format.fps) * 100);
-
-            if (score < best_score) {
-                best_score = score;
-                best = std::move(type);
-            }
+            modes.push_back({std::move(type), long_side * 9 == short_side * 16, uint64_t(width) * height});
         }
+        std::stable_sort(modes.begin(), modes.end(), [](const auto& left, const auto& right) {
+            return left.wide != right.wide ? left.wide : left.area > right.area;
+        });
 
-        require(
-            best.get() != nullptr,
-            XMAX_MEDIA_ERROR,
-            "Camera has no supported capture format"
-        );
-        state_->native_rotation = MFGetAttributeUINT32(best.get(), MF_MT_VIDEO_ROTATION, MFVideoRotationFormat_0);
-        checked(
-            state_->reader->SetCurrentMediaType(
-                MF_SOURCE_READER_FIRST_VIDEO_STREAM,
-                nullptr,
-                best.get()
-            ),
-            "Select camera capture format"
-        );
+        bool configured = false;
+        for (const auto& mode : modes) {
+            const auto result = state_->reader->SetCurrentMediaType(
+                MF_SOURCE_READER_FIRST_VIDEO_STREAM, nullptr, mode.type.get()
+            );
+            if (result == E_ACCESSDENIED)
+                checked(result, "Select camera capture format");
+            if (FAILED(result))
+                continue;
+
+            Com<IMFMediaType> active;
+            checked(state_->reader->GetCurrentMediaType(MF_SOURCE_READER_FIRST_VIDEO_STREAM, active.put()),
+                    "Read selected camera capture format");
+            const auto active_rate = media_type_rate(active.get(), MF_MT_FRAME_RATE);
+            if (std::abs(active_rate - format.fps) > camera_rate_tolerance)
+                continue;
+
+            state_->native_rotation = MFGetAttributeUINT32(mode.type.get(), MF_MT_VIDEO_ROTATION, MFVideoRotationFormat_0);
+            configured = true;
+            break;
+        }
+        require(configured, XMAX_MEDIA_ERROR, "The camera does not support a compatible format at the requested frame rate");
 
         Com<IMFMediaType> output;
-        checked(
-            MFCreateMediaType(output.put()),
-            "Create RGB camera format"
-        );
-        output->SetGUID(
-            MF_MT_MAJOR_TYPE,
-            MFMediaType_Video
-        );
-        output->SetGUID(
-            MF_MT_SUBTYPE,
-            MFVideoFormat_RGB32
-        );
-        checked(
-            state_->reader->SetCurrentMediaType(
-                MF_SOURCE_READER_FIRST_VIDEO_STREAM,
-                nullptr,
-                output.get()
-            ),
-            "Negotiate BGRA camera output"
-        );
+        checked(MFCreateMediaType(output.put()), "Create camera output format");
+        checked(output->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video), "Set camera output type");
+        const auto negotiate = [&](const GUID& subtype) {
+            checked(output->SetGUID(MF_MT_SUBTYPE, subtype), "Set camera pixel format");
+            return state_->reader->SetCurrentMediaType(MF_SOURCE_READER_FIRST_VIDEO_STREAM, nullptr, output.get());
+        };
+        if (FAILED(negotiate(MFVideoFormat_NV12)))
+            checked(negotiate(MFVideoFormat_RGB32), "Negotiate camera output");
         state_->type();
         require(
             !cancel(),

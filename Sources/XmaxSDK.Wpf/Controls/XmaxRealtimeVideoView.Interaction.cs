@@ -96,7 +96,7 @@ public sealed partial class XmaxRealtimeVideoView
             return new(ActualWidth, ActualHeight, source?.Width ?? VideoWidth, source?.Height ?? VideoHeight, DisplayMirrored, ContentMode);
         }
     }
-    private RealtimeVideoTrack? ResultTrack => VideoSource as RealtimeVideoTrack;
+    private RealtimeVideoTrack? ResultTrack => Track;
 
     /// <inheritdoc />
     protected override void OnMouseLeftButtonDown(MouseButtonEventArgs args)

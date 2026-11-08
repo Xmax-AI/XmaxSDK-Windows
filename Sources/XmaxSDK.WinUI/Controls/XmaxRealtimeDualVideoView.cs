@@ -22,12 +22,12 @@ public sealed class XmaxRealtimeDualVideoView : Grid
     /// <summary>Identifies the local track dependency property.</summary>
     public static readonly DependencyProperty LocalTrackProperty = DependencyProperty.Register(
         nameof(LocalTrack), typeof(RealtimeVideoTrack), typeof(XmaxRealtimeDualVideoView),
-        new PropertyMetadata(null, (owner, args) => ((XmaxRealtimeDualVideoView)owner).localView.VideoSource = (RealtimeVideoTrack?)args.NewValue));
+        new PropertyMetadata(null, (owner, args) => ((XmaxRealtimeDualVideoView)owner).localView.Track = (RealtimeVideoTrack?)args.NewValue));
 
     /// <summary>Identifies the remote track dependency property.</summary>
     public static readonly DependencyProperty RemoteTrackProperty = DependencyProperty.Register(
         nameof(RemoteTrack), typeof(RealtimeVideoTrack), typeof(XmaxRealtimeDualVideoView),
-        new PropertyMetadata(null, (owner, args) => ((XmaxRealtimeDualVideoView)owner).remoteView.VideoSource = (RealtimeVideoTrack?)args.NewValue));
+        new PropertyMetadata(null, (owner, args) => ((XmaxRealtimeDualVideoView)owner).remoteView.Track = (RealtimeVideoTrack?)args.NewValue));
 
     /// <summary>Identifies the shared video content mode dependency property.</summary>
     public static readonly DependencyProperty ContentModeProperty = DependencyProperty.Register(

@@ -900,6 +900,24 @@ xmax_result XMAX_CALL xmax_client_list_cameras(
     );
 }
 
+xmax_result XMAX_CALL xmax_media_list_cameras(xmax_camera_list* devices) {
+    if (devices)
+        *devices = nullptr;
+    return protect(__func__, [&] {
+        handle(devices);
+        *devices = new xmax_camera_list_impl{make_camera_capture()->devices()};
+    });
+}
+
+xmax_result XMAX_CALL xmax_media_list_microphones(xmax_camera_list* devices) {
+    if (devices)
+        *devices = nullptr;
+    return protect(__func__, [&] {
+        handle(devices);
+        *devices = new xmax_camera_list_impl{list_microphone_devices()};
+    });
+}
+
 /**
  * Returns the number of devices in a camera enumeration snapshot.
  *
@@ -1185,7 +1203,7 @@ xmax_result XMAX_CALL xmax_realtime_list_cameras(
  * Switches the active camera while retaining the connection and restoring generation conditions.
  *
  * @param[in] r A non-null realtime controller handle.
- * @param[in] device A non-null UTF-8 device identifier; empty selects the default camera.
+ * @param[in] device The non-null UTF-8 identifier of an enumerated camera.
  *
  * @return XMAX_OK on success, or a negative error code on failure. Use xmax_last_error for details.
  *
@@ -2612,7 +2630,7 @@ xmax_result XMAX_CALL xmax_external_frame_sink_report_error(
             if (auto session = sink->session.lock())
                 session->external_failure(
                     sink->binding,
-                    Error{error->code, error->message, error->api_code, error->http_status}
+                    Error{XMAX_MEDIA_ERROR, error->message, error->api_code, error->http_status}
                 );
         }
     );
@@ -2786,6 +2804,47 @@ xmax_result XMAX_CALL xmax_resolve_downlink_format(
         handle(source);
         handle(resolved);
         *resolved = MediaService::target(*source, maximum_width, maximum_height);
+    });
+}
+
+xmax_result XMAX_CALL xmax_resolve_media_size(
+    const char* model,
+    const xmax_media_size* source,
+    int32_t camera,
+    xmax_media_size* resolved
+) {
+    return protect(__func__, [&] {
+        handle(source);
+        handle(resolved);
+        require(camera == 0 || camera == 1, XMAX_INVALID_ARGUMENT, "Invalid media source kind");
+        RealtimeModelDefinition::parse(model ? model : "x2.1");
+        *resolved = MediaService::media_size(*source, camera == 1, RealtimeModelDefinition::capabilities);
+    });
+}
+
+xmax_result XMAX_CALL xmax_resolve_generation_size(
+    const char* model,
+    const xmax_media_size* source,
+    xmax_media_size* resolved
+) {
+    return protect(__func__, [&] {
+        handle(source);
+        handle(resolved);
+        RealtimeModelDefinition::parse(model ? model : "x2.1");
+        *resolved = MediaService::generation_size(*source, RealtimeModelDefinition::capabilities);
+    });
+}
+
+xmax_result XMAX_CALL xmax_resolve_target_size(
+    const xmax_media_size* source,
+    const xmax_media_size* maximum,
+    xmax_media_size* resolved
+) {
+    return protect(__func__, [&] {
+        handle(source);
+        handle(maximum);
+        handle(resolved);
+        *resolved = MediaService::target_size(*source, *maximum);
     });
 }
 

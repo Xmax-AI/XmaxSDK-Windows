@@ -38,7 +38,7 @@ public sealed partial class XmaxRealtimeVideoView
         catch (ObjectDisposedException) { }
         catch (Exception failure)
         {
-            if (IsLoaded && ReferenceEquals(VideoSource, track)) PlaybackFailed?.Invoke(failure);
+            if (IsLoaded && ReferenceEquals(Track, track)) PlaybackFailed?.Invoke(failure);
         }
     }
 

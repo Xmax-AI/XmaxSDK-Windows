@@ -25,6 +25,14 @@ public sealed class XmaxException(
 ) : Exception(message)
 {
 
+    /// <summary>Creates an SDK failure from a typed category.</summary>
+    public XmaxException(XmaxErrorCode code, string message, int apiCode = 0, int httpStatus = 0)
+        : this((int)code, message, apiCode, httpStatus) { }
+
+    /// <summary>Gets the typed category. Unrecognized native failures are internal errors.</summary>
+    public XmaxErrorCode Code { get; } = Enum.IsDefined((XmaxErrorCode)result)
+        ? (XmaxErrorCode)result : XmaxErrorCode.InternalError;
+
     /// <summary>
     /// Gets the native SDK result code.
     /// </summary>

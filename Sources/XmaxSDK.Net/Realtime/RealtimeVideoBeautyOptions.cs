@@ -25,7 +25,7 @@ public sealed record RealtimeVideoBeautyOptions(
     {
         foreach (float value in new[] { Smoothness, Lightening, Sharpness, Redness })
             if (!float.IsFinite(value) || value < 0 || value > 1)
-                throw new XmaxException(-1, "Beauty strengths must be finite numbers from 0 to 1");
+                throw new XmaxException(XmaxErrorCode.InvalidConfiguration, "Beauty strengths must be finite numbers from 0 to 1");
     }
     internal unsafe xmax_realtime_video_beauty_options Native => new()
     {

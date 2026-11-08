@@ -1,3 +1,13 @@
+//
+//  RemoteMediaRegistration.cs
+//  XmaxSDK
+//
+//  Author: 翁跃庭 (Yueting Weng)
+//  GitHub: https://github.com/Xmax-AI/XmaxSDK-Windows
+//
+//  Copyright (c) 2026 XMAX.AI PTE. LTD.
+//
+
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using Xmax.SDK.Interop;
@@ -6,9 +16,9 @@ namespace Xmax.SDK.Runtime;
 
 internal static unsafe class RemoteMediaRegistration
 {
-    private sealed record Context(Action<XmaxMediaFrame> Receive, Action<Exception> Failure);
+    private sealed record Context(Action<RealtimeMediaFrame> Receive, Action<Exception> Failure);
 
-    internal static void Set(nint realtime, Action<XmaxMediaFrame>? listener, Action<Exception> failure)
+    internal static void Set(nint realtime, Action<RealtimeMediaFrame>? listener, Action<Exception> failure)
     {
         if (listener is null)
         { NativeError.Check(NativeMethods.xmax_realtime_set_remote_media_frame_listener(realtime, null)); return; }
@@ -27,13 +37,13 @@ internal static unsafe class RemoteMediaRegistration
     private static void Receive(void* userData, nint borrowed)
     {
         Context? context = null;
-        XmaxMediaFrame? packet = null;
+        RealtimeMediaFrame? packet = null;
         try
         {
             context = (Context)GCHandle.FromIntPtr((nint)userData).Target!;
             nint retained = 0;
             NativeError.Check(NativeMethods.xmax_media_frame_retain(borrowed, &retained));
-            packet = new(retained);
+            packet = RealtimeMediaFrame.TakeOwnership(retained);
             context.Receive(packet);
             packet = null; // The application now owns this retained packet.
         }

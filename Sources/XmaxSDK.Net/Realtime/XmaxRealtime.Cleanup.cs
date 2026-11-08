@@ -12,7 +12,7 @@ using Xmax.SDK.Interop;
 
 namespace Xmax.SDK;
 
-public sealed partial class XmaxRealtime
+internal sealed partial class XmaxRealtime
 {
     /// <summary>
     /// Disconnects the server session and RTC, clears generation conditions, and retains local preview.

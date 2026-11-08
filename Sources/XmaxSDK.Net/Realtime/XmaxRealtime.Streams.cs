@@ -14,7 +14,7 @@ using Xmax.SDK.Interop;
 
 namespace Xmax.SDK;
 
-public sealed partial class XmaxRealtime
+internal sealed partial class XmaxRealtime
 {
     /// <summary>Connects a local stream owned by this controller and returns the result stream.</summary>
     /// <param name="localStream">The current local media stream.</param>

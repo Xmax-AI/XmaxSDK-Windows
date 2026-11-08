@@ -11,9 +11,8 @@
 namespace Xmax.SDK;
 
 /// <summary>A realtime video binding with stable identity and current media metadata.</summary>
-public sealed class RealtimeVideoTrack : IXmaxVideoSource
+public sealed class RealtimeVideoTrack
 {
-    private readonly IXmaxVideoSource source;
     private readonly XmaxRealtime owner;
     private readonly ulong revision;
     private readonly bool cameraPreview;
@@ -26,11 +25,10 @@ public sealed class RealtimeVideoTrack : IXmaxVideoSource
     internal long InteractionRevision => Interlocked.Read(ref interactionRevision);
     internal void ResetInteraction() => Interlocked.Increment(ref interactionRevision);
 
-    internal RealtimeVideoTrack(XmaxRealtime owner, string id, bool remote, IXmaxVideoSource source,
+    internal RealtimeVideoTrack(XmaxRealtime owner, string id, bool remote,
         ulong revision, bool cameraPreview)
     {
         this.owner = owner;
-        this.source = source;
         this.revision = revision;
         this.cameraPreview = cameraPreview;
         Id = id;
@@ -60,23 +58,17 @@ public sealed class RealtimeVideoTrack : IXmaxVideoSource
     internal void UpdateFormat(VideoFormat? value) { lock (metadata) format = value; }
     internal void UpdateDevice(CameraDevice? value) { lock (metadata) device = value; }
 
-    /// <inheritdoc />
-    public XmaxVideoFrame? TryAcquireFrame()
-    {
-        var frame = source.TryAcquireFrame();
-        if (frame is not null && IsRemote)
-            ObserveFrame(frame.Width, frame.Height);
-        return frame;
-    }
+    /// <summary>Acquires the latest owned frame for this track, if one is available.</summary>
+    public XmaxVideoFrame? TryAcquireFrame() => TryAcquireFrame(out _);
 
     /// <summary>Acquires a frame and reports when the result binding invalidated previously presented pixels.</summary>
     /// <param name="contentRevision">The current content revision, including when no frame is available.</param>
     /// <returns>The latest owned frame, or null when no frame is pending.</returns>
-    public XmaxVideoFrame? TryAcquireFrame(out ulong contentRevision)
+    internal XmaxVideoFrame? TryAcquireFrame(out ulong contentRevision)
     {
         contentRevision = 0;
         if (!IsRemote)
-            return TryAcquireFrame();
+            return owner.AcquireLocalFrame(revision);
         var frame = owner.AcquireResultFrame(revision, out contentRevision);
         if (frame is not null)
             ObserveFrame(frame.Width, frame.Height);
@@ -88,9 +80,6 @@ public sealed class RealtimeVideoTrack : IXmaxVideoSource
     public Task NotifyPreviewAttachedAsync() => cameraPreview
         ? owner.CompleteLocalCameraPreviewAsync(revision)
         : Task.CompletedTask;
-
-    /// <summary>Reports attachment from a renderer that observes the first presented camera frame.</summary>
-    public Task NotifyPreviewPresentedAsync() => NotifyPreviewAttachedAsync();
 
     internal void ObserveFrame(uint width, uint height, uint? framesPerSecond = null)
     {
@@ -111,7 +100,7 @@ public sealed class RealtimeVideoTrack : IXmaxVideoSource
     /// <param name="mirrored">Whether the displayed frame is horizontally mirrored.</param>
     /// <param name="mode">The aspect ratio layout used to display the video.</param>
     /// <returns>Whether the active result binding accepted the sample.</returns>
-    public bool TrySubmitInteraction(
+    internal bool TrySubmitInteraction(
         ReadOnlySpan<TrajectoryPoint> points,
         double viewportWidth,
         double viewportHeight,

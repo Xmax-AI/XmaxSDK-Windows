@@ -6,7 +6,7 @@ namespace XLab.Shared.ViewModels;
 internal sealed partial class MainViewModel
 {
     private RemoteMediaRecorder? recorder, completedRecording;
-    private XmaxRealtime? recordingSession;
+    private IXmaxRealtimeManaging? recordingSession;
     private Task? recordingRegistration, recordingStop;
     private bool savingRecording;
     private string? recordingPath;
@@ -71,7 +71,7 @@ internal sealed partial class MainViewModel
         return finished.Task;
     }
 
-    private async Task FinishRecordingAsync(RemoteMediaRecorder stopped, XmaxRealtime? target, Task? registration,
+    private async Task FinishRecordingAsync(RemoteMediaRecorder stopped, IXmaxRealtimeManaging? target, Task? registration,
         TaskCompletionSource finished)
     {
         try

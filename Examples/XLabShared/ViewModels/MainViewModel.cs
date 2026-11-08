@@ -21,9 +21,9 @@ internal sealed partial class MainViewModel : INotifyPropertyChanged, IAsyncDisp
 {
     private readonly IUiDispatcher dispatcher;
     private readonly IThumbnailLoader thumbnails;
-    private XmaxRealtime? session;
+    private IXmaxRealtimeManaging? session;
     private RealtimeMediaStream? localStream;
-    internal XmaxRealtime? Session => session;
+    internal IXmaxRealtimeManaging? Session => session;
     private CancellationTokenSource? operationCancellation;
     private int revision;
     private int foregroundOperations;
@@ -106,8 +106,7 @@ internal sealed partial class MainViewModel : INotifyPropertyChanged, IAsyncDisp
     }
     public async Task RefreshCamerasAsync()
     {
-        using var client = new XmaxClient();
-        var devices = await client.ListCamerasAsync();
+        var devices = await MediaDevices.ListCameraDevicesAsync();
         string? previous = SelectedCamera?.Id ?? CameraSelectionStore.Load();
         Cameras.Clear();
         foreach (var item in devices) Cameras.Add(item);
@@ -131,7 +130,7 @@ internal sealed partial class MainViewModel : INotifyPropertyChanged, IAsyncDisp
         await StopAsync();
         int current = ++revision;
         using var client = new XmaxClient(new() { ApiKey = ApiKey, Environment = ServiceEnvironment });
-        var next = client.CreateRealtime(new() { Model = SelectedModel });
+        var next = client.CreateRealtimeManager(new() { Model = SelectedModel });
         session = next;
         sessionKey = ApiKey; sessionCamera = SelectedCamera.Id; sessionFormat = SelectedFormat; sessionModel = SelectedModel;
         LocalVideo = RemoteVideo = null;
@@ -146,8 +145,8 @@ internal sealed partial class MainViewModel : INotifyPropertyChanged, IAsyncDisp
         });
         await next.SetUplinkVideoStatisticsListenerAsync(stats => { if (current == revision) ReceiveUplinkStatistics(stats); });
         await next.SetDownlinkVideoStatisticsListenerAsync(stats => { if (current == revision) ReceiveDownlinkStatistics(stats); });
-        next.EventReceived += item => dispatcher.InvokeAsync(() => { if (current == revision) Receive(item); });
-        next.CallbackFaulted += failure => dispatcher.InvokeAsync(() => { if (current == revision) ReportError(failure); });
+        await next.SetLaunchTimingListenerAsync(timing => { if (current == revision) ReceiveLaunchTiming(timing); });
+        await next.SetNetworkQualityListenerAsync(quality => { if (current == revision) ReceiveNetworkQuality(quality); });
         RefreshCommands();
         Status = "正在准备摄像头…";
         var preparation = new CancellationTokenSource();
@@ -159,7 +158,7 @@ internal sealed partial class MainViewModel : INotifyPropertyChanged, IAsyncDisp
             preparationToken.ThrowIfCancellationRequested();
             var cameraStream = await next.CreateLocalCameraStreamAsync(
                 videoFormat: SelectedFormat,
-                deviceId: SelectedCamera.Id,
+                camera: RealtimeCamera.Device(SelectedCamera.Id),
                 mirror: true,
                 microphone: Microphone ? RealtimeMicrophone.SystemDefault : RealtimeMicrophone.Disabled,
                 cancellationToken: preparationToken
@@ -221,14 +220,6 @@ internal sealed partial class MainViewModel : INotifyPropertyChanged, IAsyncDisp
         await completion.Task;
     }
 
-    private void Receive(RealtimeEvent item)
-    {
-        if (item.Type == RealtimeEventType.State) return;
-        UpdateMetricRows(item);
-        if (item.Type == RealtimeEventType.Error) Error = $"{item.Message} ({item.Code}, HTTP {item.HttpStatus})";
-        else if (item.Type == RealtimeEventType.Timing && item.Code >= 0)
-            Metrics = $"首帧 {item.FirstFrameMilliseconds:F0} ms  ·  总启动 {item.TotalMilliseconds:F0} ms";
-    }
     private async Task GuardAsync(Func<Task> operation)
     {
         Busy = ++foregroundOperations > 0;

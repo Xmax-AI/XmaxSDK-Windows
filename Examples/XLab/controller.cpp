@@ -180,12 +180,8 @@ void XLabController::refreshCameras() {
     if (active || busy || preview)
         return;
     error.clear();
-    SdkHandles handles;
-    const xmax_client_config config{sizeof(config), XMAX_ABI_VERSION, "", nullptr, 15000};
-    auto message = sdkError(xmax_client_create(&config, &handles.client));
     xmax_camera_list list = nullptr;
-    if (message.isEmpty())
-        message = sdkError(xmax_client_list_cameras(handles.client, &list));
+    auto message = sdkError(xmax_media_list_cameras(&list));
     const std::unique_ptr<xmax_camera_list_impl, decltype(&xmax_camera_list_release)> owned(
         list, xmax_camera_list_release);
     QVariantList cameras;
@@ -721,9 +717,6 @@ void XLabController::tick() {
                 remoteReady = false;
                 updated = true;
             }
-        } else if (e.type == XMAX_EVENT_ERROR) {
-            error = QString::fromUtf8(e.message);
-            updated = true;
         }
         if (e.type == XMAX_EVENT_STATISTICS) {
             const QString prefix = e.direction ? "down" : "up";

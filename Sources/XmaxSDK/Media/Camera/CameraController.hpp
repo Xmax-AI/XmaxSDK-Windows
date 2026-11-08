@@ -21,7 +21,7 @@
 namespace xmax::detail {
 
 /**
- * Starts native capture, preserves actual frame dimensions and format, and waits for the first real frame.
+ * Owns native capture, frame preparation, and first-frame readiness.
  */
 class CameraController {
 
@@ -51,9 +51,8 @@ class CameraController {
     }
 
     /**
-     * Starts native capture and delivers frames at the requested dimensions, waiting for the first frame,
-     * failure, or cancellation. Startup failures are thrown to the caller; only failures after successful
-     * startup are delivered through the failure callback.
+     * Starts native capture and delivers frames at the requested dimensions.
+     * When first-frame waiting is disabled, a first-frame timeout is delivered through the failure callback.
      *
      * @param[in] device The UTF-8 camera identifier; an empty string selects the default camera.
      * @param[in] format The requested pixel dimensions and frame rate, subject to the interface's format
@@ -66,7 +65,8 @@ class CameraController {
         const std::string& device,
         xmax_video_format format,
         CaptureCallbacks output,
-        const Cancel& cancel
+        const Cancel& cancel,
+        bool wait_for_first_frame = true
     );
 
     /**
@@ -84,11 +84,16 @@ class CameraController {
 
     /** Runs native start and stop on the same thread to preserve Media Foundation's COM ownership. */
     void capture_loop();
+    void check_first_frame_deadline();
+
+    // Accessed only on the capture worker.
+    std::optional<Clock::time_point> first_frame_deadline_;
 
     struct Recovery {
         std::string device;
         xmax_video_format format;
         CaptureCallbacks callbacks;
+        std::function<void(Error)> failure;
         std::atomic<bool> cancelled{false};
         bool retrying = false;
         bool interrupted = false;
@@ -108,7 +113,8 @@ class CameraController {
      */
     void report_failure(
         Error error,
-        const std::function<void(Error)>& receiver
+        const std::function<void(Error)>& receiver,
+        bool first_frame_pending = false
     );
 
     /**

@@ -606,7 +606,8 @@ class AgoraRtc final : public Rtc,
     void end_generation() override {
         std::lock_guard<std::mutex> lock(metadata_mutex_);
         ++result_video_revision_;
-        generation_confirmed_ = false;
+        if (std::exchange(generation_confirmed_, false))
+            clear_downlink_statistics();
         generation_result_lost_ = false;
     }
 
@@ -1000,6 +1001,11 @@ class AgoraRtc final : public Rtc,
                 callbacks_.video_unpublished();
             changed_.notify_all();
         }
+        clear_downlink_statistics();
+    }
+
+    /** Clears the published result statistics before another generation can publish frames. */
+    void clear_downlink_statistics() {
         if (callbacks_.statistics) {
             xmax_video_statistics value{};
             value.struct_size = sizeof(value);

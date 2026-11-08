@@ -12,58 +12,37 @@ using Xmax.SDK.Interop;
 
 namespace Xmax.SDK;
 
-/// <summary>Calculates media and generation formats using the realtime model's rules.</summary>
-public sealed class XmaxMediaService
+internal sealed class XmaxMediaService(RealtimeModel model) : IMediaServicing
 {
-    /// <summary>Gets the realtime model behind this service.</summary>
-    public ModelInfo Model { get; }
+    public RealtimeModel Model { get; } = model;
 
-    internal XmaxMediaService(ModelInfo model) => Model = model;
-
-    /// <summary>Validates a camera preset or normalizes external media to the model area and alignment.</summary>
-    public unsafe VideoFormat ResolveMediaSize(
-        VideoFormat source,
-        RealtimeMediaSource mediaSource = RealtimeMediaSource.External
-    )
+    public unsafe MediaSize ResolveMediaSize(MediaSize size, RealtimeMediaSource source)
     {
-        int camera = mediaSource switch
+        int camera = source switch
         {
             RealtimeMediaSource.Camera => 1,
             RealtimeMediaSource.External or RealtimeMediaSource.Video or RealtimeMediaSource.Image => 0,
-            _ => throw new ArgumentOutOfRangeException(nameof(mediaSource))
+            _ => throw new ArgumentOutOfRangeException(nameof(source))
         };
-        using var model = new Utf8(Model.Identifier);
-        var input = source.Native;
-        xmax_video_format result;
-        NativeError.Check(NativeMethods.xmax_resolve_media_format(model.Pointer, &input, camera, &result));
-        return VideoFormat.From(result);
+        using var modelName = new Utf8(XmaxClient.GetModelIdentifier(Model));
+        var input = size.Native;
+        NativeError.Check(NativeMethods.xmax_resolve_media_size(modelName.Pointer, &input, camera, &input));
+        return MediaSize.From(input);
     }
 
-    /// <summary>Selects the model generation canvas closest to the media aspect ratio.</summary>
-    public unsafe VideoFormat ResolveGenerationSize(VideoFormat source)
+    public unsafe MediaSize ResolveGenerationSize(MediaSize size)
     {
-        using var model = new Utf8(Model.Identifier);
-        var input = source.Native;
-        xmax_video_format result;
-        NativeError.Check(NativeMethods.xmax_resolve_generation_format(model.Pointer, &input, &result));
-        return VideoFormat.From(result);
+        using var modelName = new Utf8(XmaxClient.GetModelIdentifier(Model));
+        var input = size.Native;
+        NativeError.Check(NativeMethods.xmax_resolve_generation_size(modelName.Pointer, &input, &input));
+        return MediaSize.From(input);
     }
 
-    /// <summary>Resolves return dimensions within the tier limits.</summary>
-    public unsafe VideoFormat ResolveTargetSize(
-        VideoFormat source,
-        double maximumWidth,
-        double maximumHeight
-    )
+    public unsafe MediaSize ResolveTargetSize(MediaSize source, MediaSize maximumSize)
     {
         var input = source.Native;
-        xmax_video_format result;
-        NativeError.Check(NativeMethods.xmax_resolve_downlink_format(
-            &input,
-            maximumWidth,
-            maximumHeight,
-            &result
-        ));
-        return VideoFormat.From(result);
+        var maximum = maximumSize.Native;
+        NativeError.Check(NativeMethods.xmax_resolve_target_size(&input, &maximum, &input));
+        return MediaSize.From(input);
     }
 }

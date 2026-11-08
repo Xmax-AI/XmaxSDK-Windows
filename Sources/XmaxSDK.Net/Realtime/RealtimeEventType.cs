@@ -13,7 +13,7 @@ namespace Xmax.SDK;
 /// <summary>
 /// The category determining how to interpret a realtime event.
 /// </summary>
-public enum RealtimeEventType
+internal enum RealtimeEventType
 {
 
     /// <summary>

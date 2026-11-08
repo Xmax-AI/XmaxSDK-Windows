@@ -111,7 +111,11 @@ void camera_stream_generation_lifecycle() {
         10s,
         [] { return std::make_unique<Camera>(); },
         {},
-        [&](const std::string& device) { validated.push_back(device); },
+        [&](const std::string& device) {
+            if (device == "missing")
+                throw Error(XMAX_MEDIA_ERROR, "The requested microphone is unavailable");
+            validated.push_back(device);
+        },
         microphone.factory()
     );
     sdk.adaptive(false);
@@ -170,6 +174,8 @@ void camera_stream_generation_lifecycle() {
         }
     }
     CHECK(cleared);
+    expect_error(XMAX_MEDIA_ERROR, [&] { sdk.switch_microphone("missing"); });
+    CHECK(!sdk.microphone_enabled() && !rtc->audio_published);
     sdk.switch_microphone("");
     rtc->fail_audio_update = true;
     expect_error(XMAX_RTC_ERROR, [&] { sdk.set_microphone_enabled(true); });
@@ -259,9 +265,10 @@ void camera_stream_generation_lifecycle() {
     CHECK(Clock::now() - switching >= 500ms);
     CHECK(sdk.local_stream_revision() == local && sdk.acquire_local_frame(local));
     CHECK(sdk.acquire_result(remote, content_revision));
-    expect_error(XMAX_MEDIA_ERROR, [&] { sdk.switch_camera("missing"); });
+    expect_error(XMAX_MEDIA_ERROR, [&] { sdk.switch_camera(""); });
     CHECK(sdk.state_snapshot().state == XMAX_READY && !sdk.acquire_frame(remote));
-    CHECK(sdk.local_stream_revision() == local && sdk.acquire_local_frame(local));
+    CHECK(sdk.local_stream_revision() == local && sdk.read_video_track(local, true, format, nullptr, &device));
+    CHECK(device && device->id == "camera-two");
     sdk.stop_media(XmaxRealtimeManager::StopMediaSource::Camera);
     CHECK(!sdk.acquire_local_frame(local) && sdk.local_stream_revision() != local);
     expect_error(XMAX_INVALID_STATE, [&] { sdk.generate(&generate, local); });

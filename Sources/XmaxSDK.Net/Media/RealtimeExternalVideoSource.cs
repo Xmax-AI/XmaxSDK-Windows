@@ -12,9 +12,9 @@ namespace Xmax.SDK;
 
 /// <summary>Supplies app-owned video and optional PCM to a realtime stream.</summary>
 /// <remarks>
-/// The app owns its devices, permissions and frame pacing. Lifecycle callbacks may run on a
-/// worker thread. Marshal device work to the required thread and avoid calling back into
-/// controller lifecycle operations from these callbacks.
+/// Lifecycle methods and source properties run on the controller's UI context when available.
+/// Frames can be submitted from a capture worker. Do not reenter controller lifecycle operations
+/// from these callbacks.
 /// </remarks>
 public interface IRealtimeExternalVideoSource
 {
@@ -29,7 +29,7 @@ public interface IRealtimeExternalVideoSource
     /// <param name="cancellationToken">Cancels source startup.</param>
     /// <returns>A task that completes once the capture callback is installed.</returns>
     Task StartAsync(
-        ExternalFrameSink sink,
+        IRealtimeExternalFrameSink sink,
         CancellationToken cancellationToken
     );
 

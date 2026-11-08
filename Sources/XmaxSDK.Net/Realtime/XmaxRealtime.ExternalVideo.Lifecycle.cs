@@ -12,7 +12,7 @@ using Xmax.SDK.Interop;
 
 namespace Xmax.SDK;
 
-public sealed partial class XmaxRealtime
+internal sealed partial class XmaxRealtime
 {
     private readonly SemaphoreSlim localMediaGate = new(1);
     private readonly object externalStartupGate = new();
@@ -102,7 +102,7 @@ public sealed partial class XmaxRealtime
 
     private async Task DetachInactiveExternalSourceAsync()
     {
-        if (externalAttachment is { } attachment && !attachment.Sink.IsActive)
+        if (externalAttachment is { } attachment && !attachment.Sink.IsRequestingFrames)
             await DetachExternalSourceAsync().ConfigureAwait(false);
     }
 
@@ -112,10 +112,14 @@ public sealed partial class XmaxRealtime
         Volatile.Write(ref externalAttachment, null);
         if (attachment is null)
             return;
-        try { await attachment.Source.StopAsync().ConfigureAwait(false); }
+        try { await ExternalSourceDispatch.InvokeAsync(attachment.Context, attachment.Source.StopAsync).ConfigureAwait(false); }
         catch (Exception error) { NotifyCallbackFault(error); }
         finally { attachment.Sink.Dispose(); }
     }
 
-    private sealed record ExternalAttachment(IRealtimeExternalVideoSource Source, ExternalFrameSink Sink);
+    private sealed record ExternalAttachment(
+        IRealtimeExternalVideoSource Source,
+        ExternalFrameSink Sink,
+        SynchronizationContext? Context
+    );
 }

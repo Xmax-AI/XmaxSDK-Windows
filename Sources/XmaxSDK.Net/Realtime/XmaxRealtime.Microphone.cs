@@ -12,12 +12,12 @@ using Xmax.SDK.Interop;
 
 namespace Xmax.SDK;
 
-public sealed partial class XmaxRealtime
+internal sealed partial class XmaxRealtime
 {
     /// <summary>Lists recording endpoints without starting capture or requesting permission.</summary>
     public Task<IReadOnlyList<MicrophoneDevice>> ListMicrophoneDevicesAsync(
         CancellationToken cancellationToken = default
-    ) => operations.Run(EnumerateMicrophones, cancellationToken);
+    ) => operations.Run(_ => MediaDevices.ReadMicrophoneSnapshot(), cancellationToken);
 
     /// <summary>Changes the selected camera microphone without restarting video generation.</summary>
     /// <param name="deviceId">The Windows recording endpoint ID, or null to follow the default.</param>
@@ -30,22 +30,6 @@ public sealed partial class XmaxRealtime
 
     /// <summary>Reads whether the camera stream has enabled microphone capture.</summary>
     public Task<bool> GetMicrophoneEnabledAsync() => operations.Run(ReadMicrophoneEnabled);
-
-    private static unsafe IReadOnlyList<MicrophoneDevice> EnumerateMicrophones(nint realtime)
-    {
-        nint value = 0;
-        NativeError.Check(NativeMethods.xmax_realtime_list_microphones(realtime, &value));
-        using var list = new NativeHandle(value, HandleKind.CameraList);
-        var result = new List<MicrophoneDevice>();
-        nuint count = NativeMethods.xmax_camera_list_count(value);
-        for (nuint index = 0; index < count; ++index)
-        {
-            var info = new xmax_camera_info { struct_size = (uint)sizeof(xmax_camera_info) };
-            NativeError.Check(NativeMethods.xmax_camera_list_get(value, index, &info));
-            result.Add(new(NativeError.Text(info.id), NativeError.Text(info.name), info.is_default != 0));
-        }
-        return result.AsReadOnly();
-    }
 
     private static unsafe void SwitchMicrophone(nint value, string? deviceId)
     {

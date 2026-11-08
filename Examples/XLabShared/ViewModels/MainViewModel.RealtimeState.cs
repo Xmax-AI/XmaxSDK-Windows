@@ -63,7 +63,7 @@ internal sealed partial class MainViewModel
         if (!RemoteReady && IsRecording) _ = FinishInterruptedRecordingAsync();
     }
 
-    private async Task CloseRealtimeAsync(XmaxRealtime previous)
+    private async Task CloseRealtimeAsync(IXmaxRealtimeManaging previous)
     {
         var idle = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         int closingRevision = revision;

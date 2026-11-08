@@ -12,7 +12,7 @@ using Xmax.SDK.Interop;
 
 namespace Xmax.SDK;
 
-public sealed partial class XmaxRealtime
+internal sealed partial class XmaxRealtime
 {
     /// <summary>Starts an app-owned video source and returns a local stream for preview.</summary>
     /// <param name="source">The external source providing video and optional PCM.</param>
@@ -31,6 +31,7 @@ public sealed partial class XmaxRealtime
     )
     {
         ArgumentNullException.ThrowIfNull(source);
+        var context = CallbackContext;
         await localMediaGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -46,18 +47,20 @@ public sealed partial class XmaxRealtime
             try
             {
                 await DetachInactiveExternalSourceAsync().ConfigureAwait(false);
-                var format = source.VideoFormat;
-                var hasAudio = source.HasAudio;
+                var (format, hasAudio) = await ExternalSourceDispatch.InvokeAsync(
+                    context,
+                    () => Task.FromResult((source.VideoFormat, source.HasAudio))
+                ).ConfigureAwait(false);
                 var sink = await operations.Run(
                     value => BindExternalStream(value, format, videoFormat, hasAudio),
                     startup.Token
                 ).ConfigureAwait(false);
-                var attachment = new ExternalAttachment(source, sink);
+                var attachment = new ExternalAttachment(source, sink, context);
                 Volatile.Write(ref externalAttachment, attachment);
                 try
                 {
                     startup.Token.ThrowIfCancellationRequested();
-                    await source.StartAsync(sink, startup.Token).ConfigureAwait(false);
+                    await ExternalSourceDispatch.InvokeAsync(context, () => source.StartAsync(sink, startup.Token)).ConfigureAwait(false);
                     startup.Token.ThrowIfCancellationRequested();
                     var stream = await operations.Run(value =>
                     {

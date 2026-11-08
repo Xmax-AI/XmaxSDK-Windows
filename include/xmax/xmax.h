@@ -446,7 +446,7 @@ typedef struct xmax_client_config {
  * Video dimensions and frame rate for external input or camera output.
  *
  * X2.1 camera targets support 1920x1080, 1080x1920, 1408x1408, 1152x1536 and 1536x1152
- * at [1, 60] fps; dimensions must match one target exactly.
+ * at a positive frame rate supported by the capture device; dimensions must match one target exactly.
  * External input accepts even dimensions in [4, 8192] and a positive nominal frame rate.
  * Resolved external processing dimensions remain within the model pixel budget.
  * Camera frames are center-cropped and scaled to the configured dimensions for preview and publication.
@@ -469,6 +469,13 @@ typedef struct xmax_video_format {
     uint32_t fps;
 
 } xmax_video_format;
+
+/** Media dimensions in pixels, independent of frame rate and encoding. */
+typedef struct xmax_media_size {
+    double width;
+    double height;
+} xmax_media_size;
+
 
 /**
  * A read-only video-plane view with format, monotonic timestamp, byte strides, and accessible sizes.
@@ -2220,6 +2227,18 @@ XMAX_API xmax_result XMAX_CALL xmax_client_list_cameras(
 );
 
 /**
+ * Lists camera devices without creating a client, opening capture, or requesting permission.
+ * Release the snapshot with xmax_camera_list_release.
+ */
+XMAX_API xmax_result XMAX_CALL xmax_media_list_cameras(xmax_camera_list* devices);
+
+/**
+ * Lists microphone endpoints without creating a client, opening capture, or requesting permission.
+ * Release the snapshot with xmax_camera_list_release.
+ */
+XMAX_API xmax_result XMAX_CALL xmax_media_list_microphones(xmax_camera_list* devices);
+
+/**
  * Returns the number of devices in a camera enumeration snapshot.
  *
  * @param[in] list The enumeration snapshot; may be NULL.
@@ -2336,7 +2355,7 @@ XMAX_API xmax_result XMAX_CALL xmax_realtime_create_local_camera_stream(
  * Switches the active camera while retaining the connection and restoring generation conditions.
  *
  * @param[in] realtime A non-null realtime controller handle.
- * @param[in] device_id A non-null UTF-8 device identifier; empty selects the default camera.
+ * @param[in] device_id The non-null UTF-8 identifier of an enumerated camera.
  *
  * @return XMAX_OK on success, or a negative error code on failure. Use xmax_last_error for details.
  *
@@ -2762,7 +2781,7 @@ XMAX_API xmax_result XMAX_CALL xmax_realtime_start_generation_cancellable(
 );
 
 /**
- * Creates a camera binding and waits for its first captured frame.
+ * Creates a camera binding once capture starts. A missing first frame is reported asynchronously.
  *
  * The stream can connect before the preview is attached.
  *
@@ -3390,8 +3409,9 @@ xmax_external_frame_sink_is_requesting_frames(
  * decreasing monotonic microsecond timestamps are ignored. Pixels can be reused after return but must
  * not be changed concurrently.
  *
- * @return XMAX_OK for submission, ignored timestamps, or a stale binding; XMAX_MEDIA_ERROR for invalid
- * current pixels, which also fails the binding and schedules connection/media cleanup.
+ * @return XMAX_OK for submitted or ignored frames, including invalid media reported asynchronously.
+ * An invalid receiver or null frame pointer returns a negative API error.
+ * Invalid media on the current binding schedules cleanup with XMAX_MEDIA_ERROR.
  */
 XMAX_API xmax_result XMAX_CALL
 xmax_external_frame_sink_push_video_frame(
@@ -3409,7 +3429,8 @@ xmax_external_frame_sink_push_video_frame(
  * @return XMAX_OK when the report is accepted or stale, or a negative error code for invalid arguments.
  *
  * @note This call does not wait for cleanup. Observe the failure and idle state through event polling.
- * Duplicate reports for the same binding are ignored. Your app retains ownership of its capture resources.
+ * Reports are delivered as XMAX_MEDIA_ERROR. Duplicate reports for the same binding are ignored.
+ * Your app retains ownership of its capture resources.
  */
 XMAX_API xmax_result XMAX_CALL
 xmax_external_frame_sink_report_error(
@@ -3484,7 +3505,8 @@ XMAX_API xmax_result XMAX_CALL xmax_external_frame_sink_complete_startup(
 );
 
 /**
- * Starts camera capture. A preview consumer can publish READY before connection begins.
+ * Returns once capture starts. An attached preview and a usable camera frame publish READY.
+ * A missing first frame is reported asynchronously.
  */
 XMAX_API xmax_result XMAX_CALL xmax_realtime_create_local_camera_preview_stream(
     xmax_realtime realtime,
@@ -3534,6 +3556,28 @@ XMAX_API xmax_result XMAX_CALL xmax_resolve_downlink_format(
     double maximum_width,
     double maximum_height,
     xmax_video_format* resolved
+);
+
+/** Resolves integer-pixel input dimensions for a camera (1) or other media (0). */
+XMAX_API xmax_result XMAX_CALL xmax_resolve_media_size(
+    const char* model,
+    const xmax_media_size* source,
+    int32_t camera,
+    xmax_media_size* resolved
+);
+
+/** Selects the model canvas closest to the aspect ratio of positive, finite dimensions. */
+XMAX_API xmax_result XMAX_CALL xmax_resolve_generation_size(
+    const char* model,
+    const xmax_media_size* source,
+    xmax_media_size* resolved
+);
+
+/** Fits integer-pixel source dimensions within positive, finite bounds. */
+XMAX_API xmax_result XMAX_CALL xmax_resolve_target_size(
+    const xmax_media_size* source,
+    const xmax_media_size* maximum,
+    xmax_media_size* resolved
 );
 
 /**
@@ -3594,7 +3638,8 @@ XMAX_API xmax_result XMAX_CALL xmax_realtime_stop_external_video_stream(
  * @param[in] sink The source receiver created with has_audio enabled; stale receivers ignore input.
  * @param[in] frame Borrowed interleaved or planar PCM with a timestamp on the video timeline, copied before return.
  *
- * @return XMAX_OK on success or ignored input, or a negative error code for invalid current input.
+ * @return XMAX_OK for submitted or ignored buffers, including invalid media reported asynchronously.
+ * An invalid receiver or null frame pointer returns a negative API error.
  *
  * @note PCM is converted to 48 kHz mono PCM16 in 10 ms packets and uploaded only while published.
  * No audio is queued for a future connection. A gap starts a new segment; overlapping or negative

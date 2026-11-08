@@ -42,4 +42,13 @@ public enum RealtimeNetworkQualityLevel
 public sealed record RealtimeNetworkQuality(RealtimeNetworkQualityLevel Uplink, RealtimeNetworkQualityLevel Downlink);
 
 /// <summary>A device performance limit or recovery and its optional suggested format.</summary>
-public sealed record RealtimePerformanceAlarm(bool Limited, VideoFormat? SuggestedVideoFormat);
+public sealed record RealtimePerformanceAlarm(RealtimePerformanceStatus Status, VideoFormat? SuggestedVideoFormat);
+
+/// <summary>The current uplink encoding performance state.</summary>
+public enum RealtimePerformanceStatus
+{
+    /// <summary>The encoder is constrained by available processing capacity.</summary>
+    Limited,
+    /// <summary>The encoder has recovered from a processing constraint.</summary>
+    Recovered
+}

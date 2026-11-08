@@ -67,6 +67,11 @@ class MediaService {
         double maximum_height
     );
 
+    /** Resolves input geometry independently of frame rate and buffer layout. */
+    static xmax_media_size media_size(xmax_media_size source, bool camera, const xmax_model_info& model);
+    static xmax_media_size generation_size(xmax_media_size source, const xmax_model_info& model);
+    static xmax_media_size target_size(xmax_media_size source, xmax_media_size maximum);
+
     /**
      * Validates camera targets against the five X2.1 formats without substituting dimensions.
      *
@@ -78,17 +83,9 @@ class MediaService {
         xmax_model_info model = RealtimeModelDefinition::capabilities
     ) {
         const auto result = input(format);
-        require(result.fps <= 60, XMAX_INVALID_ARGUMENT, "Camera target requires a frame rate in [1, 60]");
-        bool supported = false;
-        for (uint32_t i = 0; i < model.format_count; ++i) {
-            const auto& value = model.supported_formats[i];
-            supported = supported || (value.width == result.width && value.height == result.height);
-        }
-        require(
-            supported,
-            XMAX_INVALID_ARGUMENT,
-            "Camera target is not supported by the selected model"
-        );
+        require(result.fps <= uint32_t(std::numeric_limits<int32_t>::max()), XMAX_INVALID_ARGUMENT,
+                "Camera frame rate exceeds the supported integer range");
+        media_size({double(result.width), double(result.height)}, true, model);
         return result;
     }
 
@@ -105,21 +102,8 @@ class MediaService {
         xmax_model_info model = RealtimeModelDefinition::capabilities
     ) {
         validate_format(format);
-        const double aspect = double(format.width) / format.height;
-        double best_distance = std::numeric_limits<double>::infinity();
-        auto result = model.supported_formats[0];
-
-        for (uint32_t i = 0; i < model.format_count; ++i) {
-            const auto& candidate = model.supported_formats[i];
-            const double distance = std::abs(std::log(aspect / (double(candidate.width) / candidate.height)));
-            if (distance < best_distance) {
-                result = candidate;
-                best_distance = distance;
-            }
-        }
-
-        result.fps = format.fps;
-        return result;
+        const auto size = generation_size({double(format.width), double(format.height)}, model);
+        return {uint32_t(size.width), uint32_t(size.height), format.fps};
     }
 };
 } // namespace xmax::detail

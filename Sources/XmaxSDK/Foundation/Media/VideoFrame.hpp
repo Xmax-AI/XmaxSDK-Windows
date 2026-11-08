@@ -77,8 +77,8 @@ struct Frame {
     );
 };
 
-// Rotates owned BGRA pixels clockwise by a right angle.
-Frame rotate_bgra(Frame frame, unsigned degrees);
+// Rotates owned BGRA or NV12 pixels clockwise by a right angle.
+Frame rotate_camera_frame(Frame frame, unsigned degrees);
 
 /**
  * Validates video layout dimensions and frame rate independently of generation model limits.

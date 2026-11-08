@@ -514,7 +514,7 @@ static void external_video_entry_contracts() {
     invalid.planes[0] = nullptr;
     expect_error(XMAX_INVALID_ARGUMENT, [&] { manager.push(invalid); });
     CHECK(manager.requesting(replacement) && manager.state_info().event.state == XMAX_READY);
-    expect_error(XMAX_MEDIA_ERROR, [&] { manager.push(invalid, replacement); });
+    manager.push(invalid, replacement);
     CHECK(!manager.requesting() && !manager.requesting(replacement));
     eventually([&] { return manager.state_info().event.state == XMAX_IDLE; });
     CHECK(manager.state_info().reason == XMAX_REASON_FAILURE);
@@ -840,7 +840,7 @@ static void external_audio_public_bridge() {
     sink.push_audio(pcm_view(samples, 48000, 1, 30000));
     CHECK(rtc->audio_packets.size() == 2 && rtc->audio_packets.back().timestamp_us == 30000);
     auto malformed = pcm_view(samples, 44100, 1, 40000);
-    CHECK(xmax_external_frame_sink_push_audio_frame(sink.get(), &malformed) == XMAX_MEDIA_ERROR);
+    CHECK(xmax_external_frame_sink_push_audio_frame(sink.get(), &malformed) == XMAX_OK);
     CHECK(!sink.requesting());
     eventually([&] { return controller.state().connection_state == xmax::realtime_connection_state::idle; });
     CHECK(std::holds_alternative<xmax::error>(*controller.state().reason));
@@ -852,7 +852,7 @@ static void external_audio_public_bridge() {
     CHECK(!replacement.requesting() && silent.requesting());
     auto bad_frame = video(1, 4, 4);
     auto bad_pixels = bad_frame.view();
-    CHECK(xmax_external_frame_sink_push_video_frame(silent.get(), &bad_pixels) == XMAX_MEDIA_ERROR);
+    CHECK(xmax_external_frame_sink_push_video_frame(silent.get(), &bad_pixels) == XMAX_OK);
     CHECK(!silent.requesting());
     eventually([&] { return controller.state().connection_state == xmax::realtime_connection_state::idle; });
     controller.close();

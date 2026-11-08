@@ -161,7 +161,17 @@ void CameraController::capture_loop() {
         std::packaged_task<void()> work;
         {
             std::unique_lock<std::mutex> lock(capture_mutex_);
-            capture_changed_.wait(lock, [this] { return capture_exiting_ || !capture_work_.empty(); });
+            const auto has_work = [this] { return capture_exiting_ || !capture_work_.empty(); };
+            if (first_frame_deadline_) {
+                if (!capture_changed_.wait_until(lock, *first_frame_deadline_, has_work)) {
+                    first_frame_deadline_.reset();
+                    lock.unlock();
+                    check_first_frame_deadline();
+                    continue;
+                }
+            } else {
+                capture_changed_.wait(lock, has_work);
+            }
             if (capture_work_.empty())
                 return;
             work = std::move(capture_work_.front());
@@ -171,10 +181,18 @@ void CameraController::capture_loop() {
     }
 }
 
+void CameraController::check_first_frame_deadline() {
+    std::shared_ptr<Recovery> binding;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        binding = recovery_;
+    }
+    if (binding && !binding->cancelled)
+        report_failure(Error(XMAX_TIMEOUT, "Camera did not deliver a video frame"), binding->failure, true);
+}
+
 /**
- * Starts native capture and delivers frames at the requested dimensions, waiting for the first frame,
- * failure, or cancellation. Startup failures are thrown to the caller; only failures after successful
- * startup are delivered through the failure callback.
+ * Starts native capture and optionally waits for its first usable frame.
  *
  * @param[in] device The UTF-8 camera identifier; an empty string selects the default camera.
  * @param[in] format The requested pixel dimensions and frame rate, subject to the interface's format
@@ -186,7 +204,8 @@ void CameraController::start(
     const std::string& device,
     xmax_video_format format,
     CaptureCallbacks output,
-    const Cancel& cancel
+    const Cancel& cancel,
+    bool wait_for_first_frame
 ) {
     stop();
     XmaxLogger::write(
@@ -272,6 +291,7 @@ void CameraController::start(
     auto binding = std::make_shared<Recovery>();
     binding->device = device;
     binding->format = format;
+    binding->failure = output.failure;
     binding->callbacks = std::move(callbacks);
     binding->callbacks.interrupted = [this, weak = std::weak_ptr<Recovery>(binding)] {
         if (auto current = weak.lock())
@@ -287,7 +307,17 @@ void CameraController::start(
             require(!cancel() && !binding->cancelled, XMAX_CANCELLED, "Camera startup cancelled");
             capture_ = factory_();
             capture_->start(device, format, binding->callbacks, cancel);
+            if (!wait_for_first_frame) {
+                std::lock_guard<std::mutex> lock(mutex_);
+                if (failure_)
+                    throw *failure_;
+                running_ = true;
+                first_frame_deadline_ = Clock::now() + std::chrono::seconds(10);
+            }
         }), true).get();
+
+        if (!wait_for_first_frame)
+            return;
 
         const auto deadline = Clock::now() + std::chrono::seconds(12);
         std::unique_lock<std::mutex> lock(mutex_);
@@ -359,7 +389,8 @@ void CameraController::interrupted(const std::shared_ptr<Recovery>& binding) {
 
 void CameraController::recover_capture(const std::shared_ptr<Recovery>& binding) {
     const Cancel cancelled = [binding] { return binding->cancelled.load(); };
-    for (int attempt = 0; attempt < 3 && !cancelled(); ++attempt) {
+    const auto deadline = Clock::now() + std::chrono::seconds(10);
+    while (!cancelled() && Clock::now() < deadline) {
         if (capture_) {
             capture_->stop();
             capture_.reset();
@@ -378,7 +409,7 @@ void CameraController::recover_capture(const std::shared_ptr<Recovery>& binding)
             continue;
         }
         std::unique_lock<std::mutex> lock(mutex_);
-        changed_.wait_for(lock, std::chrono::seconds(1), [&] {
+        changed_.wait_until(lock, std::min(deadline, Clock::now() + std::chrono::seconds(1)), [&] {
             return ready_ || cancelled() || binding->interrupted || failure_.has_value();
         });
         if (cancelled() || failure_)
@@ -400,12 +431,13 @@ void CameraController::recover_capture(const std::shared_ptr<Recovery>& binding)
  */
 void CameraController::report_failure(
     Error error,
-    const std::function<void(Error)>& receiver
+    const std::function<void(Error)>& receiver,
+    bool first_frame_pending
 ) {
     bool notify;
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        if (failure_)
+        if (failure_ || (first_frame_pending && ready_))
             return;
 
         failure_ = error;
@@ -437,6 +469,7 @@ std::future<void> CameraController::stop_async() {
 }
 
 void CameraController::stop_capture() noexcept {
+    first_frame_deadline_.reset();
     {
         std::lock_guard<std::mutex> lock(mutex_);
         running_ = false;

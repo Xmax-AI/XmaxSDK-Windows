@@ -183,7 +183,7 @@ internal sealed partial class MainViewModel
         {
             try { item.Thumbnail = await thumbnails.LoadAsync(path); } catch (Exception) { /* uploads can still accept encoded WebP without a local codec */ }
             using var client = new XmaxClient(new() { ApiKey = sessionKey, Environment = ServiceEnvironment });
-            await using var storage = client.CreateStorage();
+            await using var storage = client.CreateStorageManager();
             var uploaded = await storage.UploadImageWithSafetyCheckAsync(path, cancellationToken: cancellation.Token);
             item.ReferenceUrl = uploaded.Url; item.IsUploading = false;
             if (current == revision && mode == SelectedMode && (mode != "free" || FreeReference == item)) await SelectReferenceAsync(item);
@@ -198,6 +198,6 @@ internal sealed partial class MainViewModel
         FreeReference = null;
         ++intent; pendingConditions = null;
     }
-    private async Task ApplyVolumeAsync(XmaxRealtime current, double value)
+    private async Task ApplyVolumeAsync(IXmaxRealtimeManaging current, double value)
     { try { await current.SetRemoteVolumeAsync((float)value); } catch (Exception failure) { if (current == session) ReportError(failure); } }
 }

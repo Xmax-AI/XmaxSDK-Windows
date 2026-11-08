@@ -109,11 +109,11 @@ public partial class App : Application
                 if (localMaximumLuma - localMinimumLuma < 8) throw new InvalidOperationException("The selected camera delivers a uniform blank picture. Select a physical camera or start the virtual camera's input.");
                 localFrames = window.LocalVideoView.PresentedFrameCount;
                 localWidth = window.LocalVideoView.VideoWidth; localHeight = window.LocalVideoView.VideoHeight;
-                await window.Model.Session!.SetRemoteMediaListenerAsync(packet =>
+                await window.Model.Session!.SetRemoteMediaFrameListenerAsync(packet =>
                 {
                     using (packet)
                     {
-                        if (packet.Type == MediaType.Video) Interlocked.Increment(ref remoteMediaVideoPackets);
+                        if (packet is RealtimeVideoFrame) Interlocked.Increment(ref remoteMediaVideoPackets);
                     }
                 });
                 await UntilAsync(() => Interlocked.Read(ref remoteMediaVideoPackets) > 0, TimeSpan.FromSeconds(10));

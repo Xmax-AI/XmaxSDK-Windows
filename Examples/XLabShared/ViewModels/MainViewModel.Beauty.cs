@@ -46,7 +46,7 @@ internal sealed partial class MainViewModel
         beautyUpdate = DebounceBeautyAsync(session, revision, intent, beautyDebounce.Token);
         NotifyBeauty();
     }
-    private async Task DebounceBeautyAsync(XmaxRealtime? current, int epoch, int intent, CancellationToken token)
+    private async Task DebounceBeautyAsync(IXmaxRealtimeManaging? current, int epoch, int intent, CancellationToken token)
     {
         try {
             await Task.Delay(120, token);
@@ -54,14 +54,14 @@ internal sealed partial class MainViewModel
             if (current is not null && !IsPreview) await ApplyBeautyAsync(current, epoch, intent, token);
         } catch (OperationCanceledException) { }
     }
-    private async Task BindBeautyAsync(XmaxRealtime current, int epoch)
+    private async Task BindBeautyAsync(IXmaxRealtimeManaging current, int epoch)
     {
         await current.SetRemoteVideoBeautyErrorListenerAsync(_ => dispatcher.InvokeAsync(() => {
             if (current == session && epoch == revision && !beautyClosing) BeautyFailed();
         }));
         await ApplyBeautyAsync(current, epoch, beautyIntent, default);
     }
-    private async Task ApplyBeautyAsync(XmaxRealtime current, int epoch, int intent, CancellationToken token)
+    private async Task ApplyBeautyAsync(IXmaxRealtimeManaging current, int epoch, int intent, CancellationToken token)
     {
         await beautyOperations.WaitAsync(token);
         try {
@@ -69,7 +69,7 @@ internal sealed partial class MainViewModel
             try { await current.SetRemoteVideoBeautyAsync(beauty.Enabled ? beauty.Options : null); }
             catch (Exception error) {
                 if (current != session || epoch != revision || intent != beautyIntent || beautyClosing ||
-                    error is OperationCanceledException or ObjectDisposedException or XmaxException { Result: -2 or -7 }) return;
+                    error is OperationCanceledException or ObjectDisposedException or XmaxException { Code: XmaxErrorCode.InvalidState or XmaxErrorCode.Cancelled }) return;
                 try { await current.SetRemoteVideoBeautyAsync(null); } catch { }
                 if (current == session && epoch == revision && intent == beautyIntent && !beautyClosing) BeautyFailed();
             }

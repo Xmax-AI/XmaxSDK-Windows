@@ -21,6 +21,8 @@ internal static unsafe class Program
     [StructLayout(LayoutKind.Sequential, Pack = 8)]
     private struct VideoFormat { public uint Width, Height, Fps; }
     [StructLayout(LayoutKind.Sequential, Pack = 8)]
+    private struct ExternalMedia { public uint Size; public VideoFormat Format; public int HasAudio; }
+    [StructLayout(LayoutKind.Sequential, Pack = 8)]
     private struct Event
     {
         public uint Size; public int Type, State, Code;
@@ -34,7 +36,9 @@ internal static unsafe class Program
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] private static extern void xmax_client_destroy(nint client);
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] private static extern int xmax_client_get_capabilities(nint client, ref Capabilities caps);
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] private static extern int xmax_realtime_create(nint client, out nint realtime);
-    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] private static extern int xmax_realtime_prepare_external(nint realtime, in VideoFormat format);
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] private static extern int xmax_realtime_create_external_video_stream(nint realtime, in ExternalMedia source, nint processing, out VideoFormat resolved, out nint sink);
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] private static extern int xmax_external_frame_sink_complete_startup(nint sink);
+    [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] private static extern void xmax_external_frame_sink_release(nint sink);
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] private static extern int xmax_realtime_get_state(nint realtime, ref Event state);
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] private static extern int xmax_realtime_close(nint realtime);
     [DllImport(Dll, CallingConvention = CallingConvention.Cdecl)] private static extern void xmax_realtime_destroy(nint realtime);
@@ -44,7 +48,7 @@ internal static unsafe class Program
     }
     public static int Main()
     {
-        nint client = 0, realtime = 0;
+        nint client = 0, realtime = 0, sink = 0;
         var key = Marshal.StringToCoTaskMemUTF8("");
         try
         {
@@ -57,8 +61,15 @@ internal static unsafe class Program
             if (caps.Abi != 2 || (caps.Flags & 8) == 0) throw new InvalidOperationException("Capability mismatch");
             Check(xmax_realtime_create(client, out realtime));
             xmax_client_destroy(client); client = 0; // Child ownership is independent.
-            var format = new VideoFormat { Width = 1920, Height = 1024, Fps = 30 };
-            Check(xmax_realtime_prepare_external(realtime, in format));
+            var source = new ExternalMedia
+            {
+                Size = (uint)sizeof(ExternalMedia),
+                Format = new VideoFormat { Width = 1920, Height = 1024, Fps = 30 }
+            };
+            Check(xmax_realtime_create_external_video_stream(realtime, in source, 0, out var resolved, out sink));
+            if (resolved.Width != source.Format.Width || resolved.Height != source.Format.Height)
+                throw new InvalidOperationException("Unexpected external processing size");
+            Check(xmax_external_frame_sink_complete_startup(sink));
             var state = new Event { Size = (uint)sizeof(Event) };
             Check(xmax_realtime_get_state(realtime, ref state));
             if (state.State != 1) throw new InvalidOperationException("Expected READY");
@@ -68,7 +79,10 @@ internal static unsafe class Program
         }
         finally
         {
-            xmax_realtime_destroy(realtime); xmax_client_destroy(client); Marshal.FreeCoTaskMem(key);
+            xmax_external_frame_sink_release(sink);
+            xmax_realtime_destroy(realtime);
+            xmax_client_destroy(client);
+            Marshal.FreeCoTaskMem(key);
         }
     }
 }

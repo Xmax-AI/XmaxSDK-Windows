@@ -15,7 +15,7 @@ internal sealed class VideoFramePump : IAsyncDisposable
     private readonly CancellationTokenSource stop = new();
     private readonly Task worker;
     internal LatestFrameSlot Frames { get; } = new();
-    internal VideoFramePump(IXmaxVideoSource source, Action<Exception> failure)
+    internal VideoFramePump(RealtimeVideoTrack track, Action<Exception> failure)
     {
         worker = Task.Run(async () =>
         {
@@ -23,10 +23,7 @@ internal sealed class VideoFramePump : IAsyncDisposable
             {
                 while (!stop.IsCancellationRequested)
                 {
-                    ulong revision = 0;
-                    var frame = source is RealtimeVideoTrack track
-                        ? track.TryAcquireFrame(out revision)
-                        : source.TryAcquireFrame();
+                    var frame = track.TryAcquireFrame(out ulong revision);
                     Frames.Publish(frame, revision);
                     await Task.Delay(8, stop.Token).ConfigureAwait(false);
                 }

@@ -236,7 +236,7 @@ class realtime : public detail::owner<xmax_realtime, xmax_realtime_destroy> {
     }
 
     /**
-     * Creates a local camera stream and waits for its first captured frame.
+     * Creates a local camera stream once capture starts. A missing first frame is reported asynchronously.
      *
      * A zero video format selects the model default. The returned stream can connect before a preview is attached.
      */
@@ -263,7 +263,7 @@ class realtime : public detail::owner<xmax_realtime, xmax_realtime_destroy> {
         return {stream_owner_, revision, true};
     }
 
-    /** Marks the camera stream ready after its preview has been attached. */
+    /** Registers preview attachment. Readiness also requires a usable camera frame. */
     void attach_local_camera_preview(const realtime_media_stream& stream) {
         check(xmax_realtime_complete_camera_preview(get(), stream_revision(stream, true)));
     }
@@ -271,7 +271,7 @@ class realtime : public detail::owner<xmax_realtime, xmax_realtime_destroy> {
     /**
      * Switches the active camera while retaining the connection and generation conditions.
      *
-     * @param[in] device The UTF-8 camera identifier; an empty string selects the default camera.
+     * @param[in] device The UTF-8 identifier of an enumerated camera.
      *
      * @note This call blocks. Call it on a worker thread; failures throw xmax::error.
      *

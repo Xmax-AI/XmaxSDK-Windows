@@ -14,7 +14,7 @@ using Xmax.SDK.Interop;
 
 namespace Xmax.SDK;
 
-public sealed partial class XmaxStorage
+internal sealed partial class XmaxStorage
 {
     private const int Image = 1;
     private const int Video = 2;

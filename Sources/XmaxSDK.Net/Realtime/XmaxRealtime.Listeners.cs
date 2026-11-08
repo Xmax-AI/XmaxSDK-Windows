@@ -12,7 +12,7 @@ using Xmax.SDK.Runtime;
 
 namespace Xmax.SDK;
 
-public sealed partial class XmaxRealtime
+internal sealed partial class XmaxRealtime
 {
     private readonly RealtimeListener<RealtimeState> stateListener = new();
     private readonly RealtimeListener<RealtimeLaunchTiming> timingListener = new();
@@ -27,7 +27,8 @@ public sealed partial class XmaxRealtime
 
     /// <summary>Registers a state listener and replays the latest state, or clears it when null.</summary>
     /// <remarks>
-    /// Register from the UI thread, or supply its synchronization context, for UI-thread callbacks.
+    /// The context supplied when creating the controller, or the registering context, delivers callbacks.
+    /// Pass an explicit context here to override it for the state listener.
     /// Headless callers without a synchronization context receive serialized worker-thread callbacks.
     /// A registration completes after its initial callback returns. Replacing it before replay cancels its task.
     /// </remarks>
@@ -37,7 +38,7 @@ public sealed partial class XmaxRealtime
         lock (stateRegistrationGate)
         {
             ObjectDisposedException.ThrowIf(stateRegistrationsClosed, this);
-            stateRegistrations.Enqueue(new(listener, callbackContext ?? SynchronizationContext.Current, ready));
+            stateRegistrations.Enqueue(new(listener, callbackContext ?? CallbackContext, ready));
         }
         return ready.Task;
     }
@@ -77,35 +78,35 @@ public sealed partial class XmaxRealtime
     /// <summary>Registers a generation startup timing listener, or clears it when null.</summary>
     public Task SetLaunchTimingListenerAsync(Action<RealtimeLaunchTiming>? listener)
     {
-        timingListener.Set(listener, NotifyCallbackFault);
+        timingListener.Set(listener, NotifyCallbackFault, callbackContext: CallbackContext);
         return Task.CompletedTask;
     }
 
-    /// <summary>Registers the uplink video statistics listener, including unavailable snapshots.</summary>
+    /// <summary>Registers the uplink video statistics listener, for future snapshots, including unavailable measurements.</summary>
     public Task SetUplinkVideoStatisticsListenerAsync(Action<UplinkVideoStatistics?>? listener)
     {
-        uplinkStatisticsListener.Set(listener, NotifyCallbackFault, replay: true);
+        uplinkStatisticsListener.Set(listener, NotifyCallbackFault, callbackContext: CallbackContext);
         return Task.CompletedTask;
     }
 
-    /// <summary>Registers the downlink video statistics listener, including unavailable snapshots.</summary>
+    /// <summary>Registers the downlink video statistics listener, for future snapshots, including unavailable measurements.</summary>
     public Task SetDownlinkVideoStatisticsListenerAsync(Action<DownlinkVideoStatistics?>? listener)
     {
-        downlinkStatisticsListener.Set(listener, NotifyCallbackFault, replay: true);
+        downlinkStatisticsListener.Set(listener, NotifyCallbackFault, callbackContext: CallbackContext);
         return Task.CompletedTask;
     }
 
     /// <summary>Registers a directional network quality listener, or clears it when null.</summary>
     public Task SetNetworkQualityListenerAsync(Action<RealtimeNetworkQuality>? listener)
     {
-        networkListener.Set(listener, NotifyCallbackFault);
+        networkListener.Set(listener, NotifyCallbackFault, callbackContext: CallbackContext);
         return Task.CompletedTask;
     }
 
     /// <summary>Registers a device performance alarm listener, or clears it when null.</summary>
     public Task SetPerformanceAlarmListenerAsync(Action<RealtimePerformanceAlarm>? listener)
     {
-        performanceListener.Set(listener, NotifyCallbackFault);
+        performanceListener.Set(listener, NotifyCallbackFault, callbackContext: CallbackContext);
         return Task.CompletedTask;
     }
 
@@ -114,13 +115,9 @@ public sealed partial class XmaxRealtime
     public Task SetMicrophoneLevelListenerAsync(Action<float?>? listener)
     {
         var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        microphoneListener.Set(listener, NotifyCallbackFault, replay: true, replayCompletion: ready);
+        microphoneListener.Set(listener, NotifyCallbackFault, replay: true, callbackContext: CallbackContext, replayCompletion: ready);
         return ready.Task;
     }
-
-    /// <summary>Registers serialized remote audio and processed video delivery.</summary>
-    public Task SetRemoteMediaFrameListenerAsync(Action<XmaxMediaFrame>? listener) =>
-        SetRemoteMediaListenerAsync(listener);
 
     private void DispatchTypedEvent(RealtimeEvent item)
     {
@@ -174,7 +171,8 @@ public sealed partial class XmaxRealtime
                 break;
             }
             case RealtimeEventType.Performance:
-                performanceListener.Publish(new(item.Code != 0,
+                performanceListener.Publish(new(
+                    item.Code != 0 ? RealtimePerformanceStatus.Limited : RealtimePerformanceStatus.Recovered,
                     item.Width > 0 && item.Height > 0 && item.FramesPerSecond > 0
                         ? new VideoFormat((uint)item.Width, (uint)item.Height, (uint)item.FramesPerSecond)
                         : null));

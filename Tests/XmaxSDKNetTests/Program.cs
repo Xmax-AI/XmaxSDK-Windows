@@ -72,6 +72,17 @@ try
     await Test("model capabilities, client ownership and ABI flags", async () =>
     {
         Check(XmaxRuntime.Version.Length > 0, "version");
+        using (var apiClient = new XmaxClient(new() { ApiKey = "offline-test" }))
+        {
+            await using IXmaxRealtimeManaging manager = apiClient.CreateRealtimeManager();
+            await using IXmaxStorageManaging storage = apiClient.CreateStorageManager();
+            IMediaServicing media = apiClient.CreateMediaService();
+            Check(!manager.GetType().IsPublic && !storage.GetType().IsPublic && !media.GetType().IsPublic,
+                "factories expose interfaces with private implementations");
+        }
+        Check(typeof(XmaxClient).Assembly.GetExportedTypes().All(type => type.Name is not
+            ("IXmaxVideoSource" or "RealtimeEvent" or "VideoMirrorConfiguration" or "EncodingConfiguration")),
+            "retired types must not remain in the public assembly surface");
         var model = XmaxClient.GetModelInfo();
         Check(model.Identifier == "x2.1", "default model");
         Check(model.DisplayName == "X2.1" && model.DefaultCameraFormat == new VideoFormat(1920, 1080), "X2.1 defaults to 1920×1080 capture");
@@ -84,16 +95,16 @@ try
         });
         using (var owner = new XmaxClient())
         {
-            await using var selected = owner.CreateRealtime(new() { Model = RealtimeModel.X2_1 });
-            await selected.PrepareExternalAsync(new(16, 8));
+            await using var selected = owner.CreateRealtimeManager(new() { Model = RealtimeModel.X2_1 });
+            await selected.CreateExternalVideoStreamAsync(new ExternalTestSource());
         }
         var client = new XmaxClient();
         Check(client.GetCapabilities().HasFlag(XmaxCapabilities.Storage), "storage capability");
-        var realtime = client.CreateRealtime();
+        var realtime = client.CreateRealtimeManager();
         client.Dispose();
         await using (realtime)
         {
-            await realtime.PrepareExternalAsync(new(16, 8));
+            await realtime.CreateExternalVideoStreamAsync(new ExternalTestSource());
             Check((await realtime.GetStateAsync()).ConnectionState == RealtimeConnectionState.Ready, "independent child");
         }
     });
@@ -101,7 +112,7 @@ try
     {
         Check(new RealtimeVideoBeautyOptions() == new RealtimeVideoBeautyOptions(0, 0, 0, 0), "All default beauty strengths are zero");
         using var client = new XmaxClient();
-        await using var realtime = client.CreateRealtime();
+        await using var realtime = client.CreateRealtimeManager();
         await realtime.SetRemoteVideoBeautyErrorListenerAsync(_ => throw new Exception("Configuration errors must not use the frame-error listener"));
         await realtime.SetRemoteVideoBeautyAsync(null);
         foreach (float invalid in new[] { -.1f, 1.1f, float.NaN, float.PositiveInfinity })
@@ -120,7 +131,7 @@ try
     {
         using var client = new XmaxClient(new() { ApiKey = " \t \n " });
         try { await client.GetCreditBalanceAsync(); throw new Exception("Invalid key became a balance"); }
-        catch (XmaxException error) { Check(error.Result == -14, "Expected missing API-key error"); }
+        catch (XmaxException error) { Check(error.Code == XmaxErrorCode.InvalidApiKey, "Expected missing API-key error"); }
         using var cancellation = new CancellationTokenSource();
         // Exercise a live cancellation callback across the managed/native ABI without a network request.
         await ThrowsAsync<XmaxException>(() => client.GetCreditBalanceAsync(cancellation.Token));
@@ -132,34 +143,36 @@ try
     await Test("UTF-8 errors and async thread-local diagnostics", async () =>
     {
         using var client = new XmaxClient();
-        await using var realtime = client.CreateRealtime();
-        try { await realtime.PrepareExternalAsync(new(3, 5)); throw new Exception("Expected invalid argument"); }
-        catch (XmaxException error) { Check(error.Result == -1 && error.Message.Length > 0, "structured error"); }
+        await using var realtime = client.CreateRealtimeManager();
+        try { await realtime.CreateExternalVideoStreamAsync(new ExternalTestSource(format: new(3, 5))); throw new Exception("Expected invalid argument"); }
+        catch (XmaxException error) { Check(error.Code == XmaxErrorCode.InvalidConfiguration && error.Message.Length > 0, "structured error"); }
         var stream = await realtime.CreateExternalVideoStreamAsync(new ExternalTestSource());
         await ThrowsAsync<XmaxException>(() => realtime.StartGenerationAsync(stream, new("中文提示词 👋")));
         Check((await realtime.GetStateAsync()).ConnectionState == RealtimeConnectionState.Ready, "failed generation retains input");
     });
-    await Test("strided BGRA ownership, mirror metadata and retained frames", async () =>
+    await Test("strided BGRA ownership and retained frames", async () =>
     {
         using var client = new XmaxClient();
-        var realtime = client.CreateRealtime();
-        using var sink = await realtime.BindExternalAsync(new(16, 8));
-        await realtime.SetVideoMirrorAsync(new(true, false, false));
-        byte[] pixels = Enumerable.Repeat((byte)127, 80 * 8).ToArray();
-        sink.PushBgra(pixels, 80, 1000);
-        using var frame = realtime.LocalVideo.TryAcquireFrame() ?? throw new Exception("No local frame");
+        var realtime = client.CreateRealtimeManager();
+        var source = new ExternalTestSource(format: new(640, 320));
+        var stream = await realtime.CreateExternalVideoStreamAsync(source);
+        var sink = source.Sink!;
+        const int stride = 640 * 4 + 16;
+        byte[] pixels = Enumerable.Repeat((byte)127, stride * 320).ToArray();
+        sink.PushBgra(pixels, stride, 1000);
+        using var frame = stream.VideoTrack.TryAcquireFrame() ?? throw new Exception("No local frame");
         Array.Fill(pixels, (byte)0);
-        Check(frame.Width == 16 && frame.Height == 8 && frame.Mirrored, "frame metadata");
+        Check(frame.Width == 640 && frame.Height == 320 && !frame.Mirrored, "frame metadata");
         Check(frame.CopyBgra()[0] == 127, "push must copy pixels");
         await realtime.DisposeAsync();
         Check(frame.CopyBgra()[0] == 127, "frame outlives realtime");
         Check(!sink.IsRequestingFrames, "source becomes inert after destruction");
-        sink.PushBgra(pixels, 80, 2000);
+        sink.PushBgra(pixels, stride, 2000);
     });
     await Test("external stream starts without a frame and resizes original source pixels", async () =>
     {
         using var client = new XmaxClient();
-        await using var realtime = client.CreateRealtime();
+        await using var realtime = client.CreateRealtimeManager();
         var source = new ExternalTestSource(framesPerSecond: 90);
         var stream = await realtime.CreateExternalVideoStreamAsync(source, new(640, 480, 24));
         var sink = source.Sink ?? throw new Exception("Source did not receive a sink");
@@ -201,7 +214,7 @@ try
     await Test("closing cancels source startup and allows a clean retry", async () =>
     {
         using var client = new XmaxClient();
-        await using var realtime = client.CreateRealtime();
+        await using var realtime = client.CreateRealtimeManager();
         var source = new ExternalTestSource(blockStartup: true);
         var creating = realtime.CreateExternalVideoStreamAsync(source);
         await source.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -216,7 +229,7 @@ try
             "cancelled startup released its attachment");
         var replacement = new ExternalTestSource();
         var stream = await realtime.CreateExternalVideoStreamAsync(replacement);
-        replacement.Sink!.ReportError(-11, "external capture failed");
+        replacement.Sink!.ReportError(new InvalidOperationException("external capture failed"));
         await replacement.Stopped.Task.WaitAsync(TimeSpan.FromSeconds(5));
         Check((await realtime.GetStateAsync()).ConnectionState == RealtimeConnectionState.Idle &&
             stream.VideoTrack.TryAcquireFrame() is null, "source failure releases media");
@@ -228,11 +241,21 @@ try
     await Test("stream ownership, downlink sizing and typed listener registration", async () =>
     {
         using var client = new XmaxClient();
-        await using var realtime = client.CreateRealtime();
-        await using var other = client.CreateRealtime();
+        await using var realtime = client.CreateRealtimeManager();
+        await using var other = client.CreateRealtimeManager();
         var media = client.CreateMediaService();
-        var target = media.ResolveTargetSize(new(1920, 1080), 1920, 1080);
-        Check(target == new VideoFormat(1920, 1080), "downlink preserves the dimensions within tier limits");
+        Check(media.ResolveTargetSize(new(1920, 1080), new(1920, 1080)) == new MediaSize(1920, 1080),
+            "downlink preserves dimensions within tier limits");
+        Check(media.ResolveTargetSize(new(641, 481), new(320.5, 240.5)) == new MediaSize(320, 240),
+            "fractional bounds and odd pixel dimensions are independent of capture format");
+        Check(media.ResolveMediaSize(new(641, 481), RealtimeMediaSource.Image) == new MediaSize(640, 480),
+            "odd image dimensions align within the model limits");
+        Check(media.ResolveGenerationSize(new(0.75, 1)) == new MediaSize(1152, 1536),
+            "generation uses aspect ratio independently of frame rate");
+        Check(media.ResolveMediaSize(new(1152, 1536), RealtimeMediaSource.Camera) == new MediaSize(1152, 1536),
+            "camera dimensions are validated separately from device frame rate");
+        _ = await MediaDevices.ListCameraDevicesAsync();
+        _ = await MediaDevices.ListMicrophoneDevicesAsync();
         _ = await realtime.ListMicrophoneDevicesAsync();
         Check(!await realtime.GetMicrophoneEnabledAsync(), "no camera microphone is active");
 
@@ -246,11 +269,11 @@ try
             if (item.ConnectionState == RealtimeConnectionState.Ready)
                 state.TrySetResult();
         });
-        var encoding = new VideoFormat(1280, 720, 30, 600, 2500, EncodingPreference.MaintainQuality);
+        var encoding = new VideoFormat(1280, 720, 30, 0, 2500, EncodingPreference.MaintainQuality);
         var original = await realtime.CreateExternalVideoStreamAsync(new ExternalTestSource(), encoding);
         var trackFormat = original.VideoTrack.VideoFormat;
         Check(original.VideoTrack.Id == original.Id && original.VideoTrack.Device is null &&
-            trackFormat?.MinimumBitrateKbps == 600 && trackFormat?.MaximumBitrateKbps == 2500 &&
+            trackFormat?.MinimumBitrateKbps == 0 && trackFormat?.MaximumBitrateKbps == 2500 &&
             trackFormat?.EncoderPreference == EncodingPreference.MaintainQuality, "track carries applied external encoding");
         await state.Task.WaitAsync(TimeSpan.FromSeconds(3));
         await ThrowsAsync<ArgumentException>(() => other.ConnectAsync(original));
@@ -260,22 +283,22 @@ try
             await realtime.StartGenerationAsync(new GenerationContext("prompt"));
             throw new Exception("Context-only generation connected unexpectedly");
         }
-        catch (XmaxException error) when (error.Result == -2) { }
+        catch (XmaxException error) when (error.Code == XmaxErrorCode.InvalidState) { }
         await realtime.StopLocalCameraStreamAsync();
         Check((await realtime.GetStateAsync()).ConnectionState == RealtimeConnectionState.Ready, "camera stop preserves external input");
         var disconnected = await realtime.GetStateAsync();
-        Check(disconnected.Reason is RealtimeReason.Failure { Error.Result: -14 }, "connection failure is published");
+        Check(disconnected.Reason is RealtimeReason.Failure { Error.Code: XmaxErrorCode.InvalidApiKey }, "connection failure is published");
         await realtime.DisconnectAsync(RealtimeReason.OrientationChanged);
-        await realtime.DisconnectAsync(new RealtimeReason.Failure(new XmaxException(-4, "调用方断开", 42, 403)));
+        await realtime.DisconnectAsync(new RealtimeReason.Failure(new XmaxException(XmaxErrorCode.ApiError, "调用方断开", 42, 403)));
         var repeated = await realtime.GetStateAsync();
         Check(repeated.ConnectionState == RealtimeConnectionState.Ready && repeated.SessionId == disconnected.SessionId &&
-            repeated.Reason is RealtimeReason.Failure { Error.Result: -14 }, "disconnect on ready preserves the native state and reason");
+            repeated.Reason is RealtimeReason.Failure { Error.Code: XmaxErrorCode.InvalidApiKey }, "disconnect on ready preserves the native state and reason");
         await realtime.StopExternalVideoStreamAsync();
         var replacement = await realtime.CreateExternalVideoStreamAsync(new ExternalTestSource());
         Check(replacement.Id != original.Id, "replacement receives a new stream identity");
         await ThrowsAsync<XmaxException>(() => realtime.StartGenerationAsync(original, new("prompt")));
         using var storageClient = new XmaxClient(new() { ApiKey = "offline-test" });
-        await using var storage = storageClient.CreateStorage();
+        await using var storage = storageClient.CreateStorageManager();
         await ThrowsAsync<XmaxException>(() => storage.UploadImageAsync(new byte[] { 1 }, "wrong.mp4"));
         await ThrowsAsync<XmaxException>(() => storage.UploadVideoAsync(new byte[] { 1 }, "wrong.png"));
         Check((await realtime.GetStateAsync()).ConnectionState == RealtimeConnectionState.Ready, "stale generation does not disturb the current input");
@@ -283,7 +306,7 @@ try
     await Test("typed state carries failure details to the chosen callback context", async () =>
     {
         using var client = new XmaxClient();
-        await using var realtime = client.CreateRealtime();
+        await using var realtime = client.CreateRealtimeManager();
         var initial = await realtime.GetStateAsync();
         Check(initial == new RealtimeState(RealtimeConnectionState.Idle), "initial identifiers and reason are absent");
         var context = new TestCallbackContext();
@@ -295,10 +318,10 @@ try
         }, context);
         var source = new ExternalTestSource();
         await realtime.CreateExternalVideoStreamAsync(source);
-        source.Sink!.ReportError(-11, "External capture lost");
+        source.Sink!.ReportError(new InvalidOperationException("External capture lost"));
         var failure = await delivered.Task.WaitAsync(TimeSpan.FromSeconds(5));
         Check(failure.ConnectionState == RealtimeConnectionState.Idle &&
-            failure.Reason is RealtimeReason.Failure { Error.Result: -11, Error.Message: "External capture lost" },
+            failure.Reason is RealtimeReason.Failure { Error.Code: XmaxErrorCode.MediaError, Error.Message: "External capture lost" },
             "state callback includes the original failure");
         Check((await realtime.GetStateAsync()).Reason is RealtimeReason.Failure { Error.Message: "External capture lost" },
             "state query includes the original failure");
@@ -317,57 +340,90 @@ try
         Check(new GenerationContext("  prompt  ", " \u200B\u3000").ReferencePath is null &&
             new GenerationContext("\u200B提示词\u2029", "  ref ").Prompt == "提示词", "generation context normalization");
     });
+    await Test("typed observations and external source lifecycle use the controller context", async () =>
+    {
+        using var client = new XmaxClient();
+        var context = new TestCallbackContext();
+        await using var realtime = client.CreateRealtimeManager(null, context);
+        await realtime.SetUplinkVideoStatisticsListenerAsync(_ => { });
+        await realtime.SetDownlinkVideoStatisticsListenerAsync(_ => { });
+        Check(context.PostCount == 0, "registering video statistics must not replay a snapshot");
+
+        SynchronizationContext? microphoneContext = null;
+        await realtime.SetMicrophoneLevelListenerAsync(_ => microphoneContext = SynchronizationContext.Current);
+        Check(ReferenceEquals(microphoneContext, context), "microphone replay uses the controller context");
+
+        var source = new ExternalTestSource();
+        await realtime.CreateExternalVideoStreamAsync(source);
+        Check(ReferenceEquals(source.StartContext, context), "source startup uses the controller context");
+        await realtime.StopExternalVideoStreamAsync();
+        Check(ReferenceEquals(source.StopContext, context), "source stop uses the same context");
+    });
     await Test("source replacement discards stale frames", async () =>
     {
         using var client = new XmaxClient();
-        await using var realtime = client.CreateRealtime();
-        using var old = await realtime.BindExternalAsync(new(16, 8));
-        using var current = await realtime.BindExternalAsync(new(16, 8));
+        await using var realtime = client.CreateRealtimeManager();
+        var firstSource = new ExternalTestSource();
+        await realtime.CreateExternalVideoStreamAsync(firstSource);
+        var old = firstSource.Sink!;
+        await realtime.StopExternalVideoStreamAsync();
+        var nextSource = new ExternalTestSource();
+        var stream = await realtime.CreateExternalVideoStreamAsync(nextSource);
+        var current = nextSource.Sink!;
         byte[] pixels = new byte[64 * 8];
+        Check(!old.IsRequestingFrames, "stale binding has stopped");
         old.PushBgra(pixels, 64, 1000);
-        Check(realtime.LocalVideo.TryAcquireFrame() is null, "stale binding ignored");
+        Check(stream.VideoTrack.TryAcquireFrame() is null, "stale binding ignored");
         current.PushBgra(pixels, 64, 2000);
-        using var frame = realtime.LocalVideo.TryAcquireFrame();
+        using var frame = stream.VideoTrack.TryAcquireFrame();
         Check(frame?.TimestampMicroseconds == 2000, "current binding accepted");
     });
-    await Test("NV12 and I420 preserve plane layout through the managed boundary", async () =>
+    await Test("strided NV12 and I420 preserve chroma through external stream processing", async () =>
     {
         using var client = new XmaxClient();
-        await using var realtime = client.CreateRealtime();
-        using var sink = await realtime.BindExternalAsync(new(16, 8));
-        sink.PushNv12(new byte[20 * 8], 20, Enumerable.Repeat((byte)45, 20 * 4).ToArray(), 20, 1000);
-        using (var frame = realtime.LocalVideo.TryAcquireFrame()!)
+        await using var realtime = client.CreateRealtimeManager();
+        var source = new ExternalTestSource(format: new(640, 320));
+        var stream = await realtime.CreateExternalVideoStreamAsync(source);
+        var sink = source.Sink!;
+        sink.PushNv12(new byte[644 * 320], 644, Enumerable.Repeat((byte)45, 644 * 160).ToArray(), 644, 1000);
+        using (var frame = stream.VideoTrack.TryAcquireFrame()!)
         {
             Check(frame.PixelFormat == VideoPixelFormat.Nv12, "NV12 format");
-            frame.ReadPlane(1, (pointer, stride, size) => Check(Marshal.ReadByte(pointer) == 45 && stride >= 16 && size >= 64, "NV12 chroma plane"));
+            frame.ReadPlane(1, (pointer, stride, size) => Check(Marshal.ReadByte(pointer) == 45 && stride >= 640 && size >= 640 * 160, "NV12 chroma plane"));
         }
-        sink.PushI420(new byte[20 * 8], 20, new byte[10 * 4], 10, Enumerable.Repeat((byte)67, 10 * 4).ToArray(), 10, 2000);
-        using (var frame = realtime.LocalVideo.TryAcquireFrame()!)
+        sink.PushI420(new byte[644 * 320], 644, new byte[324 * 160], 324,
+            Enumerable.Repeat((byte)67, 324 * 160).ToArray(), 324, 2000);
+        using (var frame = stream.VideoTrack.TryAcquireFrame()!)
         {
-            Check(frame.PixelFormat == VideoPixelFormat.I420, "I420 format");
-            frame.ReadPlane(2, (pointer, stride, size) => Check(Marshal.ReadByte(pointer) == 67 && stride >= 8 && size >= 32, "I420 V plane"));
+            Check(frame.PixelFormat == VideoPixelFormat.Nv12, "I420 is normalized to NV12");
+            frame.ReadPlane(1, (pointer, stride, size) =>
+                Check(Marshal.ReadByte(pointer) == 0 && Marshal.ReadByte(pointer, 1) == 67 &&
+                    stride >= 640 && size >= 640 * 160, "I420 chroma is interleaved as UV"));
         }
     });
     await Test("event callback failures are isolated", async () =>
     {
         using var client = new XmaxClient();
-        await using var realtime = client.CreateRealtime();
-        var delivered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        realtime.EventReceived += _ => throw new InvalidOperationException("Application callback failure");
-        realtime.CallbackFaulted += _ => delivered.TrySetResult();
-        await realtime.PrepareExternalAsync(new(16, 8));
-        await delivered.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        Check((await realtime.GetStateAsync()).ConnectionState == RealtimeConnectionState.Ready, "callback must not break lifecycle");
+        await using var realtime = client.CreateRealtimeManager();
+        await realtime.SetStateListenerAsync(_ => throw new InvalidOperationException("Application callback failure"));
+        var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await realtime.SetStateListenerAsync(state =>
+        {
+            if (state.ConnectionState == RealtimeConnectionState.Ready)
+                ready.TrySetResult();
+        });
+        await realtime.CreateExternalVideoStreamAsync(new ExternalTestSource());
+        await ready.Task.WaitAsync(TimeSpan.FromSeconds(5));
     });
     await Test("cancelled admission and repeated asynchronous disposal", async () =>
     {
         using var client = new XmaxClient();
-        var realtime = client.CreateRealtime();
+        var realtime = client.CreateRealtimeManager();
         using var stop = new CancellationTokenSource(); stop.Cancel();
         var stream = await realtime.CreateExternalVideoStreamAsync(new ExternalTestSource());
         await ThrowsAsync<OperationCanceledException>(() => realtime.ConnectAsync(stream, stop.Token));
         await Task.WhenAll(realtime.DisposeAsync().AsTask(), realtime.DisposeAsync().AsTask());
-        await ThrowsAsync<ObjectDisposedException>(() => realtime.PrepareExternalAsync(new(16, 8)));
+        await ThrowsAsync<ObjectDisposedException>(() => realtime.CreateExternalVideoStreamAsync(new ExternalTestSource()));
     });
     await Test("cancellation can interrupt blocking native work without an admission deadlock", async () =>
     {
@@ -401,19 +457,19 @@ try
         foreach (string key in new[] { "", "\u200B\u3000" })
         {
             using var missingKey = new XmaxClient(new() { ApiKey = key });
-            try { await using var unexpected = missingKey.CreateStorage(); throw new Exception("Expected an empty API key error"); }
-            catch (XmaxException error) { Check(error.Result == -14, "storage validates the API key at creation"); }
+            try { await using var unexpected = missingKey.CreateStorageManager(); throw new Exception("Expected an empty API key error"); }
+            catch (XmaxException error) { Check(error.Code == XmaxErrorCode.InvalidApiKey, "storage validates the API key at creation"); }
         }
         using var client = new XmaxClient(new() { ApiKey = "offline-test" });
-        await using var storage = client.CreateStorage();
-        Check(storage.GetProgress().State == 0, "initial progress");
-        await ThrowsAsync<XmaxException>(() => storage.UploadFileAsync("missing-中文.png"));
-        storage.Cancel();
+        await using var storage = client.CreateStorageManager();
+        await ThrowsAsync<XmaxException>(() => storage.UploadImageAsync("missing-中文.png"));
+        await ThrowsAsync<OperationCanceledException>(() =>
+            storage.UploadImageAsync("missing-中文.png", cancellationToken: new CancellationToken(canceled: true)));
     });
     await Test("typed storage downloads follow a loopback HTTP redirect", async () =>
     {
         using var client = new XmaxClient(new() { ApiKey = "offline-test" });
-        await using var storage = client.CreateStorage();
+        await using var storage = client.CreateStorageManager();
         using var listener = new TcpListener(IPAddress.Loopback, 0);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         listener.Start();
@@ -468,12 +524,11 @@ try
     await Test("remote callback registration survives GC and supports replacement", async () =>
     {
         using var client = new XmaxClient();
-        await using var realtime = client.CreateRealtime();
-        await realtime.SetRemoteMediaListenerAsync(packet => packet.Dispose());
+        await using var realtime = client.CreateRealtimeManager();
+        await realtime.SetRemoteMediaFrameListenerAsync(packet => packet.Dispose());
         GC.Collect(); GC.WaitForPendingFinalizers();
-        await realtime.SetRemoteMediaListenerAsync(packet => packet.Dispose());
-        await realtime.SetRemoteMediaListenerAsync(null);
-        Check(realtime.GetUplinkVideoStatistics() is null && realtime.GetDownlinkVideoStatistics() is null, "statistics must be unavailable before connection");
+        await realtime.SetRemoteMediaFrameListenerAsync(packet => packet.Dispose());
+        await realtime.SetRemoteMediaFrameListenerAsync(null);
     });
     Console.WriteLine($"{passed} managed SDK tests passed");
     return 0;
@@ -481,19 +536,22 @@ try
 catch (Exception error) { Console.Error.WriteLine(error); return 1; }
 
 
-sealed class ExternalTestSource(bool blockStartup = false, uint framesPerSecond = 30) : IRealtimeExternalVideoSource
+sealed class ExternalTestSource(bool blockStartup = false, uint framesPerSecond = 30, VideoFormat? format = null) : IRealtimeExternalVideoSource
 {
-    public VideoFormat VideoFormat => new(16, 8, framesPerSecond);
-    public ExternalFrameSink? Sink { get; private set; }
+    public VideoFormat VideoFormat => format ?? new(16, 8, framesPerSecond);
+    public IRealtimeExternalFrameSink? Sink { get; private set; }
     public int StopCount { get; private set; }
+    public SynchronizationContext? StartContext { get; private set; }
+    public SynchronizationContext? StopContext { get; private set; }
     public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public TaskCompletionSource Stopped { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     public Task StartAsync(
-        ExternalFrameSink sink,
+        IRealtimeExternalFrameSink sink,
         CancellationToken cancellationToken
     )
     {
+        StartContext = SynchronizationContext.Current;
         Sink = sink;
         Entered.TrySetResult();
         return blockStartup ? Task.Delay(Timeout.Infinite, cancellationToken) : Task.CompletedTask;
@@ -501,6 +559,7 @@ sealed class ExternalTestSource(bool blockStartup = false, uint framesPerSecond 
 
     public Task StopAsync()
     {
+        StopContext = SynchronizationContext.Current;
         ++StopCount;
         Sink = null;
         Stopped.TrySetResult();
@@ -511,8 +570,11 @@ sealed class ExternalTestSource(bool blockStartup = false, uint framesPerSecond 
 
 sealed class TestCallbackContext : SynchronizationContext
 {
+    private int postCount;
+    public int PostCount => Volatile.Read(ref postCount);
     public override void Post(SendOrPostCallback callback, object? state)
     {
+        Interlocked.Increment(ref postCount);
         ThreadPool.QueueUserWorkItem(_ =>
         {
             var previous = Current;

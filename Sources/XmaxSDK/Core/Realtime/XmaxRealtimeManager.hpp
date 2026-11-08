@@ -190,7 +190,7 @@ class XmaxRealtimeManager {
         std::optional<xmax_encoding_config> encoding = {}
     );
 
-    /** Marks a prepared camera stream ready when its preview is attached. */
+    /** Registers preview attachment so readiness can follow the first usable frame. */
     void complete_camera_preview(uint64_t revision);
 
     /** Updates the selected physical microphone without replacing the camera stream. */
@@ -205,7 +205,7 @@ class XmaxRealtimeManager {
     /**
      * Switches the active camera and resumes generation with retained conditions.
      *
-     * @param[in] device The UTF-8 camera identifier; an empty string selects the default camera.
+     * @param[in] device The UTF-8 identifier of an enumerated camera.
      */
     void switch_camera(
         std::string device
@@ -553,7 +553,10 @@ class XmaxRealtimeManager {
     std::atomic<uint64_t> local_stream_id_{0};
 
     /** Whether the camera is waiting for the preview consumer to attach. */
+    void publish_camera_ready();
     std::atomic<bool> camera_preview_pending_{false};
+    bool camera_preview_attached_ = false;
+    bool camera_preview_has_frame_ = false;
 
     /**
      * Whether the external receiver is installed and waiting for source startup to finish.

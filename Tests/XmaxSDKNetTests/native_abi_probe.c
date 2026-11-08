@@ -40,6 +40,9 @@ int main(void) {
     printf("offsetof xmax_video_format width %zu\n", offsetof(xmax_video_format, width));
     printf("offsetof xmax_video_format height %zu\n", offsetof(xmax_video_format, height));
     printf("offsetof xmax_video_format fps %zu\n", offsetof(xmax_video_format, fps));
+    printf("sizeof xmax_media_size %zu\n", sizeof(xmax_media_size));
+    printf("offsetof xmax_media_size width %zu\n", offsetof(xmax_media_size, width));
+    printf("offsetof xmax_media_size height %zu\n", offsetof(xmax_media_size, height));
     printf("sizeof xmax_video_frame %zu\n", sizeof(xmax_video_frame));
     printf("offsetof xmax_video_frame struct_size %zu\n", offsetof(xmax_video_frame, struct_size));
     printf("offsetof xmax_video_frame pixel_format %zu\n", offsetof(xmax_video_frame, pixel_format));

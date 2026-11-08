@@ -79,64 +79,20 @@ public sealed partial class XmaxClient : IDisposable
             VideoFormat.From(info.default_camera_format), info.minimum_input_pixels, info.maximum_input_pixels, info.input_size_alignment);
     }
 
-    /// <summary>
-    /// Enumerates camera devices without starting capture.
-    /// </summary>
-    /// <param name="cancellationToken">Cancels before device enumeration starts; it cannot interrupt native enumeration.</param>
-    /// <returns>A task containing a copied, read-only device snapshot.</returns>
-    public Task<IReadOnlyList<CameraDevice>> ListCamerasAsync(
-        CancellationToken cancellationToken = default
-    )
-    {
-        var lease = handle.Borrow();
-        return Task.Run<IReadOnlyList<CameraDevice>>(() =>
-        {
-            using (lease)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                return EnumerateCameras(lease.Value);
-            }
-        });
-    }
-
-    private static unsafe IReadOnlyList<CameraDevice> EnumerateCameras(nint client)
-    {
-        nint value = 0;
-        NativeError.Check(NativeMethods.xmax_client_list_cameras(client, &value));
-        return ReadCameraList(value);
-    }
-
-    internal static unsafe IReadOnlyList<CameraDevice> ReadCameraList(nint value)
-    {
-        using var list = new NativeHandle(value, HandleKind.CameraList);
-        nuint count = NativeMethods.xmax_camera_list_count(value);
-        var result = new List<CameraDevice>();
-        for (nuint i = 0; i < count; ++i)
-        {
-            var info = new xmax_camera_info { struct_size = (uint)sizeof(xmax_camera_info) };
-            NativeError.Check(NativeMethods.xmax_camera_list_get(value, i, &info));
-            int position;
-            NativeError.Check(NativeMethods.xmax_camera_list_get_position(
-                value,
-                i,
-                &position
-            ));
-            result.Add(new CameraDevice(
-                NativeError.Text(info.id),
-                NativeError.Text(info.name),
-                info.is_default != 0
-            ) { Position = (CameraPosition)position });
-        }
-        return result.AsReadOnly();
-    }
-
-    /// <summary>
-    /// Creates an independent realtime controller from this client.
-    /// </summary>
+    /// <summary>Creates an independent realtime controller and captures the current UI context.</summary>
     /// <param name="configuration">The model and adaptive-quality settings; null selects the defaults.</param>
     /// <returns>A controller that your app must release with DisposeAsync.</returns>
-    public unsafe XmaxRealtime CreateRealtime(
-        RealtimeConfiguration? configuration = null
+    public IXmaxRealtimeManaging CreateRealtimeManager(RealtimeConfiguration? configuration = null) =>
+        CreateRealtimeManager(configuration, SynchronizationContext.Current);
+
+    /// <summary>Creates an independent realtime controller with a specified UI context.</summary>
+    /// <param name="configuration">The model and adaptive-quality settings; null selects the defaults.</param>
+    /// <param name="callbackContext">The UI context for typed observations and external source lifecycle.
+    /// When null, each operation uses its caller's synchronization context if available.</param>
+    /// <returns>A controller that your app must release with DisposeAsync.</returns>
+    public unsafe IXmaxRealtimeManaging CreateRealtimeManager(
+        RealtimeConfiguration? configuration,
+        SynchronizationContext? callbackContext
     )
     {
         configuration ??= new();
@@ -149,7 +105,7 @@ public sealed partial class XmaxClient : IDisposable
         var realtime = new NativeHandle(value, HandleKind.Realtime);
         try
         {
-            return new(realtime, configuration);
+            return new XmaxRealtime(realtime, configuration, callbackContext);
         }
         catch
         {
@@ -158,57 +114,31 @@ public sealed partial class XmaxClient : IDisposable
         }
     }
 
-    private static string GetModelIdentifier(RealtimeModel model) => model switch
+    internal static string GetModelIdentifier(RealtimeModel model) => model switch
     {
         RealtimeModel.X2_1 => "x2.1",
         _ => throw new ArgumentOutOfRangeException(nameof(model))
     };
 
     /// <summary>Creates a media sizing and capability service for the selected model.</summary>
-    public XmaxMediaService CreateMediaService(RealtimeModel model = RealtimeModel.X2_1) => new(GetModelInfo(model));
+    public IMediaServicing CreateMediaService(RealtimeModel model = RealtimeModel.X2_1)
+    {
+        NativeLibraryLoader.Initialize();
+        _ = GetModelIdentifier(model);
+        return new XmaxMediaService(model);
+    }
 
     /// <summary>
     /// Creates an independent storage controller.
     /// </summary>
     /// <returns>A storage controller that your app must release with DisposeAsync.</returns>
     /// <exception cref="XmaxException">The configured API key is empty.</exception>
-    public unsafe XmaxStorage CreateStorage()
+    public unsafe IXmaxStorageManaging CreateStorageManager()
     {
         using var lease = handle.Borrow();
         nint value = 0;
         NativeError.Check(NativeMethods.xmax_storage_create(lease.Value, &value));
-        return new(new(value, HandleKind.Storage));
-    }
-
-    /// <summary>
-    /// Sends a JSON request to a relative path on the configured general API service.
-    /// </summary>
-    /// <param name="method">The HTTP method supported by the service.</param>
-    /// <param name="path">The relative API path; absolute URLs are rejected.</param>
-    /// <param name="jsonBody">The JSON request body; null omits the body.</param>
-    /// <param name="cancellationToken">Cancels before the native request starts; an admitted request has no in-flight cancellation.</param>
-    /// <returns>A task containing the response JSON text.</returns>
-    public Task<string> RequestJsonAsync(
-        string method,
-        string path,
-        string? jsonBody = null,
-        CancellationToken cancellationToken = default
-    )
-    {
-        var lease = handle.Borrow();
-        return Task.Run(() =>
-        {
-            using (lease) { cancellationToken.ThrowIfCancellationRequested(); return RequestJson(lease.Value, method, path, jsonBody); }
-        });
-    }
-
-    private static unsafe string RequestJson(nint value, string method, string path, string? body)
-    {
-        using var verb = new Utf8(method); using var target = new Utf8(path); using var json = new Utf8(body);
-        nint result = 0;
-        NativeError.Check(NativeMethods.xmax_client_request_json(value, verb.Pointer, target.Pointer, json.Pointer, &result));
-        using var owner = new NativeHandle(result, HandleKind.String);
-        return NativeError.Text(NativeMethods.xmax_string_data(result));
+        return new XmaxStorage(new(value, HandleKind.Storage));
     }
 
     /// <summary>

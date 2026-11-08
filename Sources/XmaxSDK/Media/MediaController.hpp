@@ -115,7 +115,7 @@ class MediaController {
     }
 
     /**
-     * Replaces the media source, starts SDK camera capture, and waits for the first frame.
+     * Replaces the media source and starts SDK camera capture.
      *
      * @param[in] device The UTF-8 camera identifier; an empty string selects the default camera.
      * @param[in] format The input dimensions and frame rate; see xmax_video_format for limits.
@@ -126,19 +126,25 @@ class MediaController {
         const std::string& device,
         xmax_video_format format,
         std::function<void(Error)> failure,
-        const Cancel& cancel
+        const Cancel& cancel,
+        bool wait_for_first_frame = true
     ) {
         close();
         external_.prepare(format);
         camera_active_ = true;
-        device_ = device;
 
         try {
+            device_ = device;
+            if (device_.empty()) {
+                if (const auto selected = current_camera())
+                    device_ = selected->id;
+            }
             camera_.start(
-                device,
+                device_,
                 format,
                 {[this](Frame frame) { external_.push_owned(std::move(frame)); }, std::move(failure)},
-                cancel
+                cancel,
+                wait_for_first_frame
             );
         } catch (...) {
             close();
@@ -149,7 +155,7 @@ class MediaController {
     /**
      * Switches camera capture using the current input format.
      *
-     * @param[in] device The UTF-8 camera identifier; an empty string selects the default camera.
+     * @param[in] device The UTF-8 identifier of an enumerated camera.
      * @param[in] failure The asynchronous failure callback; delivery must finish before stop returns.
      * @param[in] cancel A cooperative cancellation predicate; true requests termination of the operation.
      */

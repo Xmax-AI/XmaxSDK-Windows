@@ -45,6 +45,13 @@ internal unsafe struct xmax_video_format
 }
 
 [StructLayout(LayoutKind.Sequential, Pack = 8)]
+internal unsafe struct xmax_media_size
+{
+    public double @width;
+    public double @height;
+}
+
+[StructLayout(LayoutKind.Sequential, Pack = 8)]
 internal unsafe struct xmax_video_frame
 {
     public uint @struct_size;

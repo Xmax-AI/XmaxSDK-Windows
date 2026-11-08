@@ -1,3 +1,13 @@
+//
+//  RemoteMediaRecorder.cs
+//  XmaxSDK
+//
+//  Author: 翁跃庭 (Yueting Weng)
+//  GitHub: https://github.com/Xmax-AI/XmaxSDK-Windows
+//
+//  Copyright (c) 2026 XMAX.AI PTE. LTD.
+//
+
 using System.Buffers;
 using Xmax.SDK;
 
@@ -38,7 +48,7 @@ internal sealed class RemoteMediaRecorder : IAsyncDisposable
         worker.Start();
     }
 
-    internal void Append(XmaxMediaFrame frame)
+    internal void Append(RealtimeMediaFrame frame)
     {
         IRecordingPacket packet;
         try { packet = new RemoteRecordingPacket(frame); }

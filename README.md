@@ -199,7 +199,7 @@ using var client = new XmaxClient(new XmaxConfiguration
 });
 
 // Initialize the realtime manager
-await using var realtime = client.CreateRealtime(new RealtimeConfiguration
+await using var realtime = client.CreateRealtimeManager(new RealtimeConfiguration
 {
     Model = RealtimeModel.X2_1
 });
@@ -276,7 +276,7 @@ XmaxSDK is available under the terms of the [MIT License](LICENSE).
 
 ## Generated result beauty
 
-`XmaxRealtime.SetRemoteVideoBeautyAsync(new RealtimeVideoBeautyOptions(Smoothness: 0.5f, Lightening: 0.3f))`
+`IXmaxRealtimeManaging.SetRemoteVideoBeautyAsync(new RealtimeVideoBeautyOptions(Smoothness: 0.5f, Lightening: 0.3f))`
 configures local beauty on generated result pixels. Pass `null` to disable. All four strengths
 (`Smoothness`, `Lightening`, `Sharpness`, `Redness`) are finite values in `0..1`, defaulting to zero;
 beauty is disabled by default. Configuration survives result replacement and reconnection. `CloseAsync`
@@ -284,8 +284,10 @@ disables beauty and clears the beauty error listener.
 
 Register `SetRemoteVideoBeautyErrorListenerAsync(error => ...)` for recoverable frame-processing failures.
 The SDK disables beauty and restores original-frame delivery without stopping generation. Initialization
-and configuration errors are returned by the configuration method. Managed callbacks use the registration
-caller's synchronization context, or the thread pool if none exists. C/C++ callbacks run on a background
+and configuration errors are returned by the configuration method. Managed typed observations use
+the UI context captured by `CreateRealtimeManager` or passed to its two-argument overload. Without a
+controller context, registration uses the caller's context when available. Headless observations
+run on the thread pool. C/C++ callbacks run on a background
 worker: dispatch blocking SDK operations elsewhere. Preview and the remote media listener share the same
 processed pixels, with timestamps preserved. Camera input, upstream publication, audio and app watermarks
 are unchanged. No app-side frame processor is required.
@@ -350,19 +352,22 @@ in parallel with local RTC cleanup; delayed heartbeat failures cannot terminate 
 ```csharp
 var localStream = await realtime.CreateLocalCameraStreamAsync(
     videoFormat: new VideoFormat(1920, 1080, 30),
-    deviceId: null,
-    mirror: true,
-    microphone: RealtimeMicrophone.SystemDefault
+    camera: RealtimeCamera.SystemDefault,
+    microphone: RealtimeMicrophone.SystemDefault,
+    mirror: true
 );
-localView.VideoSource = localStream.VideoTrack;
+localView.Track = localStream.VideoTrack;
 ```
 
-The preset overload accepts `RealtimeCameraPreset`. Omitted microphone selection disables capture;
+The preset overload accepts `RealtimeCameraPreset`. Enumerate inputs with
+`MediaDevices.ListCameraDevicesAsync()` and `MediaDevices.ListMicrophoneDevicesAsync()` before creating
+a controller. Use `RealtimeCamera.Device(id)` to select a specific camera. Camera creation requires a
+native mode that supports the requested frame rate. Omitted microphone selection disables capture;
 `RealtimeMicrophone.Device(id)` selects a Windows recording endpoint. Mirroring applies to local
 preview and published camera video together, preserving the independent generated-result display
 setting. Creation starts no cloud session and returns after the first camera frame. You can pass
 the returned stream to connection or generation immediately. A bound preview can report Ready
-before connection starts. The controller owns capture lifetime. Use `StopMediaAsync` after
+before connection starts. The controller owns capture lifetime. Use `StopLocalCameraStreamAsync` after
 disconnection, or `CloseAsync`, to release it.
 Windows checks microphone privacy and endpoint access when an enabled camera stream is created.
 The SDK captures microphone audio through WASAPI on connection and publishes timestamped PCM
@@ -375,8 +380,20 @@ front or back position when it has enclosure metadata for the selected device. S
 `MinimumBitrateKbps`, `MaximumBitrateKbps`, and `EncoderPreference` on `VideoFormat` to configure
 uplink encoding when creating or updating a camera stream or binding external video.
 
+Typed state and microphone level listeners replay the current value at registration. Video statistics
+listeners receive future snapshots and stream resets. External source properties, start and stop
+run on the same UI context when one is available. The remote media frame listener remains a
+serialized background callback.
+
+## Media sizing
+
+`CreateMediaService()` returns an `IMediaServicing` instance. Its size resolvers take `MediaSize`
+values in pixels. Camera frame rate and encoder settings belong to `VideoFormat` on stream creation
+and format updates.
+
 ## Media transfers
 
+`CreateStorageManager()` returns an `IXmaxStorageManaging` instance.
 `UploadImageAsync`, `UploadImageWithSafetyCheckAsync`, and `UploadVideoAsync` accept a file path or
 encoded bytes. `DownloadImageAsync` and `DownloadVideoAsync` return the destination and byte count.
 They replace an existing destination only after the transfer succeeds. Pass an

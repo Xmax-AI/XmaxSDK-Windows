@@ -24,15 +24,15 @@ namespace Xmax.SDK.WinUI;
 /// </summary>
 /// <remarks>
 /// Create and access this control on its UI thread. Assign only one independent consumer to each video source.
-/// Unloading or replacing VideoSource stops the old frame pump; your app still owns and disposes the realtime session.
+/// Unloading or replacing Track stops the old frame pump; your app still owns and disposes the realtime session.
 /// </remarks>
 public sealed partial class XmaxRealtimeVideoView : Grid
 {
 
     /// <summary>
-    /// Identifies the VideoSource dependency property.
+    /// Identifies the Track dependency property.
     /// </summary>
-    public static readonly DependencyProperty VideoSourceProperty = DependencyProperty.Register(nameof(VideoSource), typeof(IXmaxVideoSource),
+    public static readonly DependencyProperty TrackProperty = DependencyProperty.Register(nameof(Track), typeof(RealtimeVideoTrack),
         typeof(XmaxRealtimeVideoView), new PropertyMetadata(null, (owner, _) => ((XmaxRealtimeVideoView)owner).Restart()));
 
     /// <summary>
@@ -73,10 +73,10 @@ public sealed partial class XmaxRealtimeVideoView : Grid
     /// <remarks>
     /// Replacing the source resets presentation counters and dimensions.
     /// </remarks>
-    public IXmaxVideoSource? VideoSource
+    public RealtimeVideoTrack? Track
     {
-        get => (IXmaxVideoSource?)GetValue(VideoSourceProperty);
-        set => SetValue(VideoSourceProperty, value);
+        get => (RealtimeVideoTrack?)GetValue(TrackProperty);
+        set => SetValue(TrackProperty, value);
     }
 
     /// <summary>
@@ -160,13 +160,13 @@ public sealed partial class XmaxRealtimeVideoView : Grid
     private void Restart()
     {
         Stop();
-        trajectory.Track = VideoSource as RealtimeVideoTrack;
+        trajectory.Track = Track;
         contentRevision = 0;
         ClearPresentation();
-        if (VideoSource is RealtimeVideoTrack { IsRemote: false } track)
+        if (Track is RealtimeVideoTrack { IsRemote: false } track)
             _ = ConfirmPreviewAsync(track);
-        if (!IsLoaded || VideoSource is null) return;
-        pump = new(VideoSource, error => DispatcherQueue.TryEnqueue(() => PlaybackFailed?.Invoke(error)));
+        if (!IsLoaded || Track is null) return;
+        pump = new(Track, error => DispatcherQueue.TryEnqueue(() => PlaybackFailed?.Invoke(error)));
         CompositionTarget.Rendering += RenderFrame;
     }
 

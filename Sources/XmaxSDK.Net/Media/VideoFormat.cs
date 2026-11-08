@@ -28,7 +28,7 @@ public readonly record struct VideoFormat(
     uint FramesPerSecond = 30
 )
 {
-    /// <summary>Gets the optional minimum uplink bitrate in kbps.</summary>
+    /// <summary>Gets the minimum uplink bitrate in kbps; null uses the SDK default and zero removes the limit.</summary>
     public int? MinimumBitrateKbps { get; init; }
 
     /// <summary>Gets the optional maximum uplink bitrate in kbps.</summary>
@@ -43,7 +43,7 @@ public readonly record struct VideoFormat(
     /// <param name="width">The width, in pixels.</param>
     /// <param name="height">The height, in pixels.</param>
     /// <param name="framesPerSecond">The nominal frame rate.</param>
-    /// <param name="minimumBitrateKbps">A positive minimum in kbps, or null for the SDK default.</param>
+    /// <param name="minimumBitrateKbps">The minimum in kbps; null uses the SDK default and zero removes the limit.</param>
     /// <param name="maximumBitrateKbps">A positive maximum in kbps, or null for the SDK default.</param>
     /// <param name="encoderPreference">The encoder's quality adaptation preference.</param>
     public VideoFormat(
@@ -68,7 +68,7 @@ public readonly record struct VideoFormat(
     {
         get
         {
-            if (MinimumBitrateKbps is <= 0)
+            if (MinimumBitrateKbps is < 0)
                 throw new ArgumentOutOfRangeException(nameof(MinimumBitrateKbps));
             if (MaximumBitrateKbps is <= 0)
                 throw new ArgumentOutOfRangeException(nameof(MaximumBitrateKbps));
@@ -84,7 +84,7 @@ public readonly record struct VideoFormat(
 
     internal VideoFormat WithEncoding(xmax_encoding_config encoding) => this with
     {
-        MinimumBitrateKbps = encoding.minimum_bitrate_kbps > 0 ? encoding.minimum_bitrate_kbps : null,
+        MinimumBitrateKbps = encoding.minimum_bitrate_kbps >= 0 ? encoding.minimum_bitrate_kbps : null,
         MaximumBitrateKbps = encoding.maximum_bitrate_kbps > 0 ? encoding.maximum_bitrate_kbps : null,
         EncoderPreference = (EncodingPreference)encoding.preference
     };

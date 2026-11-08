@@ -13,8 +13,17 @@ using Xmax.SDK.Runtime;
 
 namespace Xmax.SDK;
 
-public sealed partial class XmaxRealtime
+internal sealed partial class XmaxRealtime
 {
+    internal unsafe XmaxVideoFrame? AcquireLocalFrame(ulong revision)
+    {
+        if (handle.IsClosed) return null;
+        using var lease = handle.Borrow();
+        nint frame = 0;
+        NativeError.Check(NativeMethods.xmax_realtime_acquire_stream_frame(lease.Value, 1, revision, &frame));
+        return frame == 0 ? null : new(new NativeHandle(frame, HandleKind.Frame));
+    }
+
     internal unsafe XmaxVideoFrame? AcquireResultFrame(ulong revision, out ulong contentRevision)
     {
         contentRevision = 0;
@@ -41,7 +50,7 @@ public sealed partial class XmaxRealtime
         {
             if (currentRemoteStream?.Revision == revision)
                 return currentRemoteStream;
-            var stream = new RealtimeMediaStream(this, false, revision, new VideoSource(handle, false, revision));
+            var stream = new RealtimeMediaStream(this, false, revision);
             stream.VideoTrack.InteractionFormat = currentLocalStream?.VideoTrack.VideoFormat;
             stream.VideoTrack.UpdateFormat(format);
             if (currentRemoteStream is null || currentRemoteStream.Revision < revision)
@@ -76,7 +85,7 @@ public sealed partial class XmaxRealtime
         {
             try
             {
-                var devices = EnumerateCameraDevices(value);
+                var devices = MediaDevices.ReadCameraSnapshot();
                 device = string.IsNullOrEmpty(cameraDeviceId)
                     ? devices.FirstOrDefault(item => item.IsDefault) ?? devices.FirstOrDefault()
                     : devices.FirstOrDefault(item => item.Id == cameraDeviceId);
@@ -87,7 +96,7 @@ public sealed partial class XmaxRealtime
         lock (trackGate)
         {
             if (currentLocalStream?.Revision != revision)
-                currentLocalStream = new(this, true, revision, new VideoSource(handle, true, revision), cameraPreview);
+                currentLocalStream = new(this, true, revision, cameraPreview);
             currentLocalStream.VideoTrack.UpdateFormat(format);
             currentLocalStream.VideoTrack.UpdateDevice(device);
             return currentLocalStream;
@@ -116,25 +125,5 @@ public sealed partial class XmaxRealtime
         lock (trackGate)
             if (currentLocalStream?.Revision == revision)
                 currentLocalStream.VideoTrack.UpdateFormat(format);
-    }
-
-    internal bool TrySubmitInteraction(
-        RealtimeVideoTrack track, ReadOnlySpan<TrajectoryPoint> points, double width, double height,
-        uint videoWidth, uint videoHeight, bool mirrored, VideoContentMode mode
-    )
-    {
-        lock (trackGate)
-        {
-            if (!ReferenceEquals(currentRemoteStream?.VideoTrack, track))
-                return false;
-            try
-            {
-                SubmitInteractionCore(points, width, height, videoWidth, videoHeight, mirrored, mode,
-                    currentRemoteStream!.Revision);
-                return true;
-            }
-            catch (XmaxException error) when (error.Result == -2) { return false; }
-            catch (ObjectDisposedException) { return false; }
-        }
     }
 }

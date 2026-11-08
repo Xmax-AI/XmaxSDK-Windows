@@ -41,9 +41,11 @@ internal static class Program
     private static async Task VerifyAsync()
     {
         using var client = new XmaxClient();
-        await using var realtime = client.CreateRealtime();
-        using var sink = await realtime.BindExternalAsync(new(16, 8));
-        var view = new XmaxRealtimeVideoView { Width = 160, Height = 80, VideoSource = realtime.LocalVideo, FirstFrameFadeInDuration = 0 };
+        await using var realtime = client.CreateRealtimeManager();
+        var source = new TestSource();
+        var stream = await realtime.CreateExternalVideoStreamAsync(source);
+        var sink = source.Sink!;
+        var view = new XmaxRealtimeVideoView { Width = 160, Height = 80, Track = stream.VideoTrack, FirstFrameFadeInDuration = 0 };
         var host = new Grid { Width = 160, Height = 80, Background = Brushes.Black };
         host.Children.Add(view);
         view.Visibility = Visibility.Collapsed;
@@ -51,28 +53,25 @@ internal static class Program
         Exception? displayError = null;
         view.PlaybackFailed += error => displayError = error;
         window.Show();
-        byte[] pixels = new byte[64 * 8];
-        for (int y = 0; y < 8; ++y)
-            for (int x = 0; x < 16; ++x)
-            { int i = y * 64 + x * 4; pixels[i + (x < 8 ? 2 : 0)] = 255; pixels[i + 3] = 255; }
-        sink.PushBgra(pixels, 64, 1000);
+        byte[] pixels = new byte[TestSource.Stride * TestSource.Height];
+        for (int y = 0; y < TestSource.Height; ++y)
+            for (int x = 0; x < TestSource.Width; ++x)
+            { int i = y * TestSource.Stride + x * 4; pixels[i + (x < TestSource.Width / 2 ? 2 : 0)] = 255; pixels[i + 3] = 255; }
+        sink.PushBgra(pixels, TestSource.Stride, 1000);
         await WaitAsync(() => view.PresentedFrameCount >= 1);
         view.Visibility = Visibility.Visible;
         await Task.Delay(50);
-        Check(displayError is null && view.VideoWidth == 16 && view.VideoHeight == 8, "BGRA display metadata");
+        Check(displayError is null && view.VideoWidth == TestSource.Width && view.VideoHeight == TestSource.Height, "BGRA display metadata");
         Check(Pixel(view, 20, 40).R > 200 && Pixel(view, 140, 40).B > 200, "displayed pixels differ from input");
         Console.WriteLine("PASS WPF displayed real SDK-owned BGRA pixels");
 
         view.IsMirrored = true;
         Check(Pixel(view, 20, 40).B > 200 && Pixel(view, 140, 40).R > 200, "view mirroring redraws the current frame");
-        view.IsMirrored = false;
-
-        await realtime.SetVideoMirrorAsync(new(true, false, false));
-        sink.PushBgra(pixels, 64, 2000);
+        sink.PushBgra(pixels, TestSource.Stride, 2000);
         await WaitAsync(() => view.PresentedFrameCount >= 2);
         await Task.Delay(50);
-        Check(Pixel(view, 20, 40).B > 200 && Pixel(view, 140, 40).R > 200, "mirror metadata applied once");
-        Console.WriteLine("PASS WPF mirror metadata is applied once");
+        Check(Pixel(view, 20, 40).B > 200 && Pixel(view, 140, 40).R > 200, "view mirroring persists across frames");
+        Console.WriteLine("PASS WPF view mirroring persists across frames");
 
         var renderer = new TestRenderer();
         view.TrajectoryRenderer = renderer;
@@ -83,15 +82,15 @@ internal static class Program
         Console.WriteLine("PASS WPF custom trajectory effect mounts and detaches above video");
 
         // Flood faster than display: the final image must be current, without one Dispatcher job per frame.
-        await Task.Run(() => { for (int i = 3; i <= 100; ++i) sink.PushBgra(pixels, 64, i * 1000); });
+        await Task.Run(() => { for (int i = 3; i <= 100; ++i) sink.PushBgra(pixels, TestSource.Stride, i * 1000); });
         await WaitAsync(() => view.LastPresentedTimestampMicroseconds == 100000);
         window.Content = null;
         await Task.Delay(50);
         window.Content = host;
-        sink.PushBgra(pixels, 64, 101000);
+        sink.PushBgra(pixels, TestSource.Stride, 101000);
         await WaitAsync(() => view.LastPresentedTimestampMicroseconds == 101000);
         Console.WriteLine("PASS frame replacement and unload/reload");
-        view.VideoSource = null;
+        view.Track = null;
         await realtime.DisposeAsync();
         window.Close();
         Check(displayError is null, "close raced with the renderer");
@@ -100,8 +99,8 @@ internal static class Program
     private static async Task VerifyDualAsync()
     {
         using var client = new XmaxClient();
-        await using var local = client.CreateRealtime();
-        await using var remote = client.CreateRealtime();
+        await using var local = client.CreateRealtimeManager();
+        await using var remote = client.CreateRealtimeManager();
         var preview = new TestSource();
         var result = new TestSource();
         var localStream = await local.CreateExternalVideoStreamAsync(preview);
@@ -136,23 +135,26 @@ internal static class Program
 
     private sealed class TestSource : IRealtimeExternalVideoSource
     {
-        private ExternalFrameSink? sink;
-        public VideoFormat VideoFormat => new(16, 8);
-        public Task StartAsync(ExternalFrameSink value, CancellationToken cancellationToken)
+        internal const int Width = 640;
+        internal const int Height = 320;
+        internal const int Stride = Width * 4;
+        internal IRealtimeExternalFrameSink? Sink { get; private set; }
+        public VideoFormat VideoFormat => new(Width, Height);
+        public Task StartAsync(IRealtimeExternalFrameSink value, CancellationToken cancellationToken)
         {
-            sink = value;
+            Sink = value;
             return Task.CompletedTask;
         }
-        public Task StopAsync() { sink = null; return Task.CompletedTask; }
+        public Task StopAsync() { Sink = null; return Task.CompletedTask; }
         public void Push(int channel, long timestamp)
         {
-            byte[] pixels = new byte[64 * 8];
+            byte[] pixels = new byte[Stride * Height];
             for (int i = 0; i < pixels.Length; i += 4)
             {
                 pixels[i + channel] = 255;
                 pixels[i + 3] = 255;
             }
-            sink!.PushBgra(pixels, 64, timestamp);
+            Sink!.PushBgra(pixels, Stride, timestamp);
         }
     }
 

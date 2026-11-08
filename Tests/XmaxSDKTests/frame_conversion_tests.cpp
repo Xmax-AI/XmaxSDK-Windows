@@ -126,6 +126,7 @@ static void model_formats() {
     expect_error(XMAX_INVALID_ARGUMENT, [] { MediaService::camera_input({1024, 1920, 24}); });
     CHECK(RealtimeModelDefinition::preset({1920, 1024, 24}) == XMAX_CAMERA_PRESET_NONE);
     CHECK(MediaService::camera_input({1080, 1920, 24}).fps == 24);
+    CHECK(MediaService::camera_input({1080, 1920, 120}).fps == 120);
     CHECK(MediaService::input({1920, 1024, 30}).height == 1024);
     const auto portrait = MediaService::generation({1024, 1920, 30});
     CHECK(portrait.width == 1080 && portrait.height == 1920);
@@ -170,11 +171,19 @@ static void corrects_camera_pixel_orientation() {
     auto frame = native_frame(4, 2, XMAX_BGRA, 123);
     for (uint8_t i = 0; i < 8; ++i)
         frame.planes[0][i * 4] = i;
-    const auto rotated = rotate_bgra(std::move(frame), 90);
+    const auto rotated = rotate_camera_frame(std::move(frame), 90);
     CHECK(rotated.width == 2 && rotated.height == 4 && rotated.timestamp_us == 123);
     const std::array<uint8_t, 8> expected{4, 0, 5, 1, 6, 2, 7, 3};
     for (size_t i = 0; i < expected.size(); ++i)
         CHECK(rotated.planes[0][i * 4] == expected[i]);
+
+    auto nv12 = native_frame(4, 2, XMAX_NV12, 124);
+    nv12.planes[0] = {0, 1, 2, 3, 4, 5, 6, 7};
+    nv12.planes[1] = {11, 12, 21, 22};
+    const auto rotated_nv12 = rotate_camera_frame(std::move(nv12), 270);
+    CHECK(rotated_nv12.format == XMAX_NV12 && rotated_nv12.width == 2 && rotated_nv12.height == 4);
+    CHECK(rotated_nv12.planes[0] == std::vector<uint8_t>({3, 7, 2, 6, 1, 5, 0, 4}));
+    CHECK(rotated_nv12.planes[1] == std::vector<uint8_t>({21, 22, 11, 12}));
 }
 
 int main() {

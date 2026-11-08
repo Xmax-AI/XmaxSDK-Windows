@@ -35,7 +35,7 @@ void MicrophoneCaptureController::configure(bool enabled, std::string device) {
 }
 
 void MicrophoneCaptureController::select(std::string device) {
-    if (enabled_ || capture_)
+    if (!device.empty() || capture_)
         validate(device);
     if (device == device_)
         return;

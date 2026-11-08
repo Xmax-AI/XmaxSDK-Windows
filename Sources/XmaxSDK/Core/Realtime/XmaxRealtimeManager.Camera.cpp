@@ -9,6 +9,7 @@
 //
 
 #include "Core/Realtime/XmaxRealtimeManager.hpp"
+#include "Foundation/Media/FrameConverter.hpp"
 #include "Service/Media/MediaService.hpp"
 #include <algorithm>
 #include <thread>
@@ -31,7 +32,7 @@ using OperationKind = Lifecycle::OperationKind;
 using Scope = Lifecycle::TerminationScope;
 
 /**
- * Starts a camera, waits for its first frame, and enters ready state with frames in the configured format.
+ * Starts capture and selects whether readiness is gated on the attached preview.
  *
  * @param[in] device The UTF-8 camera identifier; an empty string selects the default camera.
  * @param[in] format The input dimensions and frame rate; see xmax_video_format for limits.
@@ -80,18 +81,19 @@ void XmaxRealtimeManager::create_local_camera_stream(
             );
             mirror_.local_preview = mirror_.published_video = mirror ? 1 : 0;
             bind_local();
+            camera_preview_pending_ = wait_for_preview;
             media_.prepare_camera(
                 device,
                 resolved,
                 media_failure(media_epoch_),
-                token.cancellation()
+                token.cancellation(),
+                !wait_for_preview
             );
             token.ensure_current();
             if (encoding)
                 stream_.encoding(*encoding);
             media_.microphone().configure(microphone, std::move(microphone_device));
             stream_.volume(0);
-            camera_preview_pending_ = wait_for_preview;
             if (!wait_for_preview)
                 complete_state(XMAX_READY, token);
         }
@@ -109,27 +111,42 @@ void XmaxRealtimeManager::complete_camera_preview(
     if (revision != local_stream_revision() || !camera_preview_pending_)
         return;
     lifecycle_.sync([this, revision] {
-        if (revision == local_stream_revision() && camera_preview_pending_ && media_.camera_active() &&
-            lifecycle_.state() == XMAX_PREPARING) {
-            camera_preview_pending_ = false;
-            change_state(XMAX_READY);
-        }
+        if (revision != local_stream_revision() || !camera_preview_pending_)
+            return;
+        camera_preview_attached_ = true;
+        publish_camera_ready();
     });
+}
+
+void XmaxRealtimeManager::publish_camera_ready() {
+    if (camera_preview_pending_ && camera_preview_attached_ && camera_preview_has_frame_ &&
+        media_.camera_active() && lifecycle_.state() == XMAX_PREPARING) {
+        camera_preview_pending_ = false;
+        change_state(XMAX_READY);
+    }
 }
 
 std::shared_ptr<Frame> XmaxRealtimeManager::acquire_local_frame(
     uint64_t revision
 ) {
-    std::lock_guard<std::mutex> lock(media_binding_mutex_);
-    if (revision && revision != local_stream_revision())
-        return {};
-    return render_.acquire_local_frame();
+    std::shared_ptr<Frame> frame;
+    bool camera;
+    {
+        std::lock_guard<std::mutex> lock(media_binding_mutex_);
+        if (revision && revision != local_stream_revision())
+            return {};
+        camera = media_.camera_active();
+        frame = render_.acquire_local_frame();
+    }
+    if (camera && frame && frame->format != XMAX_BGRA)
+        return std::make_shared<Frame>(bgra_frame(*frame));
+    return frame;
 }
 
 /**
  * Switches the active camera and resumes generation with retained conditions.
  *
- * @param[in] device The UTF-8 camera identifier; an empty string selects the default camera.
+ * @param[in] device The UTF-8 identifier of an enumerated camera.
  */
 void XmaxRealtimeManager::switch_camera(
     std::string device
@@ -153,6 +170,14 @@ void XmaxRealtimeManager::switch_camera(
                 stream_.stop_generation(cancel);
                 change_state(XMAX_CONNECTED);
             }
+            const auto devices = media_.devices();
+            require(
+                !device.empty() && std::any_of(devices.begin(), devices.end(), [&device](const auto& camera) {
+                    return camera.id == device;
+                }),
+                XMAX_MEDIA_ERROR,
+                "The requested camera is unavailable"
+            );
             media_.stop();
             render_.unbind(epoch);
             bind_local(true);

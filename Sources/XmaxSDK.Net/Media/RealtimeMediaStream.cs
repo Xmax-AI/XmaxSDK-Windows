@@ -23,12 +23,12 @@ public sealed class RealtimeMediaStream
     internal ulong Revision { get; }
     internal bool IsLocal { get; }
 
-    internal RealtimeMediaStream(XmaxRealtime owner, bool isLocal, ulong revision, IXmaxVideoSource videoTrack, bool cameraPreview = false)
+    internal RealtimeMediaStream(XmaxRealtime owner, bool isLocal, ulong revision, bool cameraPreview = false)
     {
         Owner = owner;
         IsLocal = isLocal;
         Revision = revision;
         Id = $"{(isLocal ? "local" : "remote")}-{revision}";
-        VideoTrack = new(owner, Id, !isLocal, videoTrack, revision, cameraPreview);
+        VideoTrack = new(owner, Id, !isLocal, revision, cameraPreview);
     }
 }

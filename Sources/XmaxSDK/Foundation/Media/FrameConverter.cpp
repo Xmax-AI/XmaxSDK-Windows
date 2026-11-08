@@ -34,6 +34,9 @@ Frame bgra_frame(
     result.width = source.width;
     result.height = source.height;
     result.timestamp_us = source.timestamp_us;
+    result.presentation_mirrored = source.presentation_mirrored;
+    result.color_primaries = source.color_primaries;
+    result.color_transfer = source.color_transfer;
     result.strides[0] = size_t(result.width) * 4;
     result.planes[0].resize(result.strides[0] * result.height);
 
@@ -63,26 +66,34 @@ Frame bgra_frame(
     return result;
 }
 
-Frame rotate_bgra(Frame frame, unsigned degrees) {
+Frame rotate_camera_frame(Frame frame, unsigned degrees) {
     if (degrees != 90 && degrees != 180 && degrees != 270)
         return frame;
     Frame result;
+    result.format = frame.format;
     result.width = degrees == 180 ? frame.width : frame.height;
     result.height = degrees == 180 ? frame.height : frame.width;
     result.timestamp_us = frame.timestamp_us;
     result.presentation_mirrored = frame.presentation_mirrored;
     result.color_primaries = frame.color_primaries;
     result.color_transfer = frame.color_transfer;
-    result.strides[0] = size_t(result.width) * 4;
-    result.planes[0].resize(result.strides[0] * result.height);
-    for (uint32_t y = 0; y < frame.height; ++y) {
-        for (uint32_t x = 0; x < frame.width; ++x) {
-            const auto column = degrees == 270 ? y : degrees == 180 ? frame.width - 1 - x : frame.height - 1 - y;
-            const auto row = degrees == 90 ? x : degrees == 180 ? frame.height - 1 - y : frame.width - 1 - x;
-            std::memcpy(result.planes[0].data() + row * result.strides[0] + column * 4,
-                        frame.planes[0].data() + y * frame.strides[0] + x * 4, 4);
+    const auto rotate_plane = [&](size_t plane, uint32_t divisor, size_t pixel_bytes) {
+        const auto width = frame.width / divisor;
+        const auto height = frame.height / divisor;
+        result.strides[plane] = (result.width / divisor) * pixel_bytes;
+        result.planes[plane].resize(result.strides[plane] * (result.height / divisor));
+        for (uint32_t y = 0; y < height; ++y) {
+            for (uint32_t x = 0; x < width; ++x) {
+                const auto column = degrees == 270 ? y : degrees == 180 ? width - 1 - x : height - 1 - y;
+                const auto row = degrees == 90 ? x : degrees == 180 ? height - 1 - y : width - 1 - x;
+                std::memcpy(result.planes[plane].data() + row * result.strides[plane] + column * pixel_bytes,
+                            frame.planes[plane].data() + y * frame.strides[plane] + x * pixel_bytes, pixel_bytes);
+            }
         }
-    }
+    };
+    rotate_plane(0, 1, frame.format == XMAX_NV12 ? 1 : 4);
+    if (frame.format == XMAX_NV12)
+        rotate_plane(1, 2, 2);
     return result;
 }
 

@@ -39,9 +39,9 @@ namespace Xmax.SDK;
 /// <param name="TotalMilliseconds">The startup request duration through the committed first result, excluding camera preparation and existing-connection idle time.</param>
 /// <remarks>
 /// Unavailable metrics and unfinished timing stages are -1. A negative Code on timing events reports failed startup with elapsed time.
-/// EventReceived consumes the native event queue; GetStateAsync reads a snapshot without consuming events.
+/// Used by the controller to route native snapshots to typed observations.
 /// </remarks>
-public sealed record RealtimeEvent(
+internal sealed record RealtimeEvent(
     RealtimeEventType Type,
     RealtimeConnectionState State,
     int Code,

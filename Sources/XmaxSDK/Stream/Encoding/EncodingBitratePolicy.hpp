@@ -16,7 +16,7 @@ namespace xmax::detail {
 /**
  * Calculates the policy minimum bitrate and estimated maximum from a validated format.
  *
- * @param[in] f Even video dimensions totaling at most 2100000 pixels, with a frame rate in [1, 60].
+ * @param[in] f Even video dimensions totaling at most 2100000 pixels, with a positive frame rate.
  *
  * @return The policy minimum and estimated maximum bitrates, in kbps.
  */

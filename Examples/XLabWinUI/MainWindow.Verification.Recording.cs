@@ -31,7 +31,7 @@ public sealed partial class MainWindow
         // Disconnect automatic picker presentation so save-failure/retry can be exercised deterministically.
         Model.PropertyChanged -= ModelChanged;
         using var client = new XmaxClient();
-        var native = client.CreateRealtime();
+        var native = client.CreateRealtimeManager();
         typeof(MainViewModel).GetField("session", BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(Model, native);
         typeof(MainViewModel).GetProperty(nameof(Model.IsPreview))!.SetValue(Model, false);
         typeof(MainViewModel).GetProperty(nameof(Model.State))!.SetValue(Model, RealtimeConnectionState.Generating);

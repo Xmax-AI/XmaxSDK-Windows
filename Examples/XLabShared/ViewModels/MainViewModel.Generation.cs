@@ -32,7 +32,7 @@ internal sealed partial class MainViewModel
     }
 
     private async Task GenerateOnStreamAsync(
-        XmaxRealtime target,
+        IXmaxRealtimeManaging target,
         GenerationContext context,
         bool faceRestoration,
         int current,

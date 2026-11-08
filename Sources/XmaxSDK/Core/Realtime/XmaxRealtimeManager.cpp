@@ -263,16 +263,26 @@ void XmaxRealtimeManager::complete_external_stream(
  */
 void XmaxRealtimeManager::bind_local(bool preserve_stream) {
     std::lock_guard<std::mutex> lock(media_binding_mutex_);
-    if (!preserve_stream)
+    if (!preserve_stream) {
         ++local_stream_id_;
+        camera_preview_attached_ = false;
+    }
+    camera_preview_has_frame_ = false;
     const auto token = ++media_epoch_;
     failed_media_epoch_ = 0;
     render_.bind_local(token);
     media_.external().preview(
-        [this, token](Frame frame) { render_.receive_local(
-                                         std::move(frame),
-                                         token
-                                     ); },
+        [this, token, first_frame = true](Frame frame) mutable {
+            render_.receive_local(std::move(frame), token);
+            if (std::exchange(first_frame, false) && camera_preview_pending_) {
+                lifecycle_.enqueue([this, token] {
+                    if (media_epoch_ != token)
+                        return;
+                    camera_preview_has_frame_ = true;
+                    publish_camera_ready();
+                });
+            }
+        },
         token
     );
 }
@@ -393,7 +403,6 @@ void XmaxRealtimeManager::push(
             binding,
             source_error
         );
-        throw source_error;
     } catch (...) {
         if (binding == 0)
             throw;
@@ -406,7 +415,6 @@ void XmaxRealtimeManager::push(
             binding,
             source_error
         );
-        throw source_error;
     }
 }
 
@@ -471,13 +479,6 @@ void XmaxRealtimeManager::connect_impl(
     errors_.reset();
     camera_preview_pending_ = false;
     change_state(XMAX_CONNECTING);
-
-    if (media_.camera_active()) {
-        const auto settled = Clock::now() + std::chrono::milliseconds(500);
-        while (!cancel() && Clock::now() < settled)
-            std::this_thread::sleep_until(std::min(settled, Clock::now() + std::chrono::milliseconds(10)));
-        require(!cancel(), XMAX_CANCELLED, "Connection cancelled");
-    }
 
     const bool capture_microphone = media_.external().allows_microphone() &&
                                     (microphone || media_.microphone().enabled());
@@ -1090,21 +1091,9 @@ void XmaxRealtimeManager::push_audio(
             binding
         );
     } catch (const Error& error) {
-        external_failure(
-            binding,
-            error
-        );
-        throw;
+        external_failure(binding, Error(XMAX_MEDIA_ERROR, error.what(), error.api_code, error.http_status));
     } catch (...) {
-        const Error error(
-            XMAX_MEDIA_ERROR,
-            "Could not process external PCM samples"
-        );
-        external_failure(
-            binding,
-            error
-        );
-        throw error;
+        external_failure(binding, Error(XMAX_MEDIA_ERROR, "Could not process external PCM samples"));
     }
 }
 

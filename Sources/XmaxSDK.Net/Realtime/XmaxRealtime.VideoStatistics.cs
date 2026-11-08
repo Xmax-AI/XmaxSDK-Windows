@@ -12,10 +12,10 @@ using Xmax.SDK.Interop;
 
 namespace Xmax.SDK;
 
-public sealed partial class XmaxRealtime
+internal sealed partial class XmaxRealtime
 {
     /// <summary>Reads the latest uplink measurements, or null before publication or after disconnection.</summary>
-    public UplinkVideoStatistics? GetUplinkVideoStatistics()
+    private UplinkVideoStatistics? GetUplinkVideoStatistics()
     {
         var value = ReadVideoStatistics(0);
         return value.available == 0 ? null : new(
@@ -27,7 +27,7 @@ public sealed partial class XmaxRealtime
     }
 
     /// <summary>Reads the latest downlink measurements, or null when no result statistics are available.</summary>
-    public unsafe DownlinkVideoStatistics? GetDownlinkVideoStatistics()
+    private unsafe DownlinkVideoStatistics? GetDownlinkVideoStatistics()
     {
         var value = ReadVideoStatistics(1);
         return value.available == 0 ? null : new(

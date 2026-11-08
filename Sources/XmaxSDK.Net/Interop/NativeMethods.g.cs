@@ -105,6 +105,12 @@ internal static unsafe partial class NativeMethods
     internal static partial int xmax_client_list_cameras(nint @client, nint* @out_list);
     [LibraryImport(Library)]
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial int xmax_media_list_cameras(nint* @devices);
+    [LibraryImport(Library)]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial int xmax_media_list_microphones(nint* @devices);
+    [LibraryImport(Library)]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
     internal static partial nuint xmax_camera_list_count(nint @list);
     [LibraryImport(Library)]
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
@@ -349,6 +355,15 @@ internal static unsafe partial class NativeMethods
     [LibraryImport(Library)]
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
     internal static partial int xmax_resolve_downlink_format(xmax_video_format* @source, double @maximum_width, double @maximum_height, xmax_video_format* @resolved);
+    [LibraryImport(Library)]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial int xmax_resolve_media_size(byte* @model, xmax_media_size* @source, int @camera, xmax_media_size* @resolved);
+    [LibraryImport(Library)]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial int xmax_resolve_generation_size(byte* @model, xmax_media_size* @source, xmax_media_size* @resolved);
+    [LibraryImport(Library)]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial int xmax_resolve_target_size(xmax_media_size* @source, xmax_media_size* @maximum, xmax_media_size* @resolved);
     [LibraryImport(Library)]
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
     internal static partial int xmax_realtime_list_microphones(nint @realtime, nint* @devices);

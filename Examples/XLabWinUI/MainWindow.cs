@@ -91,8 +91,8 @@ public sealed partial class MainWindow : Window
         Model.ApiKeyRequired += OpenKey;
         Model.CameraRequired += OpenCameras;
         LocalView.PlaybackFailed += Model.ReportError; RemoteView.PlaybackFailed += Model.ReportError;
-        Theme.Bind(LocalView, XmaxRealtimeVideoView.VideoSourceProperty, nameof(Model.LocalVideo), Model);
-        Theme.Bind(RemoteView, XmaxRealtimeVideoView.VideoSourceProperty, nameof(Model.RemoteVideo), Model);
+        Theme.Bind(LocalView, XmaxRealtimeVideoView.TrackProperty, nameof(Model.LocalVideo), Model);
+        Theme.Bind(RemoteView, XmaxRealtimeVideoView.TrackProperty, nameof(Model.RemoteVideo), Model);
         root.SizeChanged += (_, _) => RequestLayout();
         scroller.ViewChanged += (_, _) => RequestLayout();
         root.Loaded += async (_, _) =>

@@ -16,7 +16,7 @@ namespace Xmax.SDK;
 /// <param name="FileName">The file name used for object naming and MIME inference; supply a name for memory uploads.</param>
 /// <param name="ContentType">The MIME type; null lets the SDK infer it from the file name.</param>
 /// <param name="CheckImageSafety">Whether to request a safety check for an image upload.</param>
-public sealed record UploadOptions(
+internal sealed record UploadOptions(
     string? FileName = null,
     string? ContentType = null,
     bool CheckImageSafety = true

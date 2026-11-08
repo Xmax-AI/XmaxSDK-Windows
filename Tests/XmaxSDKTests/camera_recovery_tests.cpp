@@ -408,6 +408,51 @@ static void resumes_preempted_camera_without_replacing_track() {
     }
 }
 
+static void camera_preview_binds_before_first_frame() {
+    auto script = std::make_shared<CaptureScript>();
+    script->attempts = {CaptureAttempt::Wait};
+    auto manager = camera_manager(script);
+    manager->create_local_camera_stream("scripted", {1920, 1080, 30}, false, false, {}, true);
+    const auto track = manager->local_stream_revision();
+    manager->complete_camera_preview(track);
+    CHECK(manager->state_snapshot().state == XMAX_PREPARING);
+    CHECK(!manager->acquire_local_frame(track));
+
+    CaptureCallbacks callbacks;
+    {
+        std::lock_guard<std::mutex> lock(script->mutex);
+        callbacks = script->callbacks;
+    }
+    auto frame = camera_frame();
+    frame.format = XMAX_NV12;
+    frame.strides[0] = frame.strides[1] = frame.width;
+    frame.planes[0].assign(frame.width * frame.height, 82);
+    frame.planes[1].assign(frame.width * frame.height / 2, 128);
+    callbacks.frame(std::move(frame));
+    // Attachment is idempotent and serializes behind queued readiness work.
+    manager->complete_camera_preview(track);
+    CHECK(manager->state_snapshot().state == XMAX_READY);
+    const auto preview = manager->acquire_local_frame(track);
+    CHECK(preview && preview->format == XMAX_BGRA && preview->width == 1920 && preview->height == 1080);
+}
+
+static void missing_first_frame_reports_timeout_after_creation() {
+    auto script = std::make_shared<CaptureScript>();
+    script->attempts = {CaptureAttempt::Wait};
+    auto manager = camera_manager(script);
+    manager->create_local_camera_stream("scripted", {1920, 1080, 30}, false, false, {}, true);
+    const auto track = manager->local_stream_revision();
+    manager->complete_camera_preview(track);
+    CHECK(manager->state_snapshot().state == XMAX_PREPARING);
+
+    const auto deadline = Clock::now() + std::chrono::seconds(14);
+    while (manager->state_snapshot().state != XMAX_IDLE && Clock::now() < deadline)
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    const auto state = manager->state_info();
+    CHECK(state.event.state == XMAX_IDLE && state.reason == XMAX_REASON_FAILURE);
+    CHECK(state.error.code == XMAX_TIMEOUT && manager->local_stream_revision() != track);
+}
+
 /**
  * Runs deterministic capture recovery, runtime failure, and cancellation contracts.
  *
@@ -424,6 +469,8 @@ int main() {
         cancelled_update_does_not_restore();
         close_releases_camera_during_remote_cleanup();
         resumes_preempted_camera_without_replacing_track();
+        camera_preview_binds_before_first_frame();
+        missing_first_frame_reports_timeout_after_creation();
         std::cout << "Camera recovery, original errors, runtime failure, and cancellation passed\n";
         return 0;
     } catch (const std::exception& error) {

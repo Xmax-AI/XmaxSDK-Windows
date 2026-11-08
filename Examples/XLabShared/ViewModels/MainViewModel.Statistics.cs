@@ -46,15 +46,22 @@ internal sealed partial class MainViewModel
         Metrics = $"{(downlink ? "下行" : "上行")}  {width} × {height}  ·  {FormatMetric(fps)} fps  ·  {FormatMetric(bitrate)} kbps  ·  延迟 {FormatMetric(delay)} ms";
     }
 
-    private void UpdateMetricRows(RealtimeEvent item)
+    private void ReceiveLaunchTiming(RealtimeLaunchTiming timing)
     {
-        if (item.Type == RealtimeEventType.Timing)
-        {
-            double[] values = [item.SessionMilliseconds, item.JoinMilliseconds, item.PublishMilliseconds, item.FirstFrameMilliseconds, item.TotalMilliseconds];
-            for (int i = 0; i < values.Length; ++i) TimingRows[i].Value = values[i] < 0 ? "—" : $"{values[i]:F1} ms";
-        }
-        if (item.Type != RealtimeEventType.Statistics) return;
-        var network = item.Direction == 0 ? UplinkNetworkRows : DownlinkNetworkRows;
-        if (item.Quality >= 0) network[item.Direction == 0 ? 1 : 2].Value = item.Quality.ToString();
+        double?[] values = [timing.SessionMilliseconds, timing.RtcJoinMilliseconds, timing.PublishMilliseconds,
+            timing.FirstFrameMilliseconds, timing.TotalMilliseconds];
+        for (int i = 0; i < values.Length; ++i)
+            TimingRows[i].Value = values[i] is { } milliseconds ? $"{milliseconds:F1} ms" : "—";
+        if (timing.FirstFrameMilliseconds is { } firstFrame && timing.TotalMilliseconds is { } total)
+            Metrics = $"首帧 {firstFrame:F0} ms  ·  总启动 {total:F0} ms";
     }
+
+    private void ReceiveNetworkQuality(RealtimeNetworkQuality quality)
+    {
+        UplinkNetworkRows[1].Value = FormatNetworkQuality(quality.Uplink);
+        DownlinkNetworkRows[2].Value = FormatNetworkQuality(quality.Downlink);
+    }
+
+    private static string FormatNetworkQuality(RealtimeNetworkQualityLevel quality) =>
+        quality == RealtimeNetworkQualityLevel.Unknown ? "—" : ((int)quality).ToString();
 }
