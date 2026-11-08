@@ -11,7 +11,6 @@
 #include "Core/Realtime/XmaxRealtimeFactory.hpp"
 #include "Core/Realtime/XmaxRealtimeManager.hpp"
 #include "Foundation/Storage/PreferenceStore.hpp"
-#include "Foundation/RTC/MicrophoneDevices.hpp"
 
 namespace xmax::detail {
 
@@ -41,8 +40,7 @@ std::unique_ptr<XmaxRealtimeManager> XmaxRealtimeFactory::make(
         make_rtc,
         std::chrono::seconds(10),
         make_camera_capture,
-        std::move(history),
-        validate_microphone_device
+        std::move(history)
     );
     manager->adaptive(adaptive_quality);
     return manager;

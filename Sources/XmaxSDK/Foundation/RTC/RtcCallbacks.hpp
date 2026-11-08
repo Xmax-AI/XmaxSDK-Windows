@@ -47,8 +47,6 @@ struct RtcCallbacks {
      */
     std::function<void(AudioFrame)> audio;
 
-    /** A sampled physical microphone volume in the range 0..255. */
-    std::function<void(int)> microphone_level;
 
     /**
      * The full directional video statistics, including each native processing-stage frame rate.

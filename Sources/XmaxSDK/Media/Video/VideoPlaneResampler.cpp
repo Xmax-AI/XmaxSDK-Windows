@@ -1,5 +1,5 @@
 //
-//  ExternalVideoResampler.cpp
+//  VideoPlaneResampler.cpp
 //  XmaxSDK
 //
 //  Author: 翁跃庭 (Yueting Weng)
@@ -8,13 +8,17 @@
 //  Copyright (c) 2026 XMAX.AI PTE. LTD.
 //
 
-#include "Media/External/ExternalVideoResampler.hpp"
+#include "Media/Video/VideoPlaneResampler.hpp"
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstring>
-#include <deque>
 #include <utility>
 #include <vector>
+
+#if defined(_M_X64) || defined(__SSE2__)
+#include <emmintrin.h>
+#endif
 
 namespace xmax::detail {
 namespace {
@@ -64,6 +68,46 @@ std::vector<Filter> filters(int source, int target) {
     return result;
 }
 
+/** Reuses coefficients for full-resolution and subsampled planes on the processing thread. */
+struct FilterCache {
+    struct Entry {
+        uint32_t source = 0, target = 0;
+        std::vector<Filter> values;
+    };
+
+    std::array<Entry, 2> entries;
+    size_t next = 0;
+
+    const std::vector<Filter>& get(uint32_t source, uint32_t target) {
+        for (const auto& entry : entries)
+            if (entry.source == source && entry.target == target)
+                return entry.values;
+        auto& entry = entries[next];
+        entry = {source, target, filters(source, target)};
+        next = (next + 1) % entries.size();
+        return entry.values;
+    }
+};
+
+/** Rounds filtered samples and saturates them to unsigned bytes. */
+void store_row(const float* values, size_t count, uint8_t* destination) {
+    size_t index = 0;
+#if defined(_M_X64) || defined(__SSE2__)
+    const auto half = _mm_set1_ps(0.5f);
+    const auto rounded = [half](const float* block) {
+        return _mm_cvttps_epi32(_mm_add_ps(_mm_loadu_ps(block), half));
+    };
+    for (; index + 16 <= count; index += 16) {
+        const auto low = _mm_packs_epi32(rounded(values + index), rounded(values + index + 4));
+        const auto high = _mm_packs_epi32(rounded(values + index + 8), rounded(values + index + 12));
+        const auto bytes = _mm_packus_epi16(low, high);
+        _mm_storeu_si128(reinterpret_cast<__m128i*>(destination + index), bytes);
+    }
+#endif
+    for (; index < count; ++index)
+        destination[index] = uint8_t(std::clamp(values[index] + 0.5f, 0.0f, 255.0f));
+}
+
 /** Resamples an interleaved plane with a fixed channel count for the inner pixel loop. */
 template <size_t Channels>
 void resample(
@@ -82,45 +126,55 @@ void resample(
         return;
     }
 
-    const auto horizontal = filters(source_width, width);
-    const auto vertical = filters(source_height, height);
-    std::deque<std::vector<float>> rows;
-    std::vector<float> output(row_bytes);
-    int first_row = 0;
+    thread_local FilterCache horizontal_cache;
+    thread_local FilterCache vertical_cache;
+    thread_local std::vector<float> rows;
+    thread_local std::vector<float> output;
+
+    const auto& horizontal = horizontal_cache.get(source_width, width);
+    const auto& vertical = vertical_cache.get(source_height, height);
+    const auto widest = std::max_element(vertical.begin(), vertical.end(), [](const auto& a, const auto& b) {
+        return a.weights.size() < b.weights.size();
+    });
+    const auto row_count = widest->weights.size();
+    rows.resize(row_count * row_bytes);
+    output.resize(row_bytes);
+
+    // Filter spans advance monotonically. Reuse a row after it leaves the current span.
+    size_t cached_end = 0;
     for (const auto& filter : vertical) {
-        while (!rows.empty() && first_row < filter.first) {
-            rows.pop_front();
-            ++first_row;
-        }
-        if (rows.empty())
-            first_row = filter.first;
-        while (rows.size() < filter.weights.size()) {
-            const auto* input = source + (first_row + rows.size()) * stride;
-            auto& row = rows.emplace_back(row_bytes);
+        const auto first = size_t(filter.first);
+        const auto end = first + filter.weights.size();
+        for (size_t i = std::max(first, cached_end); i < end; ++i) {
+            const auto* input = source + i * stride;
+            auto* row = rows.data() + (i % row_count) * row_bytes;
             for (size_t x = 0; x < horizontal.size(); ++x) {
                 const auto& samples = horizontal[x];
                 const auto* pixel = input + samples.first * Channels;
+                std::array<float, Channels> color{};
                 for (auto weight : samples.weights) {
                     for (size_t channel = 0; channel < Channels; ++channel)
-                        row[x * Channels + channel] += *pixel++ * weight;
+                        color[channel] += *pixel++ * weight;
                 }
+                std::copy(color.begin(), color.end(), row + x * Channels);
             }
         }
-        std::fill(output.begin(), output.end(), 0);
+        cached_end = end;
+        std::fill(output.begin(), output.end(), 0.0f);
         for (size_t tap = 0; tap < filter.weights.size(); ++tap) {
             const auto weight = filter.weights[tap];
-            const auto& row = rows[tap];
+            const auto* row = rows.data() + ((first + tap) % row_count) * row_bytes;
             for (size_t x = 0; x < row_bytes; ++x)
                 output[x] += row[x] * weight;
         }
-        for (auto value : output)
-            *destination++ = uint8_t(std::clamp(value + 0.5f, 0.0f, 255.0f));
+        store_row(output.data(), row_bytes, destination);
+        destination += row_bytes;
     }
 }
 
 } // namespace
 
-void resample_external_plane(
+void resample_video_plane(
     const uint8_t* source,
     size_t stride,
     uint32_t source_width,

@@ -43,6 +43,10 @@ struct Frame {
      */
     bool presentation_mirrored = false;
 
+    // H.273 color tags on decoded RTC pixels. Value 2 means unspecified.
+    uint8_t color_primaries = 2;
+    uint8_t color_transfer = 2;
+
     /**
      * The video plane storage, with plane count and layout determined by pixel format.
      */
@@ -72,6 +76,9 @@ struct Frame {
         const xmax_video_frame& source
     );
 };
+
+// Rotates owned BGRA pixels clockwise by a right angle.
+Frame rotate_bgra(Frame frame, unsigned degrees);
 
 /**
  * Validates video layout dimensions and frame rate independently of generation model limits.

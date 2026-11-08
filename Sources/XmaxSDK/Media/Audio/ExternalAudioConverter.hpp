@@ -65,16 +65,20 @@ class ExternalAudioConverter {
             frame.data &&
                 frame.sample_rate >= 8000 && frame.sample_rate <= 192000 &&
                 frame.channels >= 1 && frame.channels <= 8 && frame.samples_per_channel >= 1 &&
-                frame.samples_per_channel <= frame.sample_rate &&
-                (frame.sample_format == XMAX_AUDIO_PCM16 || frame.sample_format == XMAX_AUDIO_FLOAT32),
+                frame.sample_format >= XMAX_AUDIO_PCM16 && frame.sample_format <= XMAX_AUDIO_FLOAT64_PLANAR,
             XMAX_MEDIA_ERROR,
-            "External audio requires interleaved PCM16 or float32 with a valid format"
+            "External audio requires a supported linear PCM format"
         );
-        const auto bytes = frame.sample_format == XMAX_AUDIO_PCM16 ? 2u : 4u;
+        const bool planar = frame.sample_format >= XMAX_AUDIO_PCM16_PLANAR;
+        const auto sample_type = static_cast<xmax_audio_sample_format>(
+            int(frame.sample_format) - (planar ? int(XMAX_AUDIO_PCM16_PLANAR) : 0));
+        constexpr size_t sample_bytes[]{2, 4, 3, 4, 8};
+        const auto bytes = sample_bytes[sample_type];
         require(
-            frame.data_size == size_t(frame.samples_per_channel) * frame.channels * bytes,
+            frame.data_size <= 32 * 1024 * 1024 &&
+                frame.data_size == uint64_t(frame.samples_per_channel) * frame.channels * bytes,
             XMAX_MEDIA_ERROR,
-            "External PCM byte count does not match its format"
+            "External PCM byte count must match its format and fit within 32 MiB"
         );
         require(
             rate_ == 0 || (rate_ == frame.sample_rate && channels_ == frame.channels &&
@@ -105,29 +109,9 @@ class ExternalAudioConverter {
         for (uint32_t sample = 0; sample < frame.samples_per_channel; ++sample) {
             double sum = 0;
             for (uint32_t channel = 0; channel < frame.channels; ++channel) {
-                const auto offset = (size_t(sample) * frame.channels + channel) * bytes;
-                if (frame.sample_format == XMAX_AUDIO_PCM16) {
-                    int16_t value;
-                    std::memcpy(
-                        &value,
-                        data + offset,
-                        sizeof(value)
-                    );
-                    sum += value / 32768.0;
-                } else {
-                    float value;
-                    std::memcpy(
-                        &value,
-                        data + offset,
-                        sizeof(value)
-                    );
-                    require(
-                        std::isfinite(value) && value >= -1 && value <= 1,
-                        XMAX_MEDIA_ERROR,
-                        "External float PCM samples must be finite and in [-1, 1]"
-                    );
-                    sum += value;
-                }
+                const auto index = planar ? size_t(channel) * frame.samples_per_channel + sample
+                                          : size_t(sample) * frame.channels + channel;
+                sum += read_sample(data + index * bytes, sample_type);
             }
             mono[sample] = sum / frame.channels;
         }
@@ -194,13 +178,46 @@ class ExternalAudioConverter {
 
   private:
 
+    static double read_sample(const uint8_t* data, xmax_audio_sample_format format) {
+        switch (format) {
+        case XMAX_AUDIO_PCM16: {
+            int16_t value;
+            std::memcpy(&value, data, sizeof(value));
+            return value / 32768.0;
+        }
+        case XMAX_AUDIO_PCM24: {
+            const auto bits = int32_t(data[0]) | int32_t(data[1]) << 8 | int32_t(data[2]) << 16;
+            const auto value = bits < 0x800000 ? bits : bits - 0x1000000;
+            return value / 8388608.0;
+        }
+        case XMAX_AUDIO_PCM32: {
+            int32_t value;
+            std::memcpy(&value, data, sizeof(value));
+            return value / 2147483648.0;
+        }
+        default:
+            break;
+        }
+        double value;
+        if (format == XMAX_AUDIO_FLOAT32) {
+            float sample;
+            std::memcpy(&sample, data, sizeof(sample));
+            value = sample;
+        } else {
+            std::memcpy(&value, data, sizeof(value));
+        }
+        require(std::isfinite(value) && value >= -1 && value <= 1,
+                XMAX_MEDIA_ERROR, "External float PCM samples must be finite and in [-1, 1]");
+        return value;
+    }
+
     /**
      * The binding's sample rate, or zero until its first published audio buffer.
      */
     uint32_t rate_ = 0;
 
     /**
-     * The fixed interleaved source channel count.
+     * The fixed source channel count.
      */
     uint32_t channels_ = 0;
 

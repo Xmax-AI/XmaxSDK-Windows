@@ -812,8 +812,10 @@ void XmaxRealtimeLifecycleManager::emit(
     std::lock_guard<std::mutex> lock(event_mutex_);
 
     if (event.type == XMAX_EVENT_MICROPHONE_LEVEL) {
-        events_.erase(std::remove_if(events_.begin(), events_.end(), [](const auto& pending) {
-            return pending.event.type == XMAX_EVENT_MICROPHONE_LEVEL;
+        events_.erase(std::remove_if(events_.begin(), events_.end(), [&event](const auto& pending) {
+            // A source change clears old readings before a new source can report a level.
+            return pending.event.type == XMAX_EVENT_MICROPHONE_LEVEL &&
+                   (event.code < 0 || pending.event.code >= 0);
         }), events_.end());
     }
 

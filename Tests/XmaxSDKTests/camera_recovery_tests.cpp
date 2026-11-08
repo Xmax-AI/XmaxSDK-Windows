@@ -246,7 +246,8 @@ static void restores_previous_format(
     CHECK(state.event.state == XMAX_READY && state.reason == XMAX_REASON_NONE);
     CHECK(format.width == 1080 && format.height == 1920 && format.fps == 24);
     CHECK(script->starts == 3);
-    CHECK(manager->acquire_local_frame()->width == 640);
+    const auto preview = manager->acquire_local_frame();
+    CHECK(preview && preview->width == 1080 && preview->height == 1920);
 
     CaptureCallbacks callbacks;
     {
@@ -380,6 +381,33 @@ static void close_releases_camera_during_remote_cleanup() {
     CHECK(manager.state_info().event.state == XMAX_IDLE);
 }
 
+static void resumes_preempted_camera_without_replacing_track() {
+    auto script = std::make_shared<CaptureScript>();
+    script->attempts = {CaptureAttempt::Ready, CaptureAttempt::Throw, CaptureAttempt::Ready};
+    auto manager = camera_manager(script);
+    manager->create_local_camera_stream("scripted", {1920, 1080, 30}, false, false, {}, false);
+    const auto track = manager->local_stream_revision();
+    const auto original = manager->acquire_local_frame(track);
+    CHECK(original);
+    CaptureCallbacks callbacks;
+    {
+        std::lock_guard<std::mutex> lock(script->mutex);
+        callbacks = script->callbacks;
+    }
+    callbacks.interrupted();
+
+    const auto deadline = Clock::now() + std::chrono::seconds(3);
+    std::shared_ptr<Frame> recovered;
+    while (!(recovered = manager->acquire_local_frame(track)) && Clock::now() < deadline)
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    CHECK(recovered && recovered->timestamp_us > original->timestamp_us);
+    CHECK(manager->local_stream_revision() == track && manager->state_snapshot().state == XMAX_READY);
+    {
+        std::lock_guard<std::mutex> lock(script->mutex);
+        CHECK(script->starts == 3 && script->start_thread == script->stop_thread);
+    }
+}
+
 /**
  * Runs deterministic capture recovery, runtime failure, and cancellation contracts.
  *
@@ -395,6 +423,7 @@ int main() {
         initial_failure_closes_preview();
         cancelled_update_does_not_restore();
         close_releases_camera_during_remote_cleanup();
+        resumes_preempted_camera_without_replacing_track();
         std::cout << "Camera recovery, original errors, runtime failure, and cancellation passed\n";
         return 0;
     } catch (const std::exception& error) {

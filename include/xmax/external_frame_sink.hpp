@@ -72,7 +72,7 @@ class external_frame_sink : public detail::owner<xmax_external_frame_sink, xmax_
     /**
      * Uploads source PCM as 48 kHz mono 10 ms packets without local playback.
      *
-     * @param[in] frame The borrowed interleaved PCM; see xmax_external_frame_sink_push_audio_frame.
+     * @param[in] frame The borrowed interleaved or planar PCM; see xmax_external_frame_sink_push_audio_frame.
      */
     void push_audio(
         const xmax_external_audio_frame& frame

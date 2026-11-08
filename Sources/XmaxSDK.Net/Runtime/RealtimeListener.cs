@@ -11,7 +11,7 @@
 namespace Xmax.SDK.Runtime;
 
 /// <summary>Delivers ordered or coalesced snapshots on the registering synchronization context.</summary>
-internal sealed class RealtimeListener<T>(bool coalesce = false)
+internal sealed class RealtimeListener<T>(bool coalesce = false, Func<T, bool>? isReset = null)
 {
     private readonly object gate = new();
     private Registration? registration;
@@ -57,7 +57,18 @@ internal sealed class RealtimeListener<T>(bool coalesce = false)
     private void Enqueue(Registration current, T value)
     {
         if (coalesce)
+        {
+            // The initial replay and a source reset have meaning even if another sample is waiting.
+            T replay = default!;
+            T pending = default!;
+            bool keepReplay = current.ReplayCompletion is not null &&
+                current.Pending.TryDequeue(out replay!);
+            bool keepReset = isReset is not null && !isReset(value) &&
+                current.Pending.TryPeek(out pending!) && isReset(pending);
             current.Pending.Clear();
+            if (keepReplay) current.Pending.Enqueue(replay!);
+            if (keepReset) current.Pending.Enqueue(pending!);
+        }
         if (current.Pending.Count == 256)
             current.Pending.Dequeue();
         current.Pending.Enqueue(value);

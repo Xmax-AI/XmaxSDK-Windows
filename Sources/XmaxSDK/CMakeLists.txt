@@ -30,7 +30,7 @@ endfunction()
 xmax_module(xmax_foundation
   Foundation/Logging/XmaxLogger.cpp
   Foundation/RTC/RtcStatsLogger.cpp
-  Foundation/RTC/MicrophoneDevices.cpp
+  Foundation/Media/Audio/MicrophoneDevices.cpp
   Foundation/Media/VideoFrame.cpp
   Foundation/Media/FrameConverter.cpp
   Foundation/Render/WindowRenderer.cpp
@@ -68,7 +68,7 @@ endif()
 if(XMAX_WITH_AGORA)
   find_path(AGORA_INCLUDE_DIR IAgoraRtcEngine.h HINTS "${XMAX_AGORA_ROOT}/high_level_api/include" "${XMAX_AGORA_ROOT}/include" REQUIRED)
   find_library(AGORA_LIBRARY NAMES agora_rtc_sdk.dll agora_rtc_sdk AgoraRtcKit HINTS "${XMAX_AGORA_ROOT}/x86_64" "${XMAX_AGORA_ROOT}/lib" REQUIRED)
-  target_sources(xmax_foundation PRIVATE Foundation/RTC/AgoraRtcPlatform.cpp Foundation/RTC/AgoraMicrophone.cpp)
+  target_sources(xmax_foundation PRIVATE Foundation/RTC/AgoraRtcPlatform.cpp)
   target_include_directories(xmax_foundation PRIVATE "${AGORA_INCLUDE_DIR}")
   target_link_libraries(xmax_foundation PRIVATE "${AGORA_LIBRARY}")
   target_compile_definitions(xmax_foundation PRIVATE XMAX_WITH_AGORA=1)
@@ -105,13 +105,16 @@ xmax_module(xmax_stream
 )
 target_link_libraries(xmax_stream PUBLIC xmax_service)
 xmax_module(xmax_media
+  Media/Audio/MicrophoneCaptureController.cpp
+  Media/Audio/WasapiMicrophone.cpp
   Media/External/ExternalVideoController.cpp
-  Media/External/ExternalVideoFrame.cpp
-  Media/External/ExternalVideoResampler.cpp
+  Media/Video/VideoFrameScaler.cpp
+  Media/Video/VideoPlaneResampler.cpp
   Media/Camera/CameraController.cpp
 )
 target_link_libraries(xmax_media PUBLIC xmax_service)
 xmax_module(xmax_render Render/Video/RemoteVideoFramePipeline.cpp Render/Video/RemoteMediaFrameDispatcher.cpp
+  Render/Video/ResultVideoColor.cpp
   Render/Beauty/RemoteVideoBeautyPipeline.cpp Render/Beauty/VideoBeautyProcessor.cpp)
 target_link_libraries(xmax_render PUBLIC xmax_service)
 if(WIN32 AND XMAX_WITH_AGORA)
@@ -211,7 +214,8 @@ if(BUILD_TESTING)
   if(WIN32)
     add_executable(xmax_windows_platform_tests ${XMAX_REPO_ROOT}/Tests/XmaxSDKTests/windows_platform_tests.cpp)
     target_compile_definitions(xmax_windows_platform_tests PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
-    target_link_libraries(xmax_windows_platform_tests PRIVATE XmaxSDK user32)
+    target_include_directories(xmax_windows_platform_tests PRIVATE "${XMAX_SRC}")
+    target_link_libraries(xmax_windows_platform_tests PRIVATE XmaxSDK xmax_media user32)
     add_test(NAME windows_platform COMMAND xmax_windows_platform_tests)
     set_tests_properties(windows_platform PROPERTIES TIMEOUT 30)
   endif()

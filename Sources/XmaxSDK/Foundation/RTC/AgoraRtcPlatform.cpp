@@ -9,8 +9,8 @@
 //
 
 #include "Foundation/RTC/RtcStatsLogger.hpp"
+#include "Foundation/RTC/RtcMediaSubmissionMetrics.hpp"
 #include "Foundation/RTC/RtcPlatform.hpp"
-#include "Foundation/RTC/AgoraMicrophone.hpp"
 #include "Foundation/Text/Utf8.hpp"
 #include <IAgoraMediaEngine.h>
 #include <IAgoraRtcEngine.h>
@@ -83,14 +83,15 @@ class AgoraRtc final : public Rtc,
     bool owns_lease_ = false;
 
     /**
-     * Whether this room publishes custom PCM instead of microphone capture.
+     * Whether the custom PCM track is published.
      */
-    bool external_audio_ = false;
+    bool audio_published_ = false;
 
     /**
      * The custom direct-audio track, or the native invalid-track sentinel before allocation.
      */
-    rtc::track_id_t audio_track_ = 0xffffffff;
+    static constexpr rtc::track_id_t invalid_audio_track = 0xffffffff;
+    rtc::track_id_t audio_track_ = invalid_audio_track;
 
     /**
      * The mutex protecting native engine calls and lifecycle.
@@ -144,11 +145,6 @@ class AgoraRtc final : public Rtc,
     float volume_ = 0;
 
     /**
-     * The recording endpoint retained before engine initialization.
-     */
-    AgoraMicrophone microphone_;
-
-    /**
      * The latest redacted RTC failure reason, shared with waiters and error callbacks.
      */
     std::string failure_;
@@ -196,9 +192,11 @@ class AgoraRtc final : public Rtc,
     RtcCallbacks callbacks_;
 
     /**
-     * The temporary contiguous byte buffer used to pack multiplane input.
+     * Serializes video submissions and protects the contiguous buffer for multiplane input.
      */
+    std::mutex video_mutex_;
     std::vector<uint8_t> packed_;
+    RtcMediaSubmissionMetrics video_submission_, audio_submission_;
 
     /**
      * The millisecond offset from media time to RTC monotonic time, established on first submission.
@@ -259,6 +257,13 @@ class AgoraRtc final : public Rtc,
             return;
 
         const auto safe = XmaxLogger::redact(message);
+        {
+            std::lock_guard<std::mutex> lock(metadata_mutex_);
+            if (!failure_.empty())
+                return;
+            failure_ = safe;
+            failure_code_ = code;
+        }
         XmaxLogger::write(
             LogCategory::RTC,
             XMAX_LOG_ERROR,
@@ -271,11 +276,6 @@ class AgoraRtc final : public Rtc,
                        "\n└─ " + safe;
             }
         );
-        {
-            std::lock_guard<std::mutex> lock(metadata_mutex_);
-            failure_ = safe;
-            failure_code_ = code;
-        }
         changed_.notify_all();
 
         if (callbacks_.failure)
@@ -309,22 +309,11 @@ class AgoraRtc final : public Rtc,
     }
 
     /**
-     * Retains the requested recording endpoint until the engine is initialized.
-     *
-     * @param[in] device The recording endpoint identifier, or empty for the system default.
-     */
-    void microphone_device(
-        const std::string& device
-    ) override {
-        microphone_.select(joined_ && !stopping_ ? engine_ : nullptr, device);
-    }
-
-    /**
      * Initializes RTC, configures external video and audio policy, and waits for room join.
      *
      * @param[in] c The validated app, room, user, token, and service-result account configuration.
      * @param[in] encoding The resolved encoding dimensions, frame rate, bitrate, and degradation policy.
-     * @param[in] mic Whether to start microphone capture when joining the RTC room.
+     * @param[in] publish_audio Whether to publish a custom PCM track on join.
      * @param[in] cb Callbacks for result frames, RTC events, failures, and first publication; drained before
      * stop returns.
      * @param[in] cancel A cooperative cancellation predicate; true requests termination of the operation.
@@ -332,7 +321,7 @@ class AgoraRtc final : public Rtc,
     void join(
         const Connection& c,
         VideoEncodingConfiguration encoding,
-        bool mic,
+        bool publish_audio,
         RtcCallbacks cb,
         const Cancel& cancel
     ) override {
@@ -365,7 +354,8 @@ class AgoraRtc final : public Rtc,
             engine_->enableLocalVideo(false),
             "enableLocalVideo"
         );
-        microphone_.prepare(*engine_, mic && !external_audio_);
+        // The SDK supplies PCM on a custom track. Keep the vendor recording device closed.
+        check_rtc(engine_->enableLocalAudio(false), "disable native microphone capture");
         check_rtc(
             engine_->queryInterface(
                 AGORA_IID_MEDIA_ENGINE,
@@ -422,29 +412,17 @@ class AgoraRtc final : public Rtc,
             "adjustPlaybackSignalVolume"
         );
 
-        if (external_audio_) {
-            AudioTrackConfig audio_config;
-            audio_config.enableLocalPlayback = false;
-            audio_config.enableAudioProcessing = false;
-            audio_track_ = media_->createCustomAudioTrack(
-                AUDIO_TRACK_DIRECT,
-                audio_config
-            );
-            require(
-                audio_track_ != 0xffffffff,
-                XMAX_RTC_ERROR,
-                "Cannot create external audio track"
-            );
-        }
+        if (publish_audio)
+            ensure_audio_track();
 
         ChannelMediaOptions options;
         options.channelProfile = CHANNEL_PROFILE_LIVE_BROADCASTING;
         options.clientRoleType = CLIENT_ROLE_BROADCASTER;
         options.publishCameraTrack = false;
         options.publishCustomVideoTrack = true;
-        options.publishMicrophoneTrack = mic && !external_audio_;
-        options.publishCustomAudioTrack = external_audio_;
-        if (external_audio_)
+        options.publishMicrophoneTrack = false;
+        options.publishCustomAudioTrack = publish_audio;
+        if (publish_audio)
             options.publishCustomAudioTrackId = int(audio_track_);
         options.autoSubscribeVideo = false;
         options.autoSubscribeAudio = false;
@@ -463,6 +441,8 @@ class AgoraRtc final : public Rtc,
             Clock::now() + std::chrono::seconds(15)
         );
 
+        audio_published_ = publish_audio;
+
         DataStreamConfig stream;
         stream.ordered = true;
         stream.syncWithAudio = false;
@@ -475,22 +455,19 @@ class AgoraRtc final : public Rtc,
         );
     }
 
-    /** Updates native capture and the published camera microphone track together. */
-    void microphone_enabled(bool enabled) override {
-        require(engine_ && joined_ && !stopping_ && !external_audio_,
-                XMAX_INVALID_STATE, "No camera microphone track is available");
-        microphone_.enable(*engine_, enabled);
-    }
-
-    /** Reports only the local physical input sample, excluding remote and custom PCM. */
-    void onAudioVolumeIndication(
-        const AudioVolumeInfo* speakers,
-        unsigned int count,
-        int
-    ) override {
-        if (!stopping_ && microphone_.accepts_samples() && speakers && count == 1 && speakers[0].uid == 0 &&
-            callbacks_.microphone_level)
-            callbacks_.microphone_level(std::clamp(int(speakers[0].volume), 0, 255));
+    void audio_publication(bool enabled) override {
+        std::lock_guard<std::mutex> lock(engine_mutex_);
+        require(engine_ && joined_ && !stopping_, XMAX_INVALID_STATE, "No joined RTC room");
+        if (enabled == audio_published_)
+            return;
+        if (enabled)
+            ensure_audio_track();
+        ChannelMediaOptions options;
+        options.publishMicrophoneTrack = false;
+        options.publishCustomAudioTrack = enabled;
+        options.publishCustomAudioTrackId = int(audio_track_);
+        check_rtc(engine_->updateChannelMediaOptions(options), "Update custom PCM publication");
+        audio_published_ = enabled;
     }
 
     /**
@@ -526,58 +503,44 @@ class AgoraRtc final : public Rtc,
     void push(
         const Frame& f
     ) override {
-        std::lock_guard<std::mutex> lock(engine_mutex_);
-
-        if (!engine_ || !media_ || !joined_ || stopping_)
+        if (!joined_ || stopping_)
             return;
 
+        // Keep planar packing outside the engine lock shared with PCM and signaling.
+        std::lock_guard<std::mutex> video_lock(video_mutex_);
         media_base::ExternalVideoFrame frame;
         frame.format = f.format == XMAX_BGRA ? media_base::VIDEO_PIXEL_BGRA
                                              : (f.format == XMAX_NV12 ? media_base::VIDEO_PIXEL_NV12
                                                                       : media_base::VIDEO_PIXEL_I420);
         frame.stride = int(f.width);
         frame.height = int(f.height);
-
-        const auto source_ms = f.timestamp_us / 1000;
-
-        if (!timestamp_offset_ms_)
-            timestamp_offset_ms_ = engine_->getCurrentMonotonicTimeInMs() - source_ms;
-
-        frame.timestamp = source_ms + *timestamp_offset_ms_;
-
-        if (f.format == XMAX_BGRA)
+        if (f.format == XMAX_BGRA) {
             frame.buffer = const_cast<uint8_t*>(f.planes[0].data());
-        else {
+        } else {
             packed_.clear();
+            packed_.reserve(f.planes[0].size() + f.planes[1].size() + f.planes[2].size());
             for (const auto& plane : f.planes)
-                packed_.insert(
-                    packed_.end(),
-                    plane.begin(),
-                    plane.end()
-                );
+                packed_.insert(packed_.end(), plane.begin(), plane.end());
             frame.buffer = packed_.data();
         }
 
-        check_rtc(
-            media_->pushVideoFrame(&frame),
-            "pushVideoFrame"
-        );
-    }
+        const bool profiling = XmaxLogger::is_enabled(XMAX_LOG_PERFORMANCE);
+        const auto queued = profiling ? Clock::now() : Clock::time_point{};
+        std::unique_lock<std::mutex> engine_lock(engine_mutex_);
+        if (!engine_ || !media_ || !joined_ || stopping_)
+            return;
+        const auto acquired = profiling ? Clock::now() : Clock::time_point{};
+        const auto source_ms = f.timestamp_us / 1000;
+        if (!timestamp_offset_ms_)
+            timestamp_offset_ms_ = engine_->getCurrentMonotonicTimeInMs() - source_ms;
+        frame.timestamp = source_ms + *timestamp_offset_ms_;
 
-    /**
-     * Selects custom PCM before joining, without enabling microphone capture or local playback.
-     *
-     * @param[in] enabled Whether the bound source supplies PCM.
-     */
-    void external_audio(
-        bool enabled
-    ) override {
-        require(
-            !joined_,
-            XMAX_INVALID_STATE,
-            "Set external audio before joining"
-        );
-        external_audio_ = enabled;
+        const auto result = media_->pushVideoFrame(&frame);
+        const auto submitted = profiling ? Clock::now() : Clock::time_point{};
+        engine_lock.unlock();
+        if (profiling)
+            video_submission_.record("video", queued, acquired, submitted);
+        check_rtc(result, "pushVideoFrame");
     }
 
     /**
@@ -588,9 +551,12 @@ class AgoraRtc final : public Rtc,
     void push_audio(
         const ExternalAudioPacket& source
     ) override {
-        std::lock_guard<std::mutex> lock(engine_mutex_);
-        if (!media_ || !engine_ || !joined_ || stopping_ || !external_audio_)
+        const bool profiling = XmaxLogger::is_enabled(XMAX_LOG_PERFORMANCE);
+        const auto queued = profiling ? Clock::now() : Clock::time_point{};
+        std::unique_lock<std::mutex> lock(engine_mutex_);
+        if (!media_ || !engine_ || !joined_ || stopping_ || !audio_published_)
             return;
+        const auto acquired = profiling ? Clock::now() : Clock::time_point{};
         require(
             source.samples.size() == 480 && source.timestamp_us >= 0,
             XMAX_MEDIA_ERROR,
@@ -606,13 +572,13 @@ class AgoraRtc final : public Rtc,
         frame.samplesPerSec = 48000;
         frame.buffer = const_cast<int16_t*>(source.samples.data());
         frame.renderTimeMs = source_ms + *timestamp_offset_ms_;
-        check_rtc(
-            media_->pushAudioFrame(
-                &frame,
-                audio_track_
-            ),
-            "pushAudioFrame"
-        );
+
+        const auto result = media_->pushAudioFrame(&frame, audio_track_);
+        const auto submitted = profiling ? Clock::now() : Clock::time_point{};
+        lock.unlock();
+        if (profiling)
+            audio_submission_.record("audio", queued, acquired, submitted);
+        check_rtc(result, "pushAudioFrame");
     }
 
     /**
@@ -754,11 +720,11 @@ class AgoraRtc final : public Rtc,
         audio_observing_ = false;
         result_audio_enabled_ = false;
         if (media) {
-            if (audio_track_ != 0xffffffff) {
+            if (audio_track_ != invalid_audio_track) {
                 if (engine)
                     engine->leaveChannel();
                 media->destroyCustomAudioTrack(audio_track_);
-                audio_track_ = 0xffffffff;
+                audio_track_ = invalid_audio_track;
             }
             media->registerAudioFrameObserver(nullptr);
             media->registerVideoFrameObserver(nullptr);
@@ -781,6 +747,16 @@ class AgoraRtc final : public Rtc,
 
   private:
 
+    void ensure_audio_track() {
+        if (audio_track_ != invalid_audio_track)
+            return;
+        AudioTrackConfig configuration;
+        configuration.enableLocalPlayback = false;
+        configuration.enableAudioProcessing = false;
+        audio_track_ = media_->createCustomAudioTrack(AUDIO_TRACK_DIRECT, configuration);
+        require(audio_track_ != invalid_audio_track, XMAX_RTC_ERROR, "Cannot create custom PCM track");
+    }
+
     /**
      * Records successful room join and wakes join waiters.
      *
@@ -797,28 +773,22 @@ class AgoraRtc final : public Rtc,
         changed_.notify_all();
     }
 
-    /**
-     * Preserves native RTC error codes and descriptions through the SDK error channel.
-     *
-     * @param[in] code The native RTC callback's error code, preserved numerically in diagnostics.
-     * @param[in] description The native error description; a null pointer uses the default diagnostic.
-     */
-    void onError(
-        int code,
-        const char* description
-    ) override {
-        const auto message = RtcStatsLogger::error_message(
-            code,
-            description
-        );
-        failure(message.c_str());
+    void onError(int code, const char* description) override {
+        if (!stopping_) {
+            XmaxLogger::write(LogCategory::RTC, XMAX_LOG_ERROR,
+                [&](auto) { return XmaxLogger::redact(RtcStatsLogger::error_message(code, description)); });
+        }
     }
 
-    /**
-     * Reports RTC connection loss through the SDK error channel.
-     */
-    void onConnectionLost() override {
-        failure("RTC connection was lost");
+    void onConnectionStateChanged(CONNECTION_STATE_TYPE state, CONNECTION_CHANGED_REASON_TYPE reason) override {
+        if (reason == CONNECTION_CHANGED_TOKEN_EXPIRED)
+            onRequestToken();
+        else if (state == CONNECTION_STATE_FAILED)
+            failure(("RTC connection failed (" + std::to_string(int(reason)) + ")").c_str());
+    }
+
+    void onRequestToken() override {
+        failure("RTC token expired");
     }
 
     /**
@@ -1053,30 +1023,6 @@ class AgoraRtc final : public Rtc,
         if (uid && engine_ && !stopping_)
             check_rtc(engine_->muteRemoteAudioStream(uid, !enabled), "muteRemoteAudioStream");
         result_audio_enabled_ = enabled;
-    }
-
-    /**
-     * Reports an RTC error when native microphone capture fails.
-     *
-     * @param[in] state The current native media state or shared capture state.
-     * @param[in] reason The native media-state change reason or redacted transport failure reason.
-     */
-    void onLocalAudioStateChanged(
-        LOCAL_AUDIO_STREAM_STATE state,
-        LOCAL_AUDIO_STREAM_REASON reason
-    ) override {
-        if (stopping_ || external_audio_)
-            return;
-        const bool available = state != LOCAL_AUDIO_STREAM_STATE_STOPPED && state != LOCAL_AUDIO_STREAM_STATE_FAILED;
-        microphone_.availability(available);
-        if (!available && callbacks_.microphone_level)
-            callbacks_.microphone_level(-1);
-        if (!joined_ && microphone_.enabled() && state == LOCAL_AUDIO_STREAM_STATE_FAILED)
-            failure(
-                "Microphone capture failed; check device access and permissions",
-                reason == LOCAL_AUDIO_STREAM_REASON_DEVICE_NO_PERMISSION ? XMAX_MICROPHONE_PERMISSION_DENIED
-                                                                         : XMAX_RTC_ERROR
-            );
     }
 
     /**
@@ -1531,6 +1477,8 @@ class AgoraRtc final : public Rtc,
             v.plane_sizes[0] = stride * size_t(video.height);
 
             auto frame = Frame::copy(v);
+            frame.color_primaries = uint8_t(video.colorSpace.primaries);
+            frame.color_transfer = uint8_t(video.colorSpace.transfer);
 
             // Treat RTC video as opaque; decoders may leave BGRA alpha at zero.
             for (size_t i = 3; i < frame.planes[0].size(); i += 4)

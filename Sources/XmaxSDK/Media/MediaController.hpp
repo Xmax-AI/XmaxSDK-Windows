@@ -9,6 +9,7 @@
 //
 
 #pragma once
+#include "Media/Audio/MicrophoneCaptureController.hpp"
 #include "Media/Camera/CameraController.hpp"
 #include "Media/Interaction/InteractionController.hpp"
 #include "Media/External/ExternalVideoController.hpp"
@@ -32,9 +33,11 @@ class MediaController {
      * Combines camera capture and external frame delivery using the supplied camera factory.
      */
     explicit MediaController(
-        CameraFactory factory = make_camera_capture
+        CameraFactory factory = make_camera_capture,
+        MicrophoneValidator validator = {},
+        MicrophoneFactory microphone = {}
     )
-        : camera_(std::move(factory)) {
+        : camera_(std::move(factory)), microphone_(std::move(validator), std::move(microphone)) {
     }
 
     /**
@@ -62,6 +65,8 @@ class MediaController {
         return external_;
     }
 
+    MicrophoneCaptureController& microphone() { return microphone_; }
+
     /**
      * Stops publication delivery while retaining bound media and local preview.
      */
@@ -78,6 +83,7 @@ class MediaController {
      * Stops capture and clears input binding and device state.
      */
     void close() {
+        microphone_.close();
         camera_.stop();
         external_.close();
         interaction.clear();
@@ -280,6 +286,7 @@ class MediaController {
      * The controller for native SDK camera capture and frame delivery.
      */
     CameraController camera_;
+    MicrophoneCaptureController microphone_;
 
     /**
      * The atomic flag indicating an SDK camera binding.

@@ -33,7 +33,7 @@ const RealtimeSession& XmaxRealtimeConnectionManager::create(
 void XmaxRealtimeConnectionManager::join(
     StreamController& stream,
     xmax_video_format format,
-    bool microphone,
+    bool publish_audio,
     RtcCallbacks callbacks,
     const Cancel& cancel,
     xmax_video_format canvas
@@ -51,7 +51,7 @@ void XmaxRealtimeConnectionManager::join(
     stream.join(
         service_.active().room,
         format,
-        microphone,
+        publish_audio,
         std::move(callbacks),
         cancel,
         canvas

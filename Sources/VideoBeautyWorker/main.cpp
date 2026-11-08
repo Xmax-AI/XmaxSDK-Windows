@@ -17,6 +17,7 @@
 #include <NGIAgoraMediaNode.h>
 #include <NGIAgoraVideoTrack.h>
 #include <AgoraRefCountedObject.h>
+#include "ResultYuvColor.hpp"
 #include <mutex>
 #include <condition_variable>
 #include <vector>
@@ -46,11 +47,14 @@ public:
         waiting=false; complete=true; width=height=0;
         if((frame.type==media::base::VIDEO_PIXEL_I420 || frame.type==media::base::VIDEO_PIXEL_DEFAULT) && frame.width>0 && frame.height>0 && frame.yBuffer && frame.uBuffer && frame.vBuffer && frame.yStride>=frame.width && frame.uStride>=frame.width/2 && frame.vStride>=frame.width/2 && uint64_t(frame.width)*frame.height*4<=Capacity) {
             width=frame.width; height=frame.height; pixels.resize(size_t(width)*height*4);
-            auto byte=[](int v) {return uint8_t(std::clamp(v,0,255));};
-            for(uint32_t y=0;y<height;++y) for(uint32_t x=0;x<width;++x) {
-                int l=298*(int(frame.yBuffer[y*frame.yStride+x])-16), u=int(frame.uBuffer[(y/2)*frame.uStride+x/2])-128, v=int(frame.vBuffer[(y/2)*frame.vStride+x/2])-128;
-                auto at=(size_t(y)*width+x)*4;
-                pixels[at]=byte((l+541*u+128)>>8); pixels[at+1]=byte((l-55*u-136*v+128)>>8); pixels[at+2]=byte((l+459*v+128)>>8); pixels[at+3]=255;
+            const xmax::beauty_worker::ResultYuvColor color(frame.colorSpace);
+            for (uint32_t y = 0; y < height; ++y) {
+                for (uint32_t x = 0; x < width; ++x) {
+                    color.write_bgra(frame.yBuffer[y * frame.yStride + x],
+                                     frame.uBuffer[(y / 2) * frame.uStride + x / 2],
+                                     frame.vBuffer[(y / 2) * frame.vStride + x / 2],
+                                     pixels.data() + (size_t(y) * width + x) * 4);
+                }
             }
         }
         ready.notify_one(); return true;

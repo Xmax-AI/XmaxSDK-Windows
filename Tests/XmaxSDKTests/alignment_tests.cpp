@@ -154,7 +154,8 @@ static void camera_configuration() {
     manager.create_local_camera_stream("one", {1920, 1080, 24}, false);
     manager.update_camera_format({1080, 1920, 24});
     CHECK(manager.camera_format().height == 1920 && manager.camera_format().fps == 24);
-    CHECK(manager.acquire_local_frame()->width == 640);
+    const auto preview = manager.acquire_local_frame();
+    CHECK(preview && preview->width == 1080 && preview->height == 1920);
     probe->fail_width = 1920;
     expect_error(XMAX_MEDIA_ERROR, [&] { manager.update_camera_format({1920, 1080, 24}); });
     CHECK(manager.state_snapshot().state == XMAX_READY);

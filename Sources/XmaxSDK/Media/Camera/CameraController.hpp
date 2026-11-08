@@ -10,6 +10,7 @@
 
 #pragma once
 #include "Foundation/Media/Camera/CameraCapture.hpp"
+#include <atomic>
 #include <condition_variable>
 #include <deque>
 #include <future>
@@ -50,7 +51,7 @@ class CameraController {
     }
 
     /**
-     * Starts native capture and delivers frames at their original dimensions, waiting for the first frame,
+     * Starts native capture and delivers frames at the requested dimensions, waiting for the first frame,
      * failure, or cancellation. Startup failures are thrown to the caller; only failures after successful
      * startup are delivered through the failure callback.
      *
@@ -83,6 +84,18 @@ class CameraController {
 
     /** Runs native start and stop on the same thread to preserve Media Foundation's COM ownership. */
     void capture_loop();
+
+    struct Recovery {
+        std::string device;
+        xmax_video_format format;
+        CaptureCallbacks callbacks;
+        std::atomic<bool> cancelled{false};
+        bool retrying = false;
+        bool interrupted = false;
+    };
+
+    void interrupted(const std::shared_ptr<Recovery>& binding);
+    void recover_capture(const std::shared_ptr<Recovery>& binding);
 
     /** Releases the native adapter on the camera thread. */
     void stop_capture() noexcept;
@@ -134,6 +147,7 @@ class CameraController {
      * Whether startup has committed and subsequent failures belong to the active camera stream.
      */
     bool running_ = false;
+    std::shared_ptr<Recovery> recovery_;
 
     /**
      * The first capture or conversion failure, including its original code and diagnostics.

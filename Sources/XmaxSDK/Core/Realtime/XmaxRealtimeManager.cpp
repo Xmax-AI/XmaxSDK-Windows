@@ -71,17 +71,17 @@ XmaxRealtimeManager::XmaxRealtimeManager(
     std::chrono::milliseconds heartbeat,
     CameraFactory camera,
     std::shared_ptr<QualityHistory> history,
-    std::function<void(const std::string&)> microphone_validator
+    MicrophoneValidator microphone_validator,
+    MicrophoneFactory microphone
 )
     : api_(std::move(api)),
-      microphone_validator_(std::move(microphone_validator)),
       connection_(api_),
       stream_(
           std::move(factory),
           std::move(history),
           heartbeat
       ),
-      media_(std::move(camera)),
+      media_(std::move(camera), std::move(microphone_validator), std::move(microphone)),
       generation_(media_.interaction),
       heartbeat_interval_(heartbeat),
       lifecycle_(
@@ -226,8 +226,6 @@ uint64_t XmaxRealtimeManager::prepare(
             if (encoding)
                 stream_.encoding(*encoding);
             binding = media_epoch_;
-            camera_microphone_ = false;
-            camera_microphone_device_.clear();
             if (!processing_format)
                 complete_state(XMAX_READY, token);
         }
@@ -432,8 +430,6 @@ void XmaxRealtimeManager::stop_media(StopMediaSource source) {
             token.failure_scope(Scope::All);
             media_.close();
             unbind_local();
-            camera_microphone_ = false;
-            camera_microphone_device_.clear();
             token.ensure_current();
             errors_.reset();
             complete_state(
@@ -480,6 +476,13 @@ void XmaxRealtimeManager::connect_impl(
         const auto settled = Clock::now() + std::chrono::milliseconds(500);
         while (!cancel() && Clock::now() < settled)
             std::this_thread::sleep_until(std::min(settled, Clock::now() + std::chrono::milliseconds(10)));
+        require(!cancel(), XMAX_CANCELLED, "Connection cancelled");
+    }
+
+    const bool capture_microphone = media_.external().allows_microphone() &&
+                                    (microphone || media_.microphone().enabled());
+    if (capture_microphone) {
+        prepare_microphone(epoch);
         require(!cancel(), XMAX_CANCELLED, "Connection cancelled");
     }
 
@@ -557,19 +560,10 @@ void XmaxRealtimeManager::connect_impl(
             [this, epoch] { return lifecycle_.epoch() == epoch; }
         );
     };
-    callbacks.microphone_level = [this, epoch](int sample) {
-        std::lock_guard<std::mutex> lock(microphone_level_mutex_);
-        if (lifecycle_.epoch() == epoch && microphone_sampling_)
-            emit_microphone_level(sample);
-    };
-    const bool capture_microphone = media_.external().allows_microphone() && (microphone || camera_microphone_);
-    set_microphone_sampling(media_.camera_active() && capture_microphone);
-    stream_.microphone_device(camera_microphone_device_);
-    stream_.external_audio(media_.external().has_audio());
     connection_.join(
         stream_,
         media_.external().format(),
-        capture_microphone,
+        capture_microphone || media_.external().has_audio(),
         std::move(callbacks),
         cancel,
         MediaService::generation(media_.external().format(), model_info())
@@ -596,6 +590,8 @@ void XmaxRealtimeManager::connect_impl(
         XMAX_CANCELLED,
         "Operation cancelled"
     );
+    if (capture_microphone)
+        media_.microphone().activate();
     timing_.finish_join();
 }
 
@@ -802,7 +798,7 @@ Lifecycle::CleanupResult XmaxRealtimeManager::cleanup(
         return {connection_.active().id, media_.external().bound(), true};
     }
     const bool close = scope == Scope::All;
-    set_microphone_sampling(false);
+    media_.microphone().stop();
 
     generation_.reset(true);
     render_.trajectory.clear();
@@ -830,8 +826,6 @@ Lifecycle::CleanupResult XmaxRealtimeManager::cleanup(
         render_.close_beauty();
         media_.close();
         unbind_local();
-        camera_microphone_ = false;
-        camera_microphone_device_.clear();
     }
 
     return {session_id, media_.external().bound(), true};

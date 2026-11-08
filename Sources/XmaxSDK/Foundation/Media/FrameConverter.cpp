@@ -10,6 +10,7 @@
 
 #include "Foundation/Media/FrameConverter.hpp"
 #include <algorithm>
+#include <cstring>
 
 namespace xmax::detail {
 
@@ -59,6 +60,29 @@ Frame bgra_frame(
             pixel[3] = 255;
         }
 
+    return result;
+}
+
+Frame rotate_bgra(Frame frame, unsigned degrees) {
+    if (degrees != 90 && degrees != 180 && degrees != 270)
+        return frame;
+    Frame result;
+    result.width = degrees == 180 ? frame.width : frame.height;
+    result.height = degrees == 180 ? frame.height : frame.width;
+    result.timestamp_us = frame.timestamp_us;
+    result.presentation_mirrored = frame.presentation_mirrored;
+    result.color_primaries = frame.color_primaries;
+    result.color_transfer = frame.color_transfer;
+    result.strides[0] = size_t(result.width) * 4;
+    result.planes[0].resize(result.strides[0] * result.height);
+    for (uint32_t y = 0; y < frame.height; ++y) {
+        for (uint32_t x = 0; x < frame.width; ++x) {
+            const auto column = degrees == 270 ? y : degrees == 180 ? frame.width - 1 - x : frame.height - 1 - y;
+            const auto row = degrees == 90 ? x : degrees == 180 ? frame.height - 1 - y : frame.width - 1 - x;
+            std::memcpy(result.planes[0].data() + row * result.strides[0] + column * 4,
+                        frame.planes[0].data() + y * frame.strides[0] + x * 4, 4);
+        }
+    }
     return result;
 }
 

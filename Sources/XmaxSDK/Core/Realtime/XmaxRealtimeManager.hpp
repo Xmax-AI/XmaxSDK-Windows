@@ -44,7 +44,8 @@ class XmaxRealtimeManager {
         std::chrono::milliseconds heartbeat = std::chrono::seconds(10),
         CameraFactory camera = make_camera_capture,
         std::shared_ptr<QualityHistory> history = {},
-        std::function<void(const std::string&)> microphone_validator = {}
+        MicrophoneValidator microphone_validator = {},
+        MicrophoneFactory microphone = {}
     );
 
     /**
@@ -170,8 +171,7 @@ class XmaxRealtimeManager {
     );
 
     /**
-     * Starts a camera, waits for its first frame, and enters ready state with native capture dimensions
-     * preserved.
+     * Starts a camera, waits for its first frame, and enters ready state with frames in the configured format.
      *
      * @param[in] device The UTF-8 camera identifier; an empty string selects the default camera.
      * @param[in] format The input dimensions and frame rate; see xmax_video_format for limits.
@@ -514,9 +514,6 @@ class XmaxRealtimeManager {
      */
     std::shared_ptr<ApiService> api_;
 
-    /** Validates recording endpoint selection and Windows privacy access. */
-    std::function<void(const std::string&)> microphone_validator_;
-
     /**
      * The service managing server-session creation, keepalive, and closing.
      */
@@ -573,22 +570,8 @@ class XmaxRealtimeManager {
      */
     std::atomic<uint64_t> failed_media_epoch_{0};
 
-    /**
-     * The microphone connection policy saved with the camera binding.
-     */
-    bool camera_microphone_ = false;
-
-    /**
-     * The selected Windows microphone endpoint; empty follows the system default.
-     */
-    std::string camera_microphone_device_;
-
-    /** Whether RTC callbacks may report physical microphone volume. */
-    std::mutex microphone_level_mutex_;
-    bool microphone_sampling_ = false;
-
+    void prepare_microphone(uint64_t epoch);
     void emit_microphone_level(int sample);
-    void set_microphone_sampling(bool enabled);
 
     /**
      * The mutex protecting RTC-thread statistics updates and application snapshot reads.

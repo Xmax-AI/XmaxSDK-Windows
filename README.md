@@ -258,6 +258,18 @@ generation conditions requires an open connection. A failed or cancelled conditi
 session. SDK result views handle primary pointer gestures using the displayed frame's mirror state. Set
 `TrajectoryRenderer` on a WinUI or WPF result view to supply a custom effect while retaining SDK sampling.
 
+## Responsible Use
+
+Use XmaxSDK in compliance with applicable laws and respect the rights of others.
+Obtain any required permissions and consents before submitting or using another
+person’s likeness, voice, or other protected material. Do not use the SDK to
+facilitate fraud, unlawful impersonation, or other illegal activity.
+
+XmaxSDK is licensed under the MIT License. Access to Xmax-hosted services is
+governed by the applicable Xmax service terms.
+
+<br>
+
 ## License
 
 XmaxSDK is available under the terms of the [MIT License](LICENSE).
@@ -353,7 +365,8 @@ the returned stream to connection or generation immediately. A bound preview can
 before connection starts. The controller owns capture lifetime. Use `StopMediaAsync` after
 disconnection, or `CloseAsync`, to release it.
 Windows checks microphone privacy and endpoint access when an enabled camera stream is created.
-Microphone capture and RTC publication begin on connection.
+The SDK captures microphone audio through WASAPI on connection and publishes timestamped PCM
+through the RTC custom audio track. Microphone level callbacks report the local capture level.
 `CreateLocalCameraStreamAsync` replaces camera preparation in ABI v2. Rebuild applications and
 deploy the matching managed SDK and native DLL together; ABI v1 binaries are incompatible.
 

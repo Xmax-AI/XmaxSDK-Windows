@@ -53,7 +53,7 @@ class StreamController {
      * @param[in] connection The current RTC room connection information.
      * @param[in] format The requested pixel dimensions and frame rate, subject to the interface's format
      * limits.
-     * @param[in] microphone Whether to start microphone capture when joining the RTC room.
+     * @param[in] publish_audio Whether to publish a custom PCM track on join.
      * @param[in] callbacks Callbacks for result frames, RTC events, failures, and first publication; drained
      * before stop returns.
      * @param[in] cancel A cooperative cancellation predicate; true requests termination of the operation.
@@ -62,7 +62,7 @@ class StreamController {
     void join(
         const Connection& connection,
         xmax_video_format format,
-        bool microphone,
+        bool publish_audio,
         RtcCallbacks callbacks,
         const Cancel& cancel,
         xmax_video_format generation_format = {}
@@ -147,38 +147,14 @@ class StreamController {
         const Frame& frame
     );
 
-    /**
-     * Retains the camera microphone endpoint for the next room join.
-     *
-     * @param[in] device The recording endpoint identifier, or empty for the system default.
-     */
-    void microphone_device(
-        std::string device
-    ) {
+    /** Changes custom PCM publication without changing the active media source. */
+    void audio_publication(bool enabled) {
         if (room_.joined())
-            room_.backend()->microphone_device(device);
-        microphone_device_ = std::move(device);
-    }
-
-    /** Applies camera microphone capture and publication to the joined room. */
-    void microphone_enabled(bool enabled) {
-        if (room_.joined())
-            room_.backend()->microphone_enabled(enabled);
+            room_.backend()->audio_publication(enabled);
     }
 
     /**
-     * Sets external PCM publication for the next room join.
-     *
-     * @param[in] enabled Whether this binding supplies audio instead of using the microphone.
-     */
-    void external_audio(
-        bool enabled
-    ) {
-        external_audio_ = enabled;
-    }
-
-    /**
-     * Publishes converted external PCM through the active room snapshot.
+     * Publishes local PCM through the active room snapshot.
      *
      * @param[in] frame The 10 ms PCM packet on the source video timeline.
      */
@@ -406,16 +382,6 @@ class StreamController {
      * Whether this controller's output listener requires native result-user PCM observation.
      */
     bool remote_media_enabled_ = false;
-
-    /**
-     * Whether the next room publishes custom PCM without microphone capture.
-     */
-    bool external_audio_ = false;
-
-    /**
-     * The Windows recording endpoint selected before the next RTC join.
-     */
-    std::string microphone_device_;
 
     /**
      * The uplink bitrate limits and degradation preference specified by your app.

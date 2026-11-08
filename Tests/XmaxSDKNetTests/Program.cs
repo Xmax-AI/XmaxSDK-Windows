@@ -8,12 +8,14 @@
 //  Copyright (c) 2026 XMAX.AI PTE. LTD.
 //
 
+using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
 using System.Text;
 using Xmax.SDK;
 using Xmax.SDK.Interop;
+using Xmax.SDK.Rendering;
 using Xmax.SDK.Runtime;
 
 static void Check(bool value, string message) { if (!value) throw new Exception(message); }
@@ -45,6 +47,28 @@ try
             }
             return Task.CompletedTask;
         });
+    await Test("trajectory pointer ends immediately and the trail fades independently", () =>
+    {
+        var effect = new DefaultTrajectoryEffect();
+        long started = Stopwatch.GetTimestamp();
+        var first = new TrajectoryPoint(20, 20);
+        var last = new TrajectoryPoint(80, 60);
+        effect.Sample(first, started);
+        Check(effect.Head?.Center == first && effect.Strokes.Count == 0, "stationary pointer has a head but no trail");
+        effect.Sample(last, started);
+        var stroke = effect.Strokes.Single();
+        Check(stroke.From == first && stroke.To == last && effect.Head?.Center == last, "move joins the displayed coordinates");
+        effect.End();
+        long halfway = started + Stopwatch.Frequency / 2;
+        Check(effect.Head is null && effect.Advance(halfway), "release removes the pointer and retains the trail");
+        Check(stroke.Opacity(halfway) is > .2 and < .3, "trail fades exponentially");
+        effect.Advance(started + 2 * Stopwatch.Frequency);
+        Check(effect.Strokes.Count == 0, "expired trail clears");
+        effect.Sample(first, halfway);
+        effect.Reset();
+        Check(effect.Head is null && effect.Strokes.Count == 0, "reset clears all effects");
+        return Task.CompletedTask;
+    });
     await Test("model capabilities, client ownership and ABI flags", async () =>
     {
         Check(XmaxRuntime.Version.Length > 0, "version");
@@ -214,7 +238,7 @@ try
 
         var initialLevel = new TaskCompletionSource<float?>(TaskCreationOptions.RunContinuationsAsynchronously);
         await realtime.SetMicrophoneLevelListenerAsync(level => initialLevel.TrySetResult(level));
-        Check(await initialLevel.Task.WaitAsync(TimeSpan.FromSeconds(3)) is null, "unavailable microphone is replayed");
+        Check(initialLevel.Task.IsCompletedSuccessfully && initialLevel.Task.Result is null, "registration awaits the initial microphone reading");
         await realtime.SetMicrophoneLevelListenerAsync(null);
         var state = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await realtime.SetStateListenerAsync(item =>

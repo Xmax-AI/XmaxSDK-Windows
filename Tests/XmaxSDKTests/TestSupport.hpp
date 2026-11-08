@@ -12,6 +12,7 @@
 #include "Foundation/Json.hpp"
 #include "Foundation/Network/HttpTransport.hpp"
 #include "Foundation/RTC/RtcPlatform.hpp"
+#include "Media/Audio/MicrophoneCaptureController.hpp"
 #include "Stream/Room/RoomMessageDecoder.hpp"
 #include <algorithm>
 #include <mutex>
@@ -84,22 +85,19 @@ struct FakeRtc : Rtc {
     RoomMessageDecoder decoder;
     VideoEncodingConfiguration encoding{};
     float remote_volume = -1;
-    bool microphone = false;
-    std::string selected_microphone;
-    void microphone_device(const std::string& device) override { selected_microphone = device; }
+    bool audio_published = false;
     bool observing_media = false;
-    bool external_audio_enabled = false;
     std::vector<ExternalAudioPacket> audio_packets;
-    void external_audio(bool enabled) override { external_audio_enabled = enabled; }
+    void audio_publication(bool enabled) override { audio_published = enabled; }
     void push_audio(const ExternalAudioPacket& packet) override {
         std::lock_guard<std::mutex> lock(mutex);
         audio_packets.push_back(packet);
     }
-    void join(const Connection&, VideoEncodingConfiguration config, bool mic, RtcCallbacks cb,
+    void join(const Connection&, VideoEncodingConfiguration config, bool publish_audio, RtcCallbacks cb,
               const Cancel& cancel) override {
         callbacks = std::move(cb);
         encoding = config;
-        microphone = mic;
+        audio_published = publish_audio;
         ++joins;
         joined = true;
         while (block_join && !cancel())
@@ -138,9 +136,44 @@ struct FakeRtc : Rtc {
     void volume(float value) override { remote_volume = value; }
     void observe_remote_media(bool enabled) override { observing_media = enabled; }
     void configure_encoding(VideoEncodingConfiguration value) override { encoding = value; }
-    void leave() noexcept override { ++leaves; }
+    void leave() noexcept override { audio_published = false; ++leaves; }
     int messages_count() {
         std::lock_guard<std::mutex> lock(mutex);
         return int(messages.size());
+    }
+};
+
+struct FakeMicrophoneInput {
+    struct Device {
+        std::string id;
+        MicrophoneCapture::Packet packet;
+        MicrophoneCapture::Level level;
+        bool active = false;
+
+        void sample(int64_t timestamp, int volume) {
+            if (active) {
+                level(volume);
+                packet({std::vector<int16_t>(480, 123), timestamp});
+            }
+        }
+    };
+
+    struct Capture final : MicrophoneCapture {
+        std::shared_ptr<Device> device;
+        explicit Capture(std::shared_ptr<Device> device) : device(std::move(device)) {}
+        ~Capture() override { device->active = false; }
+        void activate() noexcept override { device->active = true; }
+        bool running() const noexcept override { return true; }
+    };
+
+    std::vector<std::shared_ptr<Device>> devices;
+
+    MicrophoneFactory factory() {
+        return [this](const std::string& id, auto packet, auto level, auto) {
+            require(id != "missing", XMAX_MEDIA_ERROR, "Microphone is unavailable");
+            auto device = std::make_shared<Device>(Device{id, std::move(packet), std::move(level)});
+            devices.push_back(device);
+            return std::make_unique<Capture>(std::move(device));
+        };
     }
 };

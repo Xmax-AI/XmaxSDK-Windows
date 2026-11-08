@@ -8,6 +8,7 @@
 //  Copyright (c) 2026 XMAX.AI PTE. LTD.
 //
 
+using System.Runtime.InteropServices;
 using Xmax.SDK.Interop;
 
 namespace Xmax.SDK;
@@ -104,27 +105,17 @@ public sealed class ExternalFrameSink : IDisposable
     /// <param name="channels">The channel count, from 1 through 8, fixed for this binding.</param>
     /// <param name="timestampMicroseconds">The first sample time, in nonnegative monotonic microseconds on the video clock.</param>
     /// <remarks>
-    /// Bind with hasAudio enabled. Submit at most one second per call on one serial audio queue.
+    /// Bind with hasAudio enabled. Submit on one serial audio queue. Each buffer is limited to 32 MiB.
     /// The SDK converts to 48 kHz mono PCM16 without local playback and uploads only while published; no audio is queued for a future connection.
     /// Overlapping or negative times are ignored. Format changes fail the binding; input without audio opt-in or on a stale binding is ignored.
     /// </remarks>
-    public unsafe void PushAudio(
+    public void PushAudio(
         ReadOnlySpan<short> samples,
         uint sampleRate,
         uint channels,
         long timestampMicroseconds
-    )
-    {
-        if (channels == 0 || (uint)samples.Length % channels != 0) throw new ArgumentException("PCM must contain complete interleaved samples.");
-        using var lease = handle.Borrow();
-        fixed (short* data = samples)
-        {
-            var frame = new xmax_external_audio_frame { struct_size = (uint)sizeof(xmax_external_audio_frame), sample_format = 0,
-                sample_rate = sampleRate, channels = channels, samples_per_channel = (uint)samples.Length / channels,
-                timestamp_us = timestampMicroseconds, data = data, data_size = checked((nuint)samples.Length * 2) };
-            NativeError.Check(NativeMethods.xmax_external_frame_sink_push_audio_frame(lease.Value, &frame));
-        }
-    }
+    ) => PushAudio(MemoryMarshal.AsBytes(samples), ExternalAudioSampleFormat.Pcm16,
+        sampleRate, channels, timestampMicroseconds);
 
     /// <summary>
     /// Copies source-sized NV12 luma and interleaved chroma planes.
@@ -199,24 +190,54 @@ public sealed class ExternalFrameSink : IDisposable
     /// <param name="channels">The channel count, from 1 through 8, fixed for this binding.</param>
     /// <param name="timestampMicroseconds">The first sample time, in nonnegative monotonic microseconds on the video clock.</param>
     /// <remarks>
-    /// Bind with hasAudio enabled. Submit at most one second per call on one serial audio queue.
+    /// Bind with hasAudio enabled. Submit on one serial audio queue. Each buffer is limited to 32 MiB.
     /// The SDK converts to 48 kHz mono PCM16 without local playback and uploads only while published; no audio is queued for a future connection.
     /// Overlapping or negative times are ignored. Format changes fail the binding; input without audio opt-in or on a stale binding is ignored.
     /// </remarks>
-    public unsafe void PushAudio(
+    public void PushAudio(
         ReadOnlySpan<float> samples,
+        uint sampleRate,
+        uint channels,
+        long timestampMicroseconds
+    ) => PushAudio(MemoryMarshal.AsBytes(samples), ExternalAudioSampleFormat.Float32,
+        sampleRate, channels, timestampMicroseconds);
+
+    /// <summary>Submits little-endian linear PCM with an explicit sample type and channel layout.</summary>
+    /// <remarks>Planar inputs concatenate equal-length channel planes in channel order.
+    /// The format must stay fixed for the lifetime of the attachment. Each buffer is limited to 32 MiB.</remarks>
+    public unsafe void PushAudio(
+        ReadOnlySpan<byte> data,
+        ExternalAudioSampleFormat format,
         uint sampleRate,
         uint channels,
         long timestampMicroseconds
     )
     {
-        if (channels == 0 || (uint)samples.Length % channels != 0) throw new ArgumentException("PCM must contain complete interleaved samples.");
-        using var lease = handle.Borrow();
-        fixed (float* data = samples)
+        int sampleSize = format switch
         {
-            var frame = new xmax_external_audio_frame { struct_size = (uint)sizeof(xmax_external_audio_frame), sample_format = 1,
-                sample_rate = sampleRate, channels = channels, samples_per_channel = (uint)samples.Length / channels,
-                timestamp_us = timestampMicroseconds, data = data, data_size = checked((nuint)samples.Length * 4) };
+            ExternalAudioSampleFormat.Pcm16 or ExternalAudioSampleFormat.PlanarPcm16 => 2,
+            ExternalAudioSampleFormat.Pcm24 or ExternalAudioSampleFormat.PlanarPcm24 => 3,
+            ExternalAudioSampleFormat.Pcm32 or ExternalAudioSampleFormat.PlanarPcm32 or
+                ExternalAudioSampleFormat.Float32 or ExternalAudioSampleFormat.PlanarFloat32 => 4,
+            ExternalAudioSampleFormat.Float64 or ExternalAudioSampleFormat.PlanarFloat64 => 8,
+            _ => throw new ArgumentOutOfRangeException(nameof(format))
+        };
+        if (channels is 0 or > 8 || data.Length % (sampleSize * (int)channels) != 0)
+            throw new ArgumentException("PCM must contain complete samples for every channel.", nameof(data));
+        using var lease = handle.Borrow();
+        fixed (byte* samples = data)
+        {
+            var frame = new xmax_external_audio_frame
+            {
+                struct_size = (uint)sizeof(xmax_external_audio_frame),
+                sample_format = (int)format,
+                sample_rate = sampleRate,
+                channels = channels,
+                samples_per_channel = (uint)(data.Length / sampleSize) / channels,
+                timestamp_us = timestampMicroseconds,
+                data = samples,
+                data_size = (nuint)data.Length
+            };
             NativeError.Check(NativeMethods.xmax_external_frame_sink_push_audio_frame(lease.Value, &frame));
         }
     }

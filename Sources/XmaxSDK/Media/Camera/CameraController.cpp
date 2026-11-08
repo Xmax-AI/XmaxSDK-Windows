@@ -9,6 +9,7 @@
 //
 
 #include "Media/Camera/CameraController.hpp"
+#include "Media/Video/VideoFrameScaler.hpp"
 #include "Foundation/Logging/XmaxLogger.hpp"
 
 namespace xmax::detail {
@@ -171,7 +172,7 @@ void CameraController::capture_loop() {
 }
 
 /**
- * Starts native capture and delivers frames at their original dimensions, waiting for the first frame,
+ * Starts native capture and delivers frames at the requested dimensions, waiting for the first frame,
  * failure, or cancellation. Startup failures are thrown to the caller; only failures after successful
  * startup are delivered through the failure callback.
  *
@@ -212,12 +213,20 @@ void CameraController::start(
 
     const auto metrics = std::make_shared<CameraMetrics>();
     CaptureCallbacks callbacks;
-    callbacks.frame = [this, output, metrics](Frame frame) {
+    callbacks.frame = [this, output, metrics, format](Frame frame) {
         try {
             const bool profiling = XmaxLogger::is_enabled(XMAX_LOG_PERFORMANCE);
             const auto begin = profiling ? Clock::now() : Clock::time_point{};
             const auto width = frame.width, height = frame.height;
-            validate_frame(frame.view());
+            if (frame.width == format.width && frame.height == format.height) {
+                validate_frame(frame.view());
+            } else {
+                auto scaled = copy_scaled_video_frame(frame.view(), format, false);
+                scaled.presentation_mirrored = frame.presentation_mirrored;
+                scaled.color_primaries = frame.color_primaries;
+                scaled.color_transfer = frame.color_transfer;
+                frame = std::move(scaled);
+            }
             {
                 std::lock_guard<std::mutex> lock(mutex_);
                 if (failure_)
@@ -260,11 +269,24 @@ void CameraController::start(
         );
     };
 
+    auto binding = std::make_shared<Recovery>();
+    binding->device = device;
+    binding->format = format;
+    binding->callbacks = std::move(callbacks);
+    binding->callbacks.interrupted = [this, weak = std::weak_ptr<Recovery>(binding)] {
+        if (auto current = weak.lock())
+            interrupted(current);
+    };
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        recovery_ = binding;
+    }
+
     try {
-        queue_capture(std::packaged_task<void()>([&, callbacks = std::move(callbacks)]() mutable {
-            require(!cancel(), XMAX_CANCELLED, "Camera startup cancelled");
+        queue_capture(std::packaged_task<void()>([&, binding] {
+            require(!cancel() && !binding->cancelled, XMAX_CANCELLED, "Camera startup cancelled");
             capture_ = factory_();
-            capture_->start(device, format, std::move(callbacks), cancel);
+            capture_->start(device, format, binding->callbacks, cancel);
         }), true).get();
 
         const auto deadline = Clock::now() + std::chrono::seconds(12);
@@ -313,6 +335,63 @@ void CameraController::start(
     }
 }
 
+void CameraController::interrupted(const std::shared_ptr<Recovery>& binding) {
+    bool startup = false;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (binding->cancelled || recovery_ != binding || failure_)
+            return;
+        binding->interrupted = true;
+        if (binding->retrying) {
+            changed_.notify_all();
+            return;
+        }
+        startup = !running_;
+        if (!startup)
+            binding->retrying = true;
+    }
+    if (startup) {
+        binding->callbacks.failure(Error(XMAX_MEDIA_ERROR, "Camera capture was interrupted during startup"));
+        return;
+    }
+    queue_capture(std::packaged_task<void()>([this, binding] { recover_capture(binding); }), false);
+}
+
+void CameraController::recover_capture(const std::shared_ptr<Recovery>& binding) {
+    const Cancel cancelled = [binding] { return binding->cancelled.load(); };
+    for (int attempt = 0; attempt < 3 && !cancelled(); ++attempt) {
+        if (capture_) {
+            capture_->stop();
+            capture_.reset();
+        }
+        {
+            std::unique_lock<std::mutex> lock(mutex_);
+            if (changed_.wait_for(lock, std::chrono::milliseconds(250), [&] { return cancelled() || failure_.has_value(); }))
+                return;
+            ready_ = false;
+            binding->interrupted = false;
+        }
+        try {
+            capture_ = factory_();
+            capture_->start(binding->device, binding->format, binding->callbacks, cancelled);
+        } catch (const std::exception&) {
+            continue;
+        }
+        std::unique_lock<std::mutex> lock(mutex_);
+        changed_.wait_for(lock, std::chrono::seconds(1), [&] {
+            return ready_ || cancelled() || binding->interrupted || failure_.has_value();
+        });
+        if (cancelled() || failure_)
+            return;
+        if (ready_ && !binding->interrupted) {
+            binding->retrying = false;
+            return;
+        }
+    }
+    if (!cancelled())
+        binding->callbacks.failure(Error(XMAX_MEDIA_ERROR, "Camera capture did not resume after interruption"));
+}
+
 /**
  * Retains the first capture failure and forwards it only after startup has committed.
  *
@@ -348,6 +427,12 @@ void CameraController::stop() noexcept {
 }
 
 std::future<void> CameraController::stop_async() {
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (recovery_)
+            recovery_->cancelled = true;
+    }
+    changed_.notify_all();
     return queue_capture(std::packaged_task<void()>([this] { stop_capture(); }), false);
 }
 
@@ -355,6 +440,7 @@ void CameraController::stop_capture() noexcept {
     {
         std::lock_guard<std::mutex> lock(mutex_);
         running_ = false;
+        recovery_.reset();
     }
 
     if (capture_) {

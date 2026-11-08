@@ -79,7 +79,7 @@ class ExternalVideoController {
     /**
      * Converts source-bound PCM only while publication is active, without queuing for reconnection.
      *
-     * @param[in] frame The borrowed interleaved PCM samples and source timestamp.
+     * @param[in] frame The borrowed interleaved or planar PCM samples and source timestamp.
      * @param[in] binding The source revision; stale or audio-disabled bindings ignore input.
      */
     void push_audio(
@@ -98,7 +98,7 @@ class ExternalVideoController {
     bool allows_microphone() const;
 
     /**
-     * Delivers camera frames at capture dimensions; RTC handles encoding dimensions and aspect ratio.
+     * Delivers camera frames at the configured media dimensions to publication and preview.
      *
      * @param[in] frame The frame or borrowed view to deliver; its pixels must remain valid until this
      * synchronous call returns.
@@ -145,7 +145,7 @@ class ExternalVideoController {
     mutable std::mutex mutex_;
 
     /**
-     * The external input format or camera encoding target; camera capture dimensions may differ.
+     * The media format shared by local preview and publication.
      */
     xmax_video_format format_{};
 

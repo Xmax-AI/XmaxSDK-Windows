@@ -41,7 +41,7 @@ void RoomController::allocate() {
 void RoomController::join(
     const Connection& value,
     VideoEncodingConfiguration encoding,
-    bool microphone,
+    bool publish_audio,
     RtcCallbacks callbacks,
     const Cancel& cancel
 ) {
@@ -84,7 +84,7 @@ void RoomController::join(
         rtc_->join(
             value,
             encoding,
-            microphone,
+            publish_audio,
             std::move(callbacks),
             cancel
         );

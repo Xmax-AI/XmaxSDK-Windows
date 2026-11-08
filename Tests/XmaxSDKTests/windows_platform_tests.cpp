@@ -1,3 +1,13 @@
+//
+//  windows_platform_tests.cpp
+//  XmaxSDK
+//
+//  Author: 翁跃庭 (Yueting Weng)
+//  GitHub: https://github.com/Xmax-AI/XmaxSDK-Windows
+//
+//  Copyright (c) 2026 XMAX.AI PTE. LTD.
+//
+
 #include <future>
 #include <iostream>
 #include <stdexcept>
@@ -5,18 +15,66 @@
 #include <vector>
 #include <windows.h>
 #include <xmax/xmax.h>
+#include "Media/Audio/MicrophoneCaptureController.hpp"
+#include <atomic>
+#include <cmath>
+#include <thread>
 #define CHECK(value)                                                                                         \
     do {                                                                                                     \
         if (!(value))                                                                                        \
             throw std::runtime_error(#value);                                                                \
     } while (0)
-int main() {
+static int verify_microphone_capture() {
+    using namespace xmax::detail;
+    using namespace std::chrono_literals;
+
+    std::atomic<int> packets{0}, levels{0}, resets{0};
+    std::atomic<bool> valid{true};
+    int64_t previous = -1;
+    {
+        MicrophoneCaptureController microphone;
+        microphone.prepare(
+            [&](const ExternalAudioPacket& packet) {
+                const auto now = std::chrono::duration_cast<std::chrono::microseconds>(
+                    Clock::now().time_since_epoch()).count();
+                if (packet.samples.size() != 480 || packet.timestamp_us <= previous ||
+                    std::abs(now - packet.timestamp_us) > 2000000)
+                    valid = false;
+                previous = packet.timestamp_us;
+                ++packets;
+            },
+            [&](int level) {
+                if (level == -1) {
+                    ++resets;
+                } else {
+                    if (level < 0 || level > 255)
+                        valid = false;
+                    ++levels;
+                }
+            });
+        CHECK(microphone.running() && packets == 0 && levels == 0);
+        microphone.activate();
+        const auto deadline = Clock::now() + 3s;
+        while ((packets < 20 || levels < 2) && resets == 0 && Clock::now() < deadline)
+            std::this_thread::sleep_for(10ms);
+    }
+    CHECK(valid && resets == 1 && packets >= 20 && levels >= 2);
+    const int stopped = packets;
+    std::this_thread::sleep_for(30ms);
+    CHECK(stopped == packets);
+    std::cout << "Windows microphone capture passed: " << packets << " PCM packets and " << levels << " levels\n";
+    return 0;
+}
+
+int main(int argc, char** argv) {
     xmax_client client = nullptr;
     xmax_realtime realtime = nullptr;
     xmax_camera_list cameras = nullptr;
     xmax_frame frame = nullptr;
     HWND window = nullptr;
     try {
+        if (argc == 2 && std::string(argv[1]) == "--microphone")
+            return verify_microphone_capture();
         xmax_client_config config{sizeof(config), XMAX_ABI_VERSION, "", nullptr, 15000};
         CHECK(xmax_client_create(&config, &client) == XMAX_OK);
         CHECK(xmax_client_list_cameras(client, &cameras) == XMAX_OK);

@@ -163,7 +163,11 @@ public sealed partial class XmaxRealtimeVideoView : FrameworkElement
             ResetTrajectory();
             ClearPresentation();
         }
-        if (trajectory.Update(ResultTrack, Viewport)) InvalidateVisual();
+        if (trajectory.Update(ResultTrack, Viewport))
+        {
+            if (!trajectory.Active && IsMouseCaptured) ReleaseMouseCapture();
+            InvalidateVisual();
+        }
         if (frame is null) return;
         rendering = true;
         try

@@ -19,7 +19,7 @@ namespace Xmax.SDK;
 /// <param name="Height">The height, in pixels.</param>
 /// <param name="FramesPerSecond">The nominal frame rate, in frames per second.</param>
 /// <remarks>
-/// Camera formats describe encoding targets; capture may use different device-supported dimensions.
+/// Camera frames are center-cropped and scaled to the configured dimensions for preview and publication.
 /// External input frames must match their bound format. Query model capabilities before selecting a camera target.
 /// </remarks>
 public readonly record struct VideoFormat(

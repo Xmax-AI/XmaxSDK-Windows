@@ -8,10 +8,10 @@
 //  Copyright (c) 2026 XMAX.AI PTE. LTD.
 //
 
-#include "Foundation/RTC/MicrophoneDevices.hpp"
+#include "Foundation/Media/Audio/MicrophoneDevices.hpp"
 #ifdef _WIN32
 #include <windows.h>
-#include <audioclient.h>
+#include "Foundation/Media/Audio/WindowsRecordingEndpoint.hpp"
 #include <mmdeviceapi.h>
 #include <propsys.h>
 #include <wrl/client.h>
@@ -38,11 +38,6 @@ class ComApartment {
   private:
     HRESULT result_;
 };
-
-void check_microphone(HRESULT result, const char* message) {
-    require(SUCCEEDED(result), result == E_ACCESSDENIED ? XMAX_MICROPHONE_PERMISSION_DENIED : XMAX_MEDIA_ERROR,
-            std::string(message) + " (HRESULT " + std::to_string(uint32_t(result)) + ")");
-}
 
 ComPtr<IMMDeviceEnumerator> enumerator() {
     ComPtr<IMMDeviceEnumerator> result;
@@ -123,11 +118,21 @@ std::vector<CameraDevice> list_microphone_devices() {
 #endif
 }
 
-void validate_microphone_device(
-    const std::string& device
-) {
 #ifdef _WIN32
-    ComApartment apartment;
+void check_microphone(HRESULT result, const char* message) {
+    if (FAILED(result))
+        throw Error(result == E_ACCESSDENIED ? XMAX_MICROPHONE_PERMISSION_DENIED : XMAX_MEDIA_ERROR,
+                    std::string(message) + " (HRESULT " + std::to_string(uint32_t(result)) + ")");
+}
+
+std::string default_recording_endpoint_id() {
+    ComPtr<IMMDevice> endpoint;
+    check_microphone(enumerator()->GetDefaultAudioEndpoint(eCapture, eConsole, &endpoint),
+                     "The system default microphone is unavailable");
+    return endpoint_id(endpoint.Get());
+}
+
+ComPtr<IAudioClient> open_recording_endpoint(const std::string& device) {
     auto manager = enumerator();
     ComPtr<IMMDevice> endpoint;
     check_microphone(device.empty()
@@ -145,6 +150,14 @@ void validate_microphone_device(
     check_microphone(endpoint->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr,
                                         reinterpret_cast<void**>(audio.GetAddressOf())),
                      "Cannot activate the recording endpoint");
+    return audio;
+}
+#endif
+
+void validate_microphone_device(const std::string& device) {
+#ifdef _WIN32
+    ComApartment apartment;
+    auto audio = open_recording_endpoint(device);
     WAVEFORMATEX* format = nullptr;
     check_microphone(audio->GetMixFormat(&format), "Cannot read the recording format");
     const std::unique_ptr<WAVEFORMATEX, decltype(&CoTaskMemFree)> owner(format, CoTaskMemFree);

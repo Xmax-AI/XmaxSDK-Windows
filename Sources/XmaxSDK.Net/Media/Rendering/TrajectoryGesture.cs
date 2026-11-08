@@ -14,27 +14,24 @@ namespace Xmax.SDK.Rendering;
 
 internal sealed class TrajectoryGesture
 {
-    private readonly List<Stroke> strokes = [];
     private TrajectoryPoint? active;
     private Guid activeId;
     private TrajectoryPoint? previous;
     private long lastSample;
-    private long lastStroke;
     private long interactionRevision;
 
-    internal readonly record struct Stroke(TrajectoryPoint From, TrajectoryPoint To, long Time);
-
-    internal IReadOnlyList<Stroke> Strokes => strokes;
+    internal DefaultTrajectoryEffect Effect { get; } = new();
     internal bool Active => active.HasValue;
     internal ITrajectoryEffectRenderer? Renderer { get; set; }
 
     internal bool Begin(TrajectoryPoint point, VideoViewport viewport, long revision)
     {
         if (!viewport.Contains(point)) return false;
+        Effect.Reset();
         active = point;
         activeId = Guid.NewGuid();
         previous = null;
-        lastSample = lastStroke = 0;
+        lastSample = 0;
         interactionRevision = revision;
         return true;
     }
@@ -44,30 +41,31 @@ internal sealed class TrajectoryGesture
     {
         bool started = previous.HasValue;
         active = previous = null;
+        Effect.End();
         if (started) Renderer?.RenderEnded(activeId);
     }
 
     internal void Reset()
     {
         End();
-        strokes.Clear();
+        Effect.Reset();
         Renderer?.Reset();
     }
 
     internal bool Update(RealtimeVideoTrack? track, VideoViewport viewport, bool force = false)
     {
         long now = Stopwatch.GetTimestamp();
-        int expired = 0;
-        while (expired < strokes.Count && Opacity(strokes[expired], now) <= 0) ++expired;
-        if (expired > 0) strokes.RemoveRange(0, expired);
-        if (track?.IsRemote != true || active is not { } point || !viewport.IsValid)
-            return expired > 0 || strokes.Count > 0;
-        if (track.InteractionRevision != interactionRevision)
+        bool redraw = Effect.Advance(now);
+        if (!Active && !redraw)
+            return false;
+        if (track?.IsRemote != true || !viewport.IsValid || track.InteractionRevision != interactionRevision)
         {
             Reset();
             return true;
         }
 
+        if (active is not { } point)
+            return redraw;
         point = viewport.Clamp(point);
         if (force || Stopwatch.GetElapsedTime(lastSample, now).TotalSeconds >= 1d / 30)
         {
@@ -97,17 +95,9 @@ internal sealed class TrajectoryGesture
             return true;
         }
 
-        if (point != previous || Stopwatch.GetElapsedTime(lastStroke, now).TotalMilliseconds >= 100)
-        {
-            strokes.Add(new(previous ?? point, point, now));
-            previous = point;
-            lastStroke = now;
-        }
+        Effect.Sample(point, now);
         return true;
     }
-
-    internal static double Opacity(Stroke stroke, long now) =>
-        Math.Clamp(1 - Stopwatch.GetElapsedTime(stroke.Time, now).TotalMilliseconds / 420, 0, 1);
 }
 
 internal readonly record struct VideoViewport(

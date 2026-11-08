@@ -37,7 +37,7 @@ class Rtc {
      *
      * @param[in] connection The current RTC room connection information.
      * @param[in] encoding The resolved encoding dimensions, frame rate, bitrate, and degradation policy.
-     * @param[in] microphone Whether to start microphone capture when joining the RTC room.
+     * @param[in] publish_audio Whether to publish a custom PCM track on join.
      * @param[in] callbacks Callbacks for result frames, RTC events, failures, and first publication; drained
      * before leave returns.
      * @param[in] cancel A cooperative cancellation predicate; true requests termination of the operation.
@@ -45,25 +45,14 @@ class Rtc {
     virtual void join(
         const Connection& connection,
         VideoEncodingConfiguration encoding,
-        bool microphone,
+        bool publish_audio,
         RtcCallbacks callbacks,
         const Cancel& cancel
     ) = 0;
 
-    /**
-     * Retains a recording endpoint before join; empty follows the system default.
-     *
-     * @param[in] device The Windows recording endpoint identifier, or empty for the default.
-     */
-    virtual void microphone_device(
-        const std::string& device
-    ) {
-        require(device.empty(), XMAX_UNSUPPORTED, "Recording device selection is unavailable");
-    }
-
-    /** Changes physical microphone capture and publication while connected. */
-    virtual void microphone_enabled(bool enabled) {
-        require(!enabled, XMAX_UNSUPPORTED, "Runtime microphone capture is unavailable");
+    /** Changes custom PCM publication while connected. */
+    virtual void audio_publication(bool enabled) {
+        require(!enabled, XMAX_UNSUPPORTED, "Custom PCM publication is unavailable");
     }
 
     /**
@@ -87,22 +76,7 @@ class Rtc {
     ) = 0;
 
     /**
-     * Selects custom PCM publication before join; microphone capture must be disabled when enabled.
-     *
-     * @param[in] enabled Whether the source supplies external PCM.
-     */
-    virtual void external_audio(
-        bool enabled
-    ) {
-        require(
-            !enabled,
-            XMAX_UNSUPPORTED,
-            "This RTC backend does not support external audio"
-        );
-    }
-
-    /**
-     * Publishes a 10 ms external PCM packet without local playback.
+     * Publishes a 10 ms PCM packet without local playback.
      *
      * @param[in] frame The 480 mono PCM16 samples and shared source timestamp.
      */

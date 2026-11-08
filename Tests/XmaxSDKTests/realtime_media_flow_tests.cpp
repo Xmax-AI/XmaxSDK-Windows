@@ -56,7 +56,11 @@ struct Camera final : CameraCapture {
 };
 
 struct AudioRtc final : FakeRtc {
-    void microphone_enabled(bool enabled) override { microphone = enabled; }
+    bool fail_audio_update = false;
+    void audio_publication(bool enabled) override {
+        require(!fail_audio_update, XMAX_RTC_ERROR, "PCM publication update failed");
+        FakeRtc::audio_publication(enabled);
+    }
 };
 
 void unpublished_before_first_frame() {
@@ -100,13 +104,15 @@ void camera_stream_generation_lifecycle() {
     Config config;
     config.key = "test";
     std::vector<std::string> validated;
+    FakeMicrophoneInput microphone;
     XmaxRealtimeManager sdk(
         std::make_shared<ApiService>(config, http),
         [rtc] { return rtc; },
         10s,
         [] { return std::make_unique<Camera>(); },
         {},
-        [&](const std::string& device) { validated.push_back(device); }
+        [&](const std::string& device) { validated.push_back(device); },
+        microphone.factory()
     );
     sdk.adaptive(false);
     const xmax_encoding_config encoding{sizeof(encoding), 600, 2500, XMAX_ENCODER_MAINTAIN_FRAMERATE};
@@ -134,18 +140,28 @@ void camera_stream_generation_lifecycle() {
     sdk.complete_camera_preview(local);
     CHECK(sdk.state_snapshot().state == XMAX_CONNECTED);
     CHECK(rtc->encoding.minimum_bitrate == 600 && rtc->encoding.maximum_bitrate == 2500);
-    CHECK(rtc->microphone && sdk.microphone_enabled());
+    CHECK(rtc->audio_published && sdk.microphone_enabled());
+    auto first = microphone.devices.back();
+    CHECK(first->id == "endpoint" && first->active);
+    first->sample(10000, 12);
+    expect_error(XMAX_MEDIA_ERROR, [&] { sdk.switch_microphone("missing"); });
+    CHECK(first->active && microphone.devices.size() == 1);
     sdk.switch_microphone("second");
-    CHECK(rtc->selected_microphone == "second" && validated.back() == "second");
-    rtc->callbacks.microphone_level(180);
+    auto second = microphone.devices.back();
+    CHECK(second->id == "second" && second->active && !first->active && validated.back() == "second");
+    second->sample(15000, 180);
+    second->sample(20000, 180);
+    CHECK(rtc->audio_packets.size() == 2 && rtc->audio_packets.back().timestamp_us == 20000);
     xmax_event event{};
-    bool measured = false;
+    std::vector<int> levels;
     while (sdk.poll(event))
-        measured |= event.type == XMAX_EVENT_MICROPHONE_LEVEL && event.code == 180;
-    CHECK(measured);
+        if (event.type == XMAX_EVENT_MICROPHONE_LEVEL)
+            levels.push_back(event.code);
+    CHECK((levels == std::vector<int>{-1, 180}));
     sdk.set_microphone_enabled(false);
-    CHECK(!rtc->microphone && !sdk.microphone_enabled());
-    rtc->callbacks.microphone_level(255);
+    CHECK(!rtc->audio_published && !sdk.microphone_enabled() && !second->active);
+    second->sample(30000, 255);
+    CHECK(rtc->audio_packets.size() == 2);
     bool cleared = false;
     while (sdk.poll(event)) {
         if (event.type == XMAX_EVENT_MICROPHONE_LEVEL) {
@@ -155,8 +171,13 @@ void camera_stream_generation_lifecycle() {
     }
     CHECK(cleared);
     sdk.switch_microphone("");
+    rtc->fail_audio_update = true;
+    expect_error(XMAX_RTC_ERROR, [&] { sdk.set_microphone_enabled(true); });
+    CHECK(!microphone.devices.back()->active && !sdk.microphone_enabled() && !rtc->audio_published);
+    rtc->fail_audio_update = false;
     sdk.set_microphone_enabled(true);
-    CHECK(rtc->selected_microphone.empty() && rtc->microphone && rtc->joins == 1);
+    CHECK(microphone.devices.back()->id.empty() && microphone.devices.back()->active &&
+          rtc->audio_published && rtc->joins == 1);
 
     CHECK(sdk.generate(&generate, local, true) == remote);
     CHECK(rtc->joins == 1 && sdk.state_snapshot().state == XMAX_GENERATING);

@@ -9,6 +9,7 @@
 //
 
 #include "Render/Beauty/RemoteVideoBeautyPipeline.hpp"
+#include "Render/Video/ResultVideoColor.hpp"
 
 namespace xmax::detail {
 RemoteVideoBeautyPipeline::RemoteVideoBeautyPipeline(Output output, BeautyProcessorFactory factory)
@@ -93,9 +94,11 @@ void RemoteVideoBeautyPipeline::run() {
 }
 void RemoteVideoBeautyPipeline::process(Pending value) {
     auto result = value.frame;
+    const bool sdr = prepare_result_video_color(*result);
     std::optional<Error> failure;
     try {
         if (options_) {
+            require(sdr, XMAX_MEDIA_ERROR, "Result beauty requires a supported SDR color space");
             if (!processor_) processor_ = factory_(*options_);
             result = processor_->process(*value.frame);
             // A temporary output-capacity limit drops this frame without disabling beauty.

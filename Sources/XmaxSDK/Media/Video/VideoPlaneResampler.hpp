@@ -1,5 +1,5 @@
 //
-//  ExternalVideoResampler.hpp
+//  VideoPlaneResampler.hpp
 //  XmaxSDK
 //
 //  Author: 翁跃庭 (Yueting Weng)
@@ -26,7 +26,7 @@ namespace xmax::detail {
  * @param[in] height The output height in rows.
  * @param[in] channels The number of bytes per sample, 1 for planar data, 2 for UV, or 4 for BGRA.
  */
-void resample_external_plane(
+void resample_video_plane(
     const uint8_t* source,
     size_t stride,
     uint32_t source_width,

@@ -48,14 +48,14 @@ class RoomController {
      *
      * @param[in] value The server-assigned room identity and credentials.
      * @param[in] encoding The uplink encoding configuration for this join.
-     * @param[in] microphone Whether to start the microphone.
+     * @param[in] publish_audio Whether to publish a custom PCM track on join.
      * @param[in] callbacks The room's result-frame, statistics, and failure callbacks.
      * @param[in] cancel The cooperative cancellation predicate.
      */
     void join(
         const Connection& value,
         VideoEncodingConfiguration encoding,
-        bool microphone,
+        bool publish_audio,
         RtcCallbacks callbacks,
         const Cancel& cancel
     );

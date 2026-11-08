@@ -1,5 +1,5 @@
 //
-//  ExternalVideoFrame.cpp
+//  VideoFrameScaler.cpp
 //  XmaxSDK
 //
 //  Author: 翁跃庭 (Yueting Weng)
@@ -8,8 +8,8 @@
 //  Copyright (c) 2026 XMAX.AI PTE. LTD.
 //
 
-#include "Media/External/ExternalVideoFrame.hpp"
-#include "Media/External/ExternalVideoResampler.hpp"
+#include "Media/Video/VideoFrameScaler.hpp"
+#include "Media/Video/VideoPlaneResampler.hpp"
 #include <algorithm>
 
 namespace xmax::detail {
@@ -51,7 +51,7 @@ void resize_plane(
     output.resize(stride * height);
     const auto* input = source.planes[plane] + crop.y / subsampling * source.strides[plane] +
                         crop.x / subsampling * channels;
-    resample_external_plane(input, source.strides[plane], crop.width / subsampling, crop.height / subsampling,
+    resample_video_plane(input, source.strides[plane], crop.width / subsampling, crop.height / subsampling,
                             output.data(), width, height, channels);
 }
 
@@ -71,7 +71,7 @@ void interleave_chroma(Frame& destination) {
 
 } // namespace
 
-Frame copy_external_video_frame(
+Frame copy_scaled_video_frame(
     const xmax_video_frame& source,
     xmax_video_format format,
     bool normalize_chroma

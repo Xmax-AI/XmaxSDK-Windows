@@ -102,6 +102,37 @@ static void stale_in_flight() {
     pipeline.bind(2, true); release.set_value(); pipeline.configure(std::nullopt);
     CHECK(outputs == 0); pipeline.submit(frame(2), 2); eventually([&] { return outputs == 1; });
 }
+static void shared_sdr_preparation_and_hdr_fallback() {
+    std::atomic<int> calls{0}, outputs{0}, errors{0};
+    std::shared_ptr<Frame> delivered;
+    RemoteVideoBeautyPipeline pipeline([&](auto result, auto) {
+        delivered = std::move(result);
+        ++outputs;
+    }, [&](auto) { return std::make_unique<Stub>(calls); });
+    pipeline.listener([&](auto) { ++errors; });
+    pipeline.bind(1, true);
+
+    auto source = frame();
+    source->color_primaries = 9; // BT.2020 SDR
+    source->color_transfer = 1;
+    source->planes[0][1] = 116;
+    pipeline.submit(std::make_shared<Frame>(*source), 1);
+    eventually([&] { return outputs == 1; });
+    const auto prepared = delivered->planes[0];
+    CHECK(delivered->color_primaries == 1 && prepared != source->planes[0]);
+
+    pipeline.configure(BeautyOptions{sizeof(BeautyOptions), 0, 0, 0, 0});
+    pipeline.submit(std::make_shared<Frame>(*source), 1);
+    eventually([&] { return outputs == 2; });
+    CHECK(calls == 1 && delivered->planes[0][0] == 77);
+    CHECK(std::equal(prepared.begin() + 1, prepared.end(), delivered->planes[0].begin() + 1));
+
+    source->color_transfer = 16; // PQ HDR cannot enter the SDR effect.
+    pipeline.submit(source, 1);
+    eventually([&] { return outputs == 3; });
+    CHECK(delivered == source && calls == 1 && errors == 1);
+}
+
 static void real_worker() {
     auto raw = frame(456, 1920, 1080);
     for (size_t i = 0; i < raw->planes[0].size(); i += 4) {
@@ -112,15 +143,24 @@ static void real_worker() {
     auto original = raw->planes[0];
     auto plainWorker = make_video_beauty_processor({sizeof(BeautyOptions), 0, 0, 0, 0}); auto plain = plainWorker->process(*raw);
     plainWorker->update({sizeof(BeautyOptions), 1, 1, 0, 0}); auto strong = plainWorker->process(*raw);
-    double delta = 0;
-    for (size_t i = 0; i < original.size(); ++i) if (i % 4 != 3) delta += std::abs(int(plain->planes[0][i]) - int(strong->planes[0][i]));
+    double delta = 0, neutral_delta = 0;
+    for (size_t i = 0; i < original.size(); ++i) {
+        if (i % 4 == 3)
+            continue;
+        delta += std::abs(int(plain->planes[0][i]) - int(strong->planes[0][i]));
+        neutral_delta += std::abs(int(plain->planes[0][i]) - int(original[i]));
+    }
     delta /= 1920 * 1080 * 3;
+    neutral_delta /= 1920 * 1080 * 3;
+    std::cout << "ClearVision 1080p mean RGB difference with zero strengths: " << neutral_delta << '\n';
+    CHECK(neutral_delta < 8);
     CHECK(delta > 1 && strong->timestamp_us == 456 && strong->width == 1920 && strong->height == 1080 && raw->planes[0] == original);
     std::cout << "PASS actual SDK ClearVision 1080p, mean RGB difference " << delta << '\n';
 }
 int main(int argc, char**) {
     try {
         contracts(); fallback_and_pressure(); shared_preview_and_media(); stale_in_flight();
+        shared_sdr_preparation_and_hdr_fallback();
         if (argc > 1) real_worker();
         std::cout << "PASS SDK beauty defaults, validation, fallback, capacity, shared output and stale-frame isolation\n";
         return 0;

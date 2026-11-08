@@ -31,8 +31,7 @@ using OperationKind = Lifecycle::OperationKind;
 using Scope = Lifecycle::TerminationScope;
 
 /**
- * Starts a camera, waits for its first frame, and enters ready state with native capture dimensions
- * preserved.
+ * Starts a camera, waits for its first frame, and enters ready state with frames in the configured format.
  *
  * @param[in] device The UTF-8 camera identifier; an empty string selects the default camera.
  * @param[in] format The input dimensions and frame rate; see xmax_video_format for limits.
@@ -69,8 +68,8 @@ void XmaxRealtimeManager::create_local_camera_stream(
             const auto resolved = MediaService::camera_input(format, model_info());
             if (encoding)
                 EncodingController::validate(*encoding);
-            if (microphone && microphone_validator_)
-                microphone_validator_(microphone_device);
+            if (microphone)
+                media_.microphone().validate(microphone_device);
             token.failure_scope(Scope::All);
             errors_.reset();
             change_state(XMAX_PREPARING);
@@ -90,8 +89,7 @@ void XmaxRealtimeManager::create_local_camera_stream(
             token.ensure_current();
             if (encoding)
                 stream_.encoding(*encoding);
-            camera_microphone_ = microphone;
-            camera_microphone_device_ = std::move(microphone_device);
+            media_.microphone().configure(microphone, std::move(microphone_device));
             stream_.volume(0);
             camera_preview_pending_ = wait_for_preview;
             if (!wait_for_preview)

@@ -14,7 +14,6 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
-using Microsoft.UI.Xaml.Shapes;
 using Xmax.SDK.Rendering;
 
 namespace Xmax.SDK.WinUI;
@@ -26,7 +25,7 @@ public sealed class XmaxTrajectoryOverlay : Canvas
     private readonly TrajectoryGesture gesture = new();
     private readonly RectangleGeometry clip = new();
     private Border? customEffect;
-    private readonly SolidColorBrush glow = new(Windows.UI.Color.FromArgb(255, 58, 255, 137));
+    private readonly TrajectoryEffectVisual effect = new();
     private RealtimeVideoTrack? track;
     private uint width, height;
     private bool mirrored;
@@ -46,10 +45,13 @@ public sealed class XmaxTrajectoryOverlay : Canvas
         this.host = host;
         IsHitTestVisible = false;
         Clip = clip;
+        Children.Add(effect);
         host.Children.Add(this);
         host.SizeChanged += (_, args) =>
         {
             clip.Rect = new(0, 0, args.NewSize.Width, args.NewSize.Height);
+            effect.Width = args.NewSize.Width;
+            effect.Height = args.NewSize.Height;
             if (customEffect?.Clip is RectangleGeometry geometry)
                 geometry.Rect = clip.Rect;
         };
@@ -166,6 +168,7 @@ public sealed class XmaxTrajectoryOverlay : Canvas
         Move(sender, args);
         gesture.Update(track, Viewport, force: true);
         gesture.End();
+        effect.Draw(gesture.Effect, Stopwatch.GetTimestamp());
         pointer = null;
         host.ReleasePointerCapture(args.Pointer);
     }
@@ -181,7 +184,7 @@ public sealed class XmaxTrajectoryOverlay : Canvas
         pointer = null;
         if (captured is not null) host.ReleasePointerCapture(captured);
         gesture.Reset();
-        Children.Clear();
+        effect.Clear();
         StopRendering();
     }
 
@@ -195,22 +198,13 @@ public sealed class XmaxTrajectoryOverlay : Canvas
     private void Render(object? sender, object args)
     {
         gesture.Update(track, Viewport);
-        var now = Stopwatch.GetTimestamp();
-        int count = gesture.Strokes.Count;
-        if (!gesture.Active && count == 0) StopRendering();
-        while (Children.Count > count) Children.RemoveAt(Children.Count - 1);
-        for (int index = 0; index < count; ++index)
+        if (!gesture.Active && pointer is not null)
         {
-            var stroke = gesture.Strokes[index];
-            if (index == Children.Count)
-                Children.Add(new Line { Stroke = glow, StrokeThickness = 5,
-                    StrokeStartLineCap = PenLineCap.Round, StrokeEndLineCap = PenLineCap.Round });
-            var line = (Line)Children[index];
-            line.X1 = stroke.From.X;
-            line.Y1 = stroke.From.Y;
-            line.X2 = stroke.To.X + (stroke.From == stroke.To ? .01 : 0);
-            line.Y2 = stroke.To.Y;
-            line.Opacity = TrajectoryGesture.Opacity(stroke, now);
+            Reset();
+            return;
         }
+        effect.Draw(gesture.Effect, Stopwatch.GetTimestamp());
+        if (!gesture.Active && gesture.Effect.Strokes.Count == 0)
+            StopRendering();
     }
 }

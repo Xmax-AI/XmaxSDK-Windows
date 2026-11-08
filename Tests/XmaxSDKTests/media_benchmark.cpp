@@ -11,7 +11,7 @@
 using namespace xmax::detail;
 
 namespace {
-/// @brief Compare native capture and unscaled SDK delivery for one explicitly named camera.
+/// @brief Compare native capture and SDK camera output for one explicitly named camera.
 void camera(const std::string& name, int duration_seconds) {
     auto native = make_camera_capture();
     std::vector<CameraDevice> matches;

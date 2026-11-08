@@ -9,7 +9,7 @@
 //
 
 #include "Media/External/ExternalVideoController.hpp"
-#include "Media/External/ExternalVideoFrame.hpp"
+#include "Media/Video/VideoFrameScaler.hpp"
 #include "Foundation/Logging/XmaxLogger.hpp"
 #include "Service/Media/MediaService.hpp"
 
@@ -172,7 +172,7 @@ void ExternalVideoController::push(
         "External frame timestamps must increase strictly"
     );
 
-    auto frame = copy_external_video_frame(source, format_, app_owned_capture_);
+    auto frame = copy_scaled_video_frame(source, format_, app_owned_capture_);
     last_timestamp_ = source.timestamp_us;
 
     if (requesting_ && sink_)
@@ -199,7 +199,7 @@ void ExternalVideoController::preview(
 }
 
 /**
- * Delivers camera frames at capture dimensions; RTC handles encoding dimensions and aspect ratio.
+ * Delivers camera frames at the configured media dimensions to publication and preview.
  *
  * @param[in] frame The frame or borrowed view to deliver; its pixels must remain valid until this
  * synchronous call returns.
@@ -212,6 +212,11 @@ void ExternalVideoController::push_owned(
         format_.width != 0,
         XMAX_INVALID_STATE,
         "No camera input is bound"
+    );
+    require(
+        frame.width == format_.width && frame.height == format_.height,
+        XMAX_MEDIA_ERROR,
+        "Camera frame does not match the configured format"
     );
     validate_frame(frame.view());
     require(
@@ -244,7 +249,7 @@ bool ExternalVideoController::allows_microphone() const {
 /**
  * Converts source-bound PCM only while publication is active, without queuing for reconnection.
  *
- * @param[in] frame The borrowed interleaved PCM samples and source timestamp.
+ * @param[in] frame The borrowed interleaved or planar PCM samples and source timestamp.
  * @param[in] binding The source revision; stale or audio-disabled bindings ignore input.
  */
 void ExternalVideoController::push_audio(

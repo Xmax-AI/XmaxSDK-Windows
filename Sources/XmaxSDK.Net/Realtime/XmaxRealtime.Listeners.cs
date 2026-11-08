@@ -20,7 +20,7 @@ public sealed partial class XmaxRealtime
     private readonly RealtimeListener<DownlinkVideoStatistics?> downlinkStatisticsListener = new(coalesce: true);
     private readonly RealtimeListener<RealtimeNetworkQuality> networkListener = new(coalesce: true);
     private readonly RealtimeListener<RealtimePerformanceAlarm> performanceListener = new();
-    private readonly RealtimeListener<float?> microphoneListener = new(coalesce: true);
+    private readonly RealtimeListener<float?> microphoneListener = new(coalesce: true, isReset: level => level is null);
     private readonly object stateRegistrationGate = new();
     private readonly Queue<StateRegistration> stateRegistrations = new();
     private bool stateRegistrationsClosed;
@@ -110,11 +110,12 @@ public sealed partial class XmaxRealtime
     }
 
     /// <summary>Observes physical microphone levels from 0 to 1, or null when unavailable.</summary>
-    /// <remarks>The latest sample is replayed, and pending microphone readings are coalesced.</remarks>
+    /// <remarks>Registration awaits the initial reading. A capture reset is delivered before newer samples.</remarks>
     public Task SetMicrophoneLevelListenerAsync(Action<float?>? listener)
     {
-        microphoneListener.Set(listener, NotifyCallbackFault, replay: true);
-        return Task.CompletedTask;
+        var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        microphoneListener.Set(listener, NotifyCallbackFault, replay: true, replayCompletion: ready);
+        return ready.Task;
     }
 
     /// <summary>Registers serialized remote audio and processed video delivery.</summary>

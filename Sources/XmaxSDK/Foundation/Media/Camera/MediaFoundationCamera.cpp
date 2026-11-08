@@ -18,6 +18,7 @@
 #include <windows.h>
 #include <mfapi.h>
 #include <mfidl.h>
+#include <mferror.h>
 #include <mfreadwrite.h>
 // clang-format on
 #include <mutex>
@@ -385,6 +386,8 @@ struct CaptureState {
      * The negotiated RGB row stride, in bytes; negative indicates reverse row layout.
      */
     LONG stride = 0;
+    UINT32 native_rotation = MFVideoRotationFormat_0;
+    UINT32 rotation = MFVideoRotationFormat_0;
 
     /**
      * Reads and validates negotiated dimensions and RGB byte stride.
@@ -413,6 +416,7 @@ struct CaptureState {
             "Camera output dimensions exceed the frame budget"
         );
 
+        rotation = MFGetAttributeUINT32(output.get(), MF_MT_VIDEO_ROTATION, native_rotation);
         UINT32 raw = 0;
 
         if (SUCCEEDED(output->GetUINT32(MF_MT_DEFAULT_STRIDE, &raw)))
@@ -519,7 +523,24 @@ struct CaptureState {
         for (size_t i = 3; i < frame.planes[0].size(); i += 4)
             owned_pixels[i] = 255;
 
-        return frame;
+        const auto sample_rotation = MFGetAttributeUINT32(sample, MF_MT_VIDEO_ROTATION, rotation);
+        if (sample_rotation == MFVideoRotationFormat_0)
+            return frame;
+        const auto angle = sample_rotation == MFVideoRotationFormat_90 ? 90u
+                         : sample_rotation == MFVideoRotationFormat_180 ? 180u
+                         : sample_rotation == MFVideoRotationFormat_270 ? 270u : 0u;
+        // Undo the camera's counter-clockwise rotation before delivering upright pixels.
+        return rotate_bgra(std::move(frame), angle);
+    }
+
+    void interrupt() {
+        if (stopping)
+            return;
+        stopping = true;
+        if (callbacks.interrupted)
+            callbacks.interrupted();
+        else if (callbacks.failure)
+            callbacks.failure(Error(XMAX_MEDIA_ERROR, "Camera capture was interrupted"));
     }
 };
 
@@ -635,6 +656,10 @@ class ReaderCallback final : public IMFSourceReaderCallback {
             return S_OK;
 
         try {
+            if (status == MF_E_VIDEO_RECORDING_DEVICE_PREEMPTED) {
+                state->interrupt();
+                return S_OK;
+            }
             checked(
                 status,
                 "Camera capture"
@@ -648,21 +673,23 @@ class ReaderCallback final : public IMFSourceReaderCallback {
             if (flags & MF_SOURCE_READERF_CURRENTMEDIATYPECHANGED)
                 state->type();
 
+            Frame frame;
             if (sample)
-                state->callbacks.frame(state->copy(sample));
+                frame = state->copy(sample);
 
-            checked(
-                state->reader
-                    ->ReadSample(
-                    MF_SOURCE_READER_FIRST_VIDEO_STREAM,
-                    0,
-                    nullptr,
-                    nullptr,
-                    nullptr,
-                    nullptr
-                ),
-                "Request camera sample"
+            // Start the next asynchronous read while media processing uses the owned pixels.
+            const auto next = state->reader->ReadSample(
+                MF_SOURCE_READER_FIRST_VIDEO_STREAM,
+                0,
+                nullptr,
+                nullptr,
+                nullptr,
+                nullptr
             );
+            if (sample)
+                state->callbacks.frame(std::move(frame));
+
+            checked(next, "Request camera sample");
         } catch (const std::exception& error) {
             state->stopping = true;
             if (state->callbacks.failure) {
@@ -689,8 +716,17 @@ class ReaderCallback final : public IMFSourceReaderCallback {
      */
     STDMETHODIMP OnEvent(
         [[maybe_unused]] DWORD stream_index,
-        [[maybe_unused]] IMFMediaEvent* media_event
+        IMFMediaEvent* media_event
     ) override {
+        MediaEventType type = MEUnknown;
+        if (!media_event || FAILED(media_event->GetType(&type)) || type != MEVideoCaptureDevicePreempted)
+            return S_OK;
+        if (auto state = state_.lock()) {
+            try {
+                std::lock_guard<std::mutex> lock(state->mutex);
+                state->interrupt();
+            } catch (...) {}
+        }
         return S_OK;
     }
 
@@ -921,6 +957,7 @@ class MfCamera final : public CameraCapture {
             XMAX_MEDIA_ERROR,
             "Camera has no supported capture format"
         );
+        state_->native_rotation = MFGetAttributeUINT32(best.get(), MF_MT_VIDEO_ROTATION, MFVideoRotationFormat_0);
         checked(
             state_->reader->SetCurrentMediaType(
                 MF_SOURCE_READER_FIRST_VIDEO_STREAM,

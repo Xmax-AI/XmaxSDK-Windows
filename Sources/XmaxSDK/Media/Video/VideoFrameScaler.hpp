@@ -1,5 +1,5 @@
 //
-//  ExternalVideoFrame.hpp
+//  VideoFrameScaler.hpp
 //  XmaxSDK
 //
 //  Author: 翁跃庭 (Yueting Weng)
@@ -14,9 +14,9 @@
 namespace xmax::detail {
 
 /**
- * Copies and resizes source pixels, interleaving legacy I420 input for typed sources.
+ * Center-crops and resizes source pixels, optionally interleaving I420 chroma.
  */
-Frame copy_external_video_frame(
+Frame copy_scaled_video_frame(
     const xmax_video_frame& source,
     xmax_video_format format,
     bool normalize_chroma

@@ -16,7 +16,7 @@ namespace Xmax.SDK;
 public sealed partial class XmaxRealtime
 {
     /// <summary>Creates camera media with initial mirroring and microphone selection, without a cloud session.</summary>
-    /// <param name="videoFormat">The camera encoding target; default selects the model default.</param>
+    /// <param name="videoFormat">The camera output format. An omitted value selects the model default.</param>
     /// <param name="deviceId">The camera identifier; null selects the system default.</param>
     /// <param name="mirror">Mirrors local preview and published camera video, preserving result-display settings.</param>
     /// <param name="microphone">The initial recording input; null disables the microphone.</param>

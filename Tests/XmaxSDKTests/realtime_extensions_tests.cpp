@@ -792,6 +792,21 @@ static void external_pcm_conversion() {
     stereo[0] = std::numeric_limits<float>::quiet_NaN();
     frame.timestamp_us = 10000;
     expect_error(XMAX_MEDIA_ERROR, [&] { floats.append(frame, receive); });
+
+    // Planar 32-bit PCM should mix the corresponding samples across channels and handle large buffers.
+    ExternalAudioConverter planar;
+    output.clear();
+    constexpr uint32_t count = 48480;
+    std::vector<int32_t> planes(size_t(count) * 2, 1073741824);
+    std::fill(planes.begin() + count, planes.end(), -536870912);
+    const xmax_external_audio_frame planes_frame{sizeof(planes_frame), XMAX_AUDIO_PCM32_PLANAR,
+        48000, 2, count, 0, planes.data(), planes.size() * sizeof(int32_t)};
+    planar.append(planes_frame, receive);
+    CHECK(output.size() == 101);
+    for (size_t i = 0; i < output.size(); ++i) {
+        CHECK(output[i].timestamp_us == int64_t(i) * 10000);
+        CHECK(output[i].samples == std::vector<int16_t>(480, 4096));
+    }
 }
 
 static void external_audio_public_bridge() {
@@ -813,7 +828,7 @@ static void external_audio_public_bridge() {
     sink.push_audio(pcm_view(samples, 48000, 1, 0));
     CHECK(rtc->audio_packets.empty());
     CHECK(xmax_realtime_connect(controller.get(), 1) == XMAX_OK);
-    CHECK(rtc->external_audio_enabled && !rtc->microphone && rtc->audio_packets.empty());
+    CHECK(rtc->audio_published && rtc->audio_packets.empty());
     sink.push_audio(pcm_view(samples, 48000, 1, 10000));
     CHECK(rtc->audio_packets.size() == 1 && rtc->audio_packets[0].timestamp_us == 10000);
     controller.disconnect();

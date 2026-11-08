@@ -43,7 +43,7 @@ void StreamController::allocate() {
  * @param[in] connection The current RTC room connection information.
  * @param[in] format The requested pixel dimensions and frame rate, subject to the interface's format
  * limits.
- * @param[in] microphone Whether to start microphone capture when joining the RTC room.
+ * @param[in] publish_audio Whether to publish a custom PCM track on join.
  * @param[in] callbacks Callbacks for result frames, RTC events, failures, and first publication; drained
  * before stop returns.
  * @param[in] cancel A cooperative cancellation predicate; true requests termination of the operation.
@@ -52,7 +52,7 @@ void StreamController::allocate() {
 void StreamController::join(
     const Connection& connection,
     xmax_video_format format,
-    bool microphone,
+    bool publish_audio,
     RtcCallbacks callbacks,
     const Cancel& cancel,
     xmax_video_format generation_format
@@ -86,12 +86,10 @@ void StreamController::join(
         XMAX_INVALID_STATE,
         "Allocate an RTC backend before joining"
     );
-    room_.backend()->microphone_device(microphone_device_);
-    room_.backend()->external_audio(external_audio_);
     room_.join(
         connection,
         uplink_encoding(quality_.up.level),
-        microphone,
+        publish_audio,
         std::move(callbacks),
         cancel
     );
@@ -107,7 +105,7 @@ void StreamController::join(
                    ) +
                    "\n└─ " +
                    std::to_string(format.width) + " × " + std::to_string(format.height) + " @ " +
-                   std::to_string(format.fps) + " fps, microphone=" + (microphone ? "on" : "off");
+                   std::to_string(format.fps) + " fps, audio=" + (publish_audio ? "on" : "off");
         }
     );
 }

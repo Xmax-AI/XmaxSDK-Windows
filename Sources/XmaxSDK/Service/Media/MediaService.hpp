@@ -70,8 +70,7 @@ class MediaService {
     /**
      * Validates camera targets against the five X2.1 formats without substituting dimensions.
      *
-     * @param[in] format The requested camera encoding dimensions and frame rate; capture may use other
-     * device-supported dimensions.
+     * @param[in] format The requested camera output dimensions and frame rate.
      * @param[in] model The selected model capability snapshot.
      */
     static xmax_video_format camera_input(

@@ -27,5 +27,8 @@ struct CaptureCallbacks {
      * The native capture failure receiver, invoked on the media thread.
      */
     std::function<void(Error)> failure;
+
+    // A temporary interruption that may be recovered without replacing the track.
+    std::function<void()> interrupted{};
 };
 } // namespace xmax::detail

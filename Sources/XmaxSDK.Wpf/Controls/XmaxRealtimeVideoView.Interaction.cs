@@ -20,7 +20,6 @@ namespace Xmax.SDK.Wpf;
 public sealed partial class XmaxRealtimeVideoView
 {
     private readonly TrajectoryGesture trajectory = new();
-    private static readonly Pen TrajectoryPen = CreateTrajectoryPen();
     private Border? customEffect;
 
     /// <summary>Identifies the result view's pointer interaction setting.</summary>
@@ -108,6 +107,7 @@ public sealed partial class XmaxRealtimeVideoView
             !trajectory.Begin(new(point.X, point.Y), Viewport, track.InteractionRevision)) return;
         if (!CaptureMouse()) { trajectory.End(); return; }
         trajectory.Update(ResultTrack, Viewport, force: true);
+        if (!trajectory.Active) { ReleaseMouseCapture(); return; }
         InvalidateVisual();
         args.Handled = true;
     }
@@ -131,6 +131,7 @@ public sealed partial class XmaxRealtimeVideoView
         trajectory.Move(new(point.X, point.Y));
         trajectory.Update(ResultTrack, Viewport, force: true);
         trajectory.End();
+        InvalidateVisual();
         ReleaseMouseCapture();
         args.Handled = true;
     }
@@ -149,28 +150,6 @@ public sealed partial class XmaxRealtimeVideoView
         InvalidateVisual();
     }
 
-    private void DrawTrajectory(DrawingContext drawing)
-    {
-        long now = Stopwatch.GetTimestamp();
-        foreach (var stroke in trajectory.Strokes)
-        {
-            drawing.PushOpacity(TrajectoryGesture.Opacity(stroke, now));
-            if (stroke.From == stroke.To)
-                drawing.DrawEllipse(TrajectoryPen.Brush, null, new(stroke.To.X, stroke.To.Y), 3, 3);
-            else
-                drawing.DrawLine(TrajectoryPen, new(stroke.From.X, stroke.From.Y), new(stroke.To.X, stroke.To.Y));
-            drawing.Pop();
-        }
-    }
-
-    private static Pen CreateTrajectoryPen()
-    {
-        var pen = new Pen(new SolidColorBrush(Color.FromRgb(58, 255, 137)), 5)
-        {
-            StartLineCap = PenLineCap.Round,
-            EndLineCap = PenLineCap.Round
-        };
-        pen.Freeze();
-        return pen;
-    }
+    private void DrawTrajectory(DrawingContext drawing) =>
+        TrajectoryEffectDrawing.Draw(drawing, trajectory.Effect, Stopwatch.GetTimestamp());
 }

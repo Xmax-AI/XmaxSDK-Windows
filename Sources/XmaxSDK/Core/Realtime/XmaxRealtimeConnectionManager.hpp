@@ -58,7 +58,7 @@ class XmaxRealtimeConnectionManager {
      *
      * @param[in,out] stream The current realtime transport controller.
      * @param[in] format The baseline media encoding format.
-     * @param[in] microphone Whether to enable the microphone.
+     * @param[in] publish_audio Whether to publish a custom PCM track on join.
      * @param[in] callbacks The RTC frame and lifecycle callbacks.
      * @param[in] cancel The cooperative cancellation predicate.
      * @param[in] canvas The model's generation canvas.
@@ -66,7 +66,7 @@ class XmaxRealtimeConnectionManager {
     void join(
         StreamController& stream,
         xmax_video_format format,
-        bool microphone,
+        bool publish_audio,
         RtcCallbacks callbacks,
         const Cancel& cancel,
         xmax_video_format canvas

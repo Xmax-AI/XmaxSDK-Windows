@@ -443,13 +443,13 @@ typedef struct xmax_client_config {
 } xmax_client_config;
 
 /**
- * Video dimensions and frame rate for external input or a camera's RTC encoding target.
+ * Video dimensions and frame rate for external input or camera output.
  *
  * X2.1 camera targets support 1920x1080, 1080x1920, 1408x1408, 1152x1536 and 1536x1152
  * at [1, 60] fps; dimensions must match one target exactly.
  * External input accepts even dimensions in [4, 8192] and a positive nominal frame rate.
  * Resolved external processing dimensions remain within the model pixel budget.
- * Capture preserves native frame dimensions; RTC handles target aspect ratio and resolution.
+ * Camera frames are center-cropped and scaled to the configured dimensions for preview and publication.
  */
 typedef struct xmax_video_format {
 
@@ -530,7 +530,20 @@ typedef enum xmax_audio_sample_format {
     /**
      * Little-endian IEEE 754 32-bit samples, finite and in [-1, 1].
      */
-    XMAX_AUDIO_FLOAT32 = 1
+    XMAX_AUDIO_FLOAT32 = 1,
+
+    /** Signed packed little-endian samples. */
+    XMAX_AUDIO_PCM24 = 2,
+    XMAX_AUDIO_PCM32 = 3,
+    /** Little-endian IEEE 754 64-bit samples, finite and in [-1, 1]. */
+    XMAX_AUDIO_FLOAT64 = 4,
+
+    /** Contiguous planes in channel order, each containing samples_per_channel samples. */
+    XMAX_AUDIO_PCM16_PLANAR = 5,
+    XMAX_AUDIO_FLOAT32_PLANAR = 6,
+    XMAX_AUDIO_PCM24_PLANAR = 7,
+    XMAX_AUDIO_PCM32_PLANAR = 8,
+    XMAX_AUDIO_FLOAT64_PLANAR = 9
 
 } xmax_audio_sample_format;
 
@@ -545,7 +558,7 @@ typedef struct xmax_external_audio_frame {
     uint32_t struct_size;
 
     /**
-     * The interleaved sample representation, fixed for this binding.
+     * The sample type and channel layout, fixed for this binding.
      */
     xmax_audio_sample_format sample_format;
 
@@ -560,7 +573,7 @@ typedef struct xmax_external_audio_frame {
     uint32_t channels;
 
     /**
-     * The samples per channel, from 1 through sample_rate; at most one second per call.
+     * The positive sample count per channel.
      */
     uint32_t samples_per_channel;
 
@@ -570,12 +583,12 @@ typedef struct xmax_external_audio_frame {
     int64_t timestamp_us;
 
     /**
-     * The contiguous interleaved samples, borrowed until submission returns.
+     * The contiguous interleaved samples or channel planes, borrowed until submission returns.
      */
     const void* data;
 
     /**
-     * The exact sample byte count; samples_per_channel * channels * bytes per sample.
+     * The exact sample byte count; samples_per_channel * channels * bytes per sample, at most 32 MiB.
      */
     size_t data_size;
 
@@ -976,7 +989,7 @@ typedef struct xmax_local_camera_options {
      */
     const char* device_id;
     /**
-     * Encoding target; all zeros selects the model default.
+     * Camera output format; all zeros selects the model default.
      */
     xmax_video_format video_format;
     /**
@@ -1348,7 +1361,7 @@ typedef struct xmax_model_info {
     uint32_t default_frame_rate;
 
     /**
-     * The default camera encoding target.
+     * The default camera output format.
      */
     xmax_video_format default_camera_format;
 
@@ -2401,8 +2414,7 @@ XMAX_API xmax_result XMAX_CALL xmax_realtime_get_state(
 );
 
 /**
- * Returns the external input format or camera RTC encoding target; local frame views report actual capture
- * dimensions.
+ * Returns the external input format or the camera format shared by local preview and publication.
  *
  * @param[in] realtime A non-null realtime controller handle.
  * @param[out] format A non-null destination for the input format.
@@ -3580,7 +3592,7 @@ XMAX_API xmax_result XMAX_CALL xmax_realtime_stop_external_video_stream(
  * Copies, converts, and uploads source-bound PCM without playing it locally.
  *
  * @param[in] sink The source receiver created with has_audio enabled; stale receivers ignore input.
- * @param[in] frame Borrowed interleaved PCM with a timestamp on the video timeline, copied before return.
+ * @param[in] frame Borrowed interleaved or planar PCM with a timestamp on the video timeline, copied before return.
  *
  * @return XMAX_OK on success or ignored input, or a negative error code for invalid current input.
  *

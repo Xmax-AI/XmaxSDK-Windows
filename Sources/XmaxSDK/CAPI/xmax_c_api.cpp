@@ -13,7 +13,7 @@
 #include "CAPI/RealtimeHandle.hpp"
 #include "Foundation/Logging/XmaxLogger.hpp"
 #include "Service/Media/MediaService.hpp"
-#include "Foundation/RTC/MicrophoneDevices.hpp"
+#include "Foundation/Media/Audio/MicrophoneDevices.hpp"
 #include "Foundation/Text/Utf8.hpp"
 #include <algorithm>
 #include <cstring>

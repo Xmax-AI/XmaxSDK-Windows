@@ -62,8 +62,10 @@ static void camera_creation_options() {
     auto rtc = std::make_shared<FakeRtc>();
     auto probe = std::make_shared<CaptureProbe>();
     Config config; config.key = "test";
+    FakeMicrophoneInput microphone;
     XmaxRealtimeManager sdk(std::make_shared<ApiService>(config, http), [rtc] { return rtc; },
-        std::chrono::seconds(10), [probe] { return std::make_unique<FakeCamera>(probe); });
+        std::chrono::seconds(10), [probe] { return std::make_unique<FakeCamera>(probe); },
+        {}, [](const std::string&) {}, microphone.factory());
     sdk.video_mirror({sizeof(xmax_video_mirror_config), 0, 1, 0});
     sdk.create_local_camera_stream("one", {1920,1080,30}, true, true, "recording-endpoint");
     auto mirror = sdk.video_mirror();
@@ -72,13 +74,13 @@ static void camera_creation_options() {
     auto preview = sdk.acquire_local_frame();
     CHECK(preview && preview->presentation_mirrored);
     sdk.connect(false);
-    CHECK(rtc->microphone && rtc->selected_microphone == "recording-endpoint" && rtc->encoding.mirrored);
+    CHECK(rtc->audio_published && microphone.devices.back()->id == "recording-endpoint" && rtc->encoding.mirrored);
     sdk.disconnect(true);
     sdk.create_local_camera_stream("two", {1920,1080,30}, false, false);
     mirror = sdk.video_mirror();
     CHECK(mirror.local_preview == 0 && mirror.published_video == 0 && mirror.remote_view == 1);
     sdk.connect(false);
-    CHECK(!rtc->microphone && rtc->selected_microphone.empty());
+    CHECK(!rtc->audio_published && microphone.devices.size() == 1 && !microphone.devices.front()->active);
     sdk.disconnect(true);
 }
 static void camera_lifecycle() {
@@ -87,9 +89,11 @@ static void camera_lifecycle() {
     auto capture = std::make_shared<CaptureProbe>();
     Config config;
     config.key = "test";
+    FakeMicrophoneInput microphone;
     XmaxRealtimeManager sdk(
         std::make_shared<ApiService>(config, http), [rtc] { return rtc; }, std::chrono::seconds(10),
-        [capture] { return std::make_unique<FakeCamera>(capture); });
+        [capture] { return std::make_unique<FakeCamera>(capture); },
+        {}, [](const std::string&) {}, microphone.factory());
     sdk.create_local_camera_stream("one", {1920, 1080, 30}, true);
     CHECK(sdk.state_snapshot().state == XMAX_READY && http->calls.empty());
     CHECK(sdk.format().width == 1920 && sdk.format().height == 1080);
@@ -97,7 +101,7 @@ static void camera_lifecycle() {
     CHECK(held && held->planes[0][0] == 42);
     CHECK(!sdk.requesting());
     sdk.connect(false);
-    CHECK(rtc->microphone && rtc->joins == 1);
+    CHECK(rtc->audio_published && microphone.devices.back()->active && rtc->joins == 1);
     CHECK(sdk.state_snapshot().state == XMAX_CONNECTED);
     sdk.start("first", "https://ref", true, false);
     CHECK(json::parse(rtc->messages.front())["params"]["size"] == json::array({1920, 1080}));
@@ -114,11 +118,13 @@ static void camera_lifecycle() {
     CHECK(sdk.state_snapshot().state == XMAX_GENERATING);
     sdk.disconnect(false);
     CHECK(capture->stops == 1 && sdk.state_snapshot().state == XMAX_READY);
+    CHECK(!microphone.devices.back()->active && sdk.microphone_enabled());
     capture->callbacks.frame(captured(3));
     CHECK(sdk.acquire_local_frame());
     expect_error(XMAX_INVALID_ARGUMENT, [&] { sdk.generate(nullptr); });
     sdk.start("first", "https://ref", true, false);
     CHECK(http->count("POST /session") == 2);
+    CHECK(microphone.devices.size() == 2 && microphone.devices.back()->active);
     sdk.disconnect(true);
     CHECK(capture->stops == 2 && !sdk.acquire_local_frame());
     CHECK(held->planes[0][0] == 42);
