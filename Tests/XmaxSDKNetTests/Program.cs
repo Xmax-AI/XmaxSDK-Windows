@@ -108,6 +108,24 @@ try
             Check((await realtime.GetStateAsync()).ConnectionState == RealtimeConnectionState.Ready, "independent child");
         }
     });
+    await Test("Flash model uses its own camera and generation formats", async () =>
+    {
+        var model = XmaxClient.GetModelInfo(RealtimeModel.X2_1Flash);
+        Check(model.Identifier == "x2.1-flash" && model.DisplayName == "X2.1 Flash", "Flash model identity");
+        Check(model.DefaultCameraFormat == new VideoFormat(704, 1280), "Flash defaults to 704×1280 capture");
+        Check(model.SupportedFormats.SequenceEqual(new[] { new VideoFormat(704, 1280), new VideoFormat(1280, 704),
+            new VideoFormat(960, 960), new VideoFormat(1024, 768), new VideoFormat(768, 1024) }), "five Flash formats");
+        Check(model.MaximumInputPixels == 960 * 960, "Flash pixel limit");
+
+        using var client = new XmaxClient();
+        var media = client.CreateMediaService(RealtimeModel.X2_1Flash);
+        Check(media.ResolveGenerationSize(new(1920, 1080)) == new MediaSize(1280, 704), "Flash landscape canvas");
+        await using var manager = client.CreateRealtimeManager(new() { Model = RealtimeModel.X2_1Flash });
+        await ThrowsAsync<ArgumentException>(() => manager.CreateLocalCameraStreamAsync(RealtimeCameraPreset.Resolution1920x1080));
+        var stream = await manager.CreateExternalVideoStreamAsync(new ExternalTestSource(format: new(1920, 1080)));
+        Check(stream.VideoTrack.VideoFormat is { } format && format.Width * format.Height <= model.MaximumInputPixels,
+            "Flash external stream respects the pixel limit");
+    });
     await Test("beauty configuration uses the public SDK and validates before native changes", async () =>
     {
         Check(new RealtimeVideoBeautyOptions() == new RealtimeVideoBeautyOptions(0, 0, 0, 0), "All default beauty strengths are zero");

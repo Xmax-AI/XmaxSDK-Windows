@@ -212,13 +212,12 @@ public sealed partial class MainWindow : Window
         title.FontSize = Math.Clamp(width * .01 + 18, 27, 45);
         landingStage.Margin = new(0, Math.Clamp(width * .011 + 17, 26, 40), 0, 0);
         landingStage.Width = Math.Min(width - 56, Math.Min(940, Math.Max(580, width * .45)));
-        double videoAspect = Model.SelectedFormat.Width > 0 ? (double)Model.SelectedFormat.Height / Model.SelectedFormat.Width : 1080d / 1920;
-        landingStage.Height = landingStage.Width * videoAspect;
+        landingStage.Height = landingStage.Width * MainViewModel.DesktopVideoAspect;
         terms.Width = Math.Max(0, landingStage.Width - 40); terms.FontSize = Math.Clamp(width * .0028 + 9.5, 12, 15);
         StartButton.FontSize = Math.Clamp(width * .003 + 12, 15, 18);
         double padding = Math.Clamp(width * .0075 + 18, 25, 40); StartButton.Padding = new(padding, 0, padding, 0);
         StartButton.Height = Math.Max(20, Math.Ceiling(StartButton.FontSize * 1.3)) + Math.Clamp(width * .0028 + 9, 12, 16) * 2; StartButton.Refresh();
-        localPanel.Height = remotePanel.Height = Math.Max(0, (width - 80) / 2 * videoAspect);
+        localPanel.Height = remotePanel.Height = Math.Max(0, (width - 80) / 2 * MainViewModel.DesktopVideoAspect);
         freePromptBox.Width = Math.Min(880, workspace.Width);
         double workspaceHeight = localPanel.Height + 34 + 42 + 28 + 190, workspaceTop = 24 + 60 + 8;
         page.Height = Math.Max(height, Model.Active ? workspaceTop + workspaceHeight + 32 : 760);

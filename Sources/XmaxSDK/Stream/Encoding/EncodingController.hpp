@@ -22,6 +22,13 @@ class EncodingController {
 
   public:
 
+    explicit EncodingController(uint32_t minimum_pixels) : minimum_pixels_(minimum_pixels) {}
+
+    /** Resolves the selected model's uplink dimensions and frame rate for a quality level. */
+    xmax_video_format format(xmax_video_format baseline, int level) const {
+        return quality_format(baseline, level, false, minimum_pixels_);
+    }
+
     /**
      * Resolves uplink encoding for a quality level.
      *
@@ -34,12 +41,8 @@ class EncodingController {
         xmax_video_format baseline,
         int level
     ) const {
-        const auto format = quality_format(
-            baseline,
-            level,
-            false
-        );
-        const auto budget = bitrate(format);
+        const auto resolved = format(baseline, level);
+        const auto budget = bitrate(resolved);
         const int maximum = value_.maximum_bitrate_kbps == 0
                                 ? budget.second
                                 : value_.maximum_bitrate_kbps;
@@ -50,7 +53,7 @@ class EncodingController {
             XMAX_INVALID_ARGUMENT,
             "Minimum bitrate exceeds maximum bitrate"
         );
-        return {format, minimum, maximum, value_.preference, mirrored_};
+        return {resolved, minimum, maximum, value_.preference, mirrored_};
     }
 
     /**
@@ -127,6 +130,8 @@ class EncodingController {
     }
 
   private:
+
+    const uint32_t minimum_pixels_;
 
     /**
      * The uplink mirror setting for the current and next connection.

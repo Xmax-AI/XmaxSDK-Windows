@@ -263,6 +263,10 @@ void handle(
     );
 }
 
+xmax_model_info selected_model_info(const char* model) {
+    return RealtimeModelDefinition::info(RealtimeModelDefinition::parse(model ? model : "x2.1"));
+}
+
 } // namespace
 
 extern "C" {
@@ -280,7 +284,7 @@ xmax_result XMAX_CALL xmax_model_get_info(
         __func__,
         [&] {
             sized(info);
-            *info = RealtimeModelDefinition::info(RealtimeModelDefinition::parse(model ? model : "x2.1"));
+            *info = selected_model_info(model);
         }
     );
 }
@@ -2774,8 +2778,7 @@ xmax_result XMAX_CALL xmax_resolve_media_format(
         handle(source);
         handle(resolved);
         require(camera == 0 || camera == 1, XMAX_INVALID_ARGUMENT, "Invalid media source kind");
-        RealtimeModelDefinition::parse(model ? model : "x2.1");
-        const auto info = RealtimeModelDefinition::capabilities;
+        const auto info = selected_model_info(model);
         *resolved = camera ? MediaService::camera_input(*source, info)
                            : MediaService::external_input(*source, info);
     });
@@ -2789,8 +2792,7 @@ xmax_result XMAX_CALL xmax_resolve_generation_format(
     return protect(__func__, [&] {
         handle(source);
         handle(resolved);
-        RealtimeModelDefinition::parse(model ? model : "x2.1");
-        *resolved = MediaService::generation(*source, RealtimeModelDefinition::capabilities);
+        *resolved = MediaService::generation(*source, selected_model_info(model));
     });
 }
 
@@ -2817,8 +2819,7 @@ xmax_result XMAX_CALL xmax_resolve_media_size(
         handle(source);
         handle(resolved);
         require(camera == 0 || camera == 1, XMAX_INVALID_ARGUMENT, "Invalid media source kind");
-        RealtimeModelDefinition::parse(model ? model : "x2.1");
-        *resolved = MediaService::media_size(*source, camera == 1, RealtimeModelDefinition::capabilities);
+        *resolved = MediaService::media_size(*source, camera == 1, selected_model_info(model));
     });
 }
 
@@ -2830,8 +2831,7 @@ xmax_result XMAX_CALL xmax_resolve_generation_size(
     return protect(__func__, [&] {
         handle(source);
         handle(resolved);
-        RealtimeModelDefinition::parse(model ? model : "x2.1");
-        *resolved = MediaService::generation_size(*source, RealtimeModelDefinition::capabilities);
+        *resolved = MediaService::generation_size(*source, selected_model_info(model));
     });
 }
 

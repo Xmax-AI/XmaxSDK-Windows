@@ -21,6 +21,7 @@
 #include <atomic>
 #include <map>
 #include <memory>
+#include <xmax/RealtimeModel.hpp>
 #include <xmax/realtime.hpp>
 struct SdkHandles {
     xmax_client client = nullptr;
@@ -51,6 +52,8 @@ class XLabController final : public QObject {
     Q_OBJECT
     Q_PROPERTY(QString apiKey READ apiKey WRITE setApiKey NOTIFY changed)
     Q_PROPERTY(QString model READ model WRITE setModel NOTIFY changed)
+    Q_PROPERTY(QString modelDisplayName READ modelDisplayName NOTIFY changed)
+    Q_PROPERTY(QVariantList models READ models CONSTANT)
     Q_PROPERTY(bool microphone MEMBER microphone NOTIFY changed)
     Q_PROPERTY(bool active MEMBER active NOTIFY changed)
     Q_PROPERTY(bool busy MEMBER busy NOTIFY changed)
@@ -84,7 +87,9 @@ class XLabController final : public QObject {
     ~XLabController() override;
     QString apiKey() const { return key_; }
     void setApiKey(const QString&);
-    QString model() const { return model_; }
+    QString model() const { return QString::fromUtf8(xmax::model_identifier(model_)); }
+    QString modelDisplayName() const { return QString::fromUtf8(xmax::model_capabilities(model_).display_name); }
+    QVariantList models() const;
     void setModel(const QString&);
 
     /// @brief Return SDK camera identities and names without opening a capture device.
@@ -184,7 +189,8 @@ class XLabController final : public QObject {
     quint64 recording_id_ = 0;
     bool close_emitted_ = false;
     void checkCloseReady();
-    QString key_, model_ = "x2.1", mode_ = "charx";
+    QString key_, mode_ = "charx";
+    xmax::RealtimeModel model_ = xmax::RealtimeModel::x2_1;
     float volume_ = 0;
     bool volume_updating_ = false, volume_ready_ = false;
     bool beauty_enabled_ = true, beauty_updating_ = false, beauty_ready_ = false;

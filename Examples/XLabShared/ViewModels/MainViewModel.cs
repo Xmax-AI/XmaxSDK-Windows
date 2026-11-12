@@ -39,6 +39,7 @@ internal sealed partial class MainViewModel : INotifyPropertyChanged, IAsyncDisp
     public ObservableCollection<CameraDevice> Cameras { get; } = [];
     public ObservableCollection<VideoFormat> Formats { get; } = [];
     public static IReadOnlyList<RealtimeModel> Models { get; } = Array.AsReadOnly(Enum.GetValues<RealtimeModel>());
+    internal const double DesktopVideoAspect = 9d / 16;
     private RealtimeModel selectedModel = RealtimeModel.X2_1;
     private string modelDisplayName = "X2.1";
     public RealtimeModel SelectedModel
@@ -50,9 +51,7 @@ internal sealed partial class MainViewModel : INotifyPropertyChanged, IAsyncDisp
             var info = XmaxClient.GetModelInfo(value);
             selectedModel = value;
             modelDisplayName = info.DisplayName;
-            Formats.Clear();
-            foreach (var item in info.SupportedFormats) Formats.Add(item);
-            SelectedFormat = info.DefaultCameraFormat;
+            ApplyModelFormats(info);
             Changed(); Changed(nameof(ModelDisplayName));
         }
     }
@@ -97,13 +96,19 @@ internal sealed partial class MainViewModel : INotifyPropertyChanged, IAsyncDisp
     {
         try
         {
-            var model = XmaxClient.GetModelInfo(SelectedModel);
-            foreach (var item in model.SupportedFormats) Formats.Add(item);
-            SelectedFormat = model.DefaultCameraFormat;
+            ApplyModelFormats(XmaxClient.GetModelInfo(SelectedModel));
             if (!IsPreview) await GuardAsync(RefreshCamerasAsync);
         }
         catch (Exception failure) { ReportError(failure); }
     }
+    private void ApplyModelFormats(ModelInfo model)
+    {
+        Formats.Clear();
+        foreach (var item in model.SupportedFormats) Formats.Add(item);
+        SelectedFormat = Formats.DefaultIfEmpty(model.DefaultCameraFormat).MinBy(format =>
+            Math.Abs(Math.Log((double)format.Height / format.Width / DesktopVideoAspect)));
+    }
+
     public async Task RefreshCamerasAsync()
     {
         var devices = await MediaDevices.ListCameraDevicesAsync();

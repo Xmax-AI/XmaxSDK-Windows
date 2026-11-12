@@ -35,7 +35,7 @@ class client : public detail::owner<xmax_client, xmax_client_destroy> {
      * Copies configuration and creates an SDK client without opening a cloud session.
      *
      * @param[in] key The API credential copied during creation; empty permits local preparation.
-     * @param[in] model The realtime model identifier; only x2.1 is supported.
+     * @param[in] model The realtime model identifier (x2.1 or x2.1-flash).
      *
      * @see xmax_client_create
      */

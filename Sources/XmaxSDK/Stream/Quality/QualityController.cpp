@@ -9,7 +9,6 @@
 //
 
 #include "Stream/Quality/QualityController.hpp"
-#include "Service/Realtime/RealtimeModel.hpp"
 #include <algorithm>
 #include <cmath>
 #include <numeric>
@@ -22,11 +21,13 @@ namespace xmax::detail {
  * @param[in] baseline The bound input's baseline video format.
  * @param[in] level The quality level, in [1, 5].
  * @param[in] downlink True for downlink; false for uplink.
+ * @param[in] uplink_minimum_pixels The selected model's uplink pixel floor.
  */
 xmax_video_format quality_format(
     xmax_video_format baseline,
     int level,
-    bool downlink
+    bool downlink,
+    uint32_t uplink_minimum_pixels
 ) {
     static const double scales[]{1, .9, .75, .6, .5};
     static const uint32_t rates[]{30, 24, 24, 20, 16};
@@ -40,7 +41,7 @@ xmax_video_format quality_format(
         baseline.height
     );
     const double pixels = double(baseline.width) * baseline.height;
-    const double minimum = downlink ? 0 : RealtimeModelDefinition::capabilities.minimum_input_pixels;
+    const double minimum = downlink ? 0 : uplink_minimum_pixels;
     const double minimum_scale = std::sqrt(std::min(minimum, pixels) / pixels);
     const auto minimum_units = uint32_t(std::ceil(divisor * minimum_scale / alignment)) * alignment;
     const auto units = uint32_t(std::floor(divisor * scale + 1e-7)) / alignment * alignment;

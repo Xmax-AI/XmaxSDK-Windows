@@ -27,14 +27,17 @@ class StreamController {
   public:
 
     /**
-     * Retains the native RTC factory and optional quality-history backend.
+     * Retains the native RTC factory, optional quality-history backend, and model pixel floor.
      */
     explicit StreamController(
         RtcFactory factory = make_rtc,
         std::shared_ptr<QualityHistory> history = {},
-        std::chrono::milliseconds heartbeat_interval = std::chrono::seconds(10)
+        std::chrono::milliseconds heartbeat_interval = std::chrono::seconds(10),
+        uint32_t uplink_minimum_pixels = default_uplink_minimum_pixels
     )
-        : room_(std::move(factory), heartbeat_interval), history_(std::move(history)) {
+        : room_(std::move(factory), heartbeat_interval),
+          history_(std::move(history)),
+          encoding_(uplink_minimum_pixels) {
     }
 
     /**
@@ -327,6 +330,10 @@ class StreamController {
     }
 
   private:
+
+    xmax_video_format quality_at(int level, bool downlink) const {
+        return downlink ? quality_format(format_, level, true) : encoding_.format(format_, level);
+    }
 
     /**
      * The room lifecycle, publication entry point, and throttled signaling channel.

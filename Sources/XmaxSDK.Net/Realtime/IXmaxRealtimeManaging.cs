@@ -36,7 +36,7 @@ public interface IXmaxRealtimeManaging : IAsyncDisposable
         VideoFormat videoFormat = default, RealtimeCamera? camera = null, RealtimeMicrophone? microphone = null,
         bool mirror = false, CancellationToken cancellationToken = default);
     /// <summary>Creates camera media using a resolution preset and its model-defined frame rate.</summary>
-    /// <param name="preset">The X2.1 camera resolution preset.</param>
+    /// <param name="preset">A camera resolution preset supported by the selected model.</param>
     /// <param name="camera">The camera selection; null uses the system default.</param>
     /// <param name="microphone">The initial microphone selection; null disables capture.</param>
     /// <param name="mirror">Mirrors local preview and publication together.</param>

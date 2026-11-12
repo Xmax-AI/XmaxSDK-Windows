@@ -14,5 +14,8 @@ namespace Xmax.SDK;
 public enum RealtimeModel
 {
     /// <summary>The X2.1 realtime generation model.</summary>
-    X2_1 = 1
+    X2_1 = 1,
+
+    /// <summary>The X2.1 Flash realtime generation model.</summary>
+    X2_1Flash = 2
 }

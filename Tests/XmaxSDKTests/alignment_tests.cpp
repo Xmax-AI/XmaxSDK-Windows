@@ -41,12 +41,12 @@ static void model_and_environment() {
     }
     for (const auto identifier : {"x2.0", "x2.1.1-preview-cn", "x2.1.1-preview-us", "unknown"})
         expect_error(XMAX_INVALID_ARGUMENT, [&] { RealtimeModelDefinition::parse(identifier); });
-    for (int value : {-1, 1, 2}) {
+    for (int value : {-1, 2, 999}) {
         const auto invalid = static_cast<xmax::RealtimeModel>(value);
         CHECK(xmax::model_identifier(invalid)[0] == 0);
         expect_error(XMAX_INVALID_ARGUMENT, [&] { RealtimeModelDefinition::info(invalid); });
     }
-    for (int value : {0, 6, 7})
+    for (int value : {0, 11, 12})
         expect_error(XMAX_INVALID_ARGUMENT, [&] {
             RealtimeModelDefinition::preset_format(static_cast<xmax_camera_preset>(value), 30);
         });
@@ -144,6 +144,76 @@ struct ProbeCamera : CameraCapture {
     }
     void stop() noexcept override {}
 };
+
+static void flash_model() {
+    constexpr const char* identifier = "x2.1-flash";
+    const auto model = xmax::client::model_info(xmax::RealtimeModel::x2_1_flash);
+    CHECK(std::string(model.identifier) == identifier && std::string(model.display_name) == "X2.1 Flash");
+    CHECK(model.format_count == 5 && model.default_frame_rate == 30);
+    CHECK(model.default_camera_format.width == 704 && model.default_camera_format.height == 1280);
+    CHECK(model.default_camera_format.fps == 30);
+    CHECK(model.minimum_input_pixels == 600000 && model.maximum_input_pixels == 960 * 960);
+    CHECK(model.input_size_alignment == 32);
+
+    const xmax_video_format expected[]{
+        {704, 1280, 30}, {1280, 704, 30}, {960, 960, 30}, {1024, 768, 30}, {768, 1024, 30}
+    };
+    for (uint32_t i = 0; i < model.format_count; ++i) {
+        const auto format = expected[i];
+        CHECK(model.supported_formats[i].width == format.width);
+        CHECK(model.supported_formats[i].height == format.height);
+        CHECK(model.supported_formats[i].fps == format.fps);
+        const auto preset = RealtimeModelDefinition::preset(format);
+        CHECK(preset == static_cast<xmax_camera_preset>(i + 6));
+        const auto restored = RealtimeModelDefinition::preset_format(preset, 24);
+        CHECK(restored.width == format.width && restored.height == format.height && restored.fps == 24);
+        xmax_video_format result{};
+        CHECK(xmax_resolve_media_format(identifier, &format, 1, &result) == XMAX_OK);
+        CHECK(result.width == format.width && result.height == format.height && result.fps == format.fps);
+        const xmax_media_size source{2.0 * format.width, 2.0 * format.height};
+        xmax_media_size size{};
+        CHECK(xmax_resolve_media_size(identifier, &source, 0, &size) == XMAX_OK);
+        CHECK(size.width * size.height <= model.maximum_input_pixels);
+        CHECK(xmax_resolve_generation_size(identifier, &size, &size) == XMAX_OK);
+        CHECK(size.width == format.width && size.height == format.height);
+    }
+    const xmax_video_format full_hd{1920, 1080, 30};
+    xmax_video_format resolved{};
+    CHECK(xmax_resolve_media_format(identifier, &full_hd, 1, &resolved) == XMAX_INVALID_ARGUMENT);
+    CHECK(xmax_resolve_media_format(identifier, &full_hd, 0, &resolved) == XMAX_OK);
+    CHECK(resolved.width * resolved.height <= model.maximum_input_pixels);
+    CHECK(xmax_resolve_generation_format(identifier, &resolved, &resolved) == XMAX_OK);
+    CHECK(resolved.width == 1280 && resolved.height == 704 && resolved.fps == 30);
+
+    xmax::client client(xmax::XmaxConfiguration{"", xmax::XmaxEnvironment::global});
+    auto controller = client.create_realtime(xmax::RealtimeConfiguration{xmax::RealtimeModel::x2_1_flash});
+    CHECK(xmax_realtime_prepare_external(controller.get(), &full_hd) == XMAX_INVALID_ARGUMENT);
+    controller.prepare(expected[0]);
+    CHECK(controller.state().connection_state == xmax::realtime_connection_state::ready);
+
+    Config config;
+    config.key = "test";
+    config.model = identifier;
+    const auto http = std::make_shared<RecordingHttp>();
+    const auto rtc = std::make_shared<FakeRtc>();
+    const auto camera = std::make_shared<CameraProbe>();
+    XmaxRealtimeManager manager(std::make_shared<ApiService>(config, http), [rtc] { return rtc; },
+        std::chrono::seconds(10), [camera] { return std::make_unique<ProbeCamera>(camera); });
+    manager.adaptive(false);
+    manager.create_local_camera_stream("one", model.default_camera_format, false);
+    expect_error(XMAX_INVALID_ARGUMENT, [&] { manager.update_camera_format(full_hd); });
+    manager.update_camera_format(expected[1]);
+    CHECK(manager.camera_format().width == 1280 && manager.camera_format().height == 704);
+    manager.start("prompt", "", false, false);
+    CHECK(json::parse(http->requests.front().body)["model"] == identifier);
+    const auto params = json::parse(rtc->messages.front())["params"];
+    CHECK(params["size"] == json::array({1280, 704}));
+    CHECK(params["target_size"] == json::array({1280, 704}));
+    manager.quality_level(0, 5);
+    const auto uplink = manager.quality().uplink;
+    CHECK(uplink.width == rtc->encoding.format.width && uplink.height == rtc->encoding.format.height);
+    CHECK(uplink.width * uplink.height >= model.minimum_input_pixels);
+}
 
 static void camera_configuration() {
     auto probe = std::make_shared<CameraProbe>();
@@ -383,6 +453,7 @@ static void public_configuration() {
 int main() {
     try {
         model_and_environment();
+        flash_model();
         error_details();
         camera_configuration();
         manual_quality_and_interaction();

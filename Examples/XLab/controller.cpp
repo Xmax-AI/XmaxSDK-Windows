@@ -46,6 +46,8 @@ bool XLabController::reduceMotion() const {
 }
 
 namespace {
+constexpr xmax::RealtimeModel realtime_models[]{xmax::RealtimeModel::x2_1, xmax::RealtimeModel::x2_1_flash};
+
 QString sdkError(xmax_result result) {
     return result < 0 ? QString::fromUtf8(xmax_last_error()) : QString();
 }
@@ -131,10 +133,26 @@ void XLabController::setApiKey(const QString& key) {
     emit changed();
 }
 void XLabController::setModel(const QString& model) {
-    if (active || busy || model != "x2.1")
+    if (active || busy)
         return;
-    model_ = model;
-    emit changed();
+    for (const auto candidate : realtime_models) {
+        if (model == QString::fromUtf8(xmax::model_identifier(candidate))) {
+            model_ = candidate;
+            emit changed();
+            return;
+        }
+    }
+}
+QVariantList XLabController::models() const {
+    QVariantList result;
+    for (const auto model : realtime_models) {
+        const auto info = xmax::model_capabilities(model);
+        result.append(QVariantMap{
+            {"id", QString::fromUtf8(info.identifier)},
+            {"name", QString::fromUtf8(info.display_name)}
+        });
+    }
+    return result;
 }
 QString XLabController::cameraName() const {
     for (const auto& entry : cameras_) {
@@ -271,14 +289,14 @@ void XLabController::start() {
         return;
     }
     auto handles = std::make_shared<SdkHandles>();
-    const auto key = key_.toUtf8(), model = model_.toUtf8();
+    const auto key = key_.toUtf8();
     // Enable business and performance diagnostics only on request.
     error = sdkError(xmax_logger_configure(XMAX_LOG_ALL, XMAX_LOG_CHINESE));
     if (!error.isEmpty()) {
         emit changed();
         return;
     }
-    xmax_client_config config{sizeof(config), XMAX_ABI_VERSION, key.constData(), model.constData(), 15000};
+    xmax_client_config config{sizeof(config), XMAX_ABI_VERSION, key.constData(), xmax::model_identifier(model_), 15000};
     error = sdkError(xmax_client_create(&config, &handles->client));
     if (error.isEmpty())
         error = sdkError(handles->create_realtime());

@@ -79,7 +79,8 @@ XmaxRealtimeManager::XmaxRealtimeManager(
       stream_(
           std::move(factory),
           std::move(history),
-          heartbeat
+          heartbeat,
+          api_ ? model_info().minimum_input_pixels : default_uplink_minimum_pixels
       ),
       media_(std::move(camera), std::move(microphone_validator), std::move(microphone)),
       generation_(media_.interaction),
@@ -202,7 +203,7 @@ uint64_t XmaxRealtimeManager::prepare(
                 "Stop existing local media before creating an external stream"
             );
             validate_format(format);
-            MediaService::input(processing_format.value_or(format));
+            MediaService::input(processing_format.value_or(format), model_info());
             if (encoding)
                 EncodingController::validate(*encoding);
             token.failure_scope(Scope::All);

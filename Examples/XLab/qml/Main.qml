@@ -49,7 +49,7 @@ ApplicationWindow {
                     CameraPicker { visible: !controller.preview; controller: window.controller }
                     Pill {
                         id: modelButton; objectName: "modelButton"
-                        text: controller.model.replace("x2", "X2")
+                        text: controller.modelDisplayName
                         glyph: "chevron"; trailingGlyph: true; enabled: !controller.busy
                         onClicked: modelPopup.open()
                         Popup {
@@ -58,12 +58,12 @@ ApplicationWindow {
                             background: Rectangle { color: "white"; radius: 12; border.color: "#e5e7eb" }
                             contentItem: Column {
                                 Repeater {
-                                    model: ["x2.1"]
+                                    model: controller.models
                                     delegate: ItemDelegate {
-                                        required property string modelData
-                                        width: 224; height: 36; text: modelData.replace("x2", "X2")
-                                        highlighted: controller.model === modelData
-                                        onClicked: { controller.model = modelData; modelPopup.close() }
+                                        required property var modelData
+                                        width: 224; height: 36; text: modelData.name
+                                        highlighted: controller.model === modelData.id
+                                        onClicked: { controller.model = modelData.id; modelPopup.close() }
                                     }
                                 }
                             }
@@ -106,7 +106,7 @@ ApplicationWindow {
                 Row {
                     visible: controller.active
                     anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter; spacing: 12
-                    Pill { text: controller.model.replace("x2", "X2"); passive: true; enabled: false; opacity: 1 }
+                    Pill { text: controller.modelDisplayName; passive: true; enabled: false; opacity: 1 }
                     Pill {
                         objectName: "statisticsButton"; glyph: "statistics"; accent: controller.statisticsVisible
                         secondaryForeground: true

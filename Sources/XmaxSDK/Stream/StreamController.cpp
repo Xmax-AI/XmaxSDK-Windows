@@ -353,12 +353,8 @@ xmax_quality_status StreamController::quality() const {
     value.downlink_level = room_.joined() ? quality_.down.level : 0;
 
     if (value.uplink_level) {
-        value.uplink = quality_format(
-            format_,
-            quality_.up.level,
-            false
-        );
-        value.downlink = quality_format(format_, quality_.down.level, true);
+        value.uplink = quality_at(quality_.up.level, false);
+        value.downlink = quality_at(quality_.down.level, true);
     }
 
     return value;
@@ -380,13 +376,7 @@ json StreamController::generation_message(
     const std::string& reference,
     bool face
 ) const {
-    const auto target = event == "start"
-                            ? quality_format(
-                                  format_,
-                                  quality_.down.level,
-                                  true
-                              )
-                            : xmax_video_format{};
+    const auto target = event == "start" ? quality_at(quality_.down.level, true) : xmax_video_format{};
     auto value = generation_event(
         event,
         room_.connection,
@@ -430,8 +420,8 @@ std::vector<xmax_event> StreamController::observe_quality(
         sampled_at,
         now,
         [this, direction, &policy](int candidate) {
-            const auto current = quality_format(format_, policy.level, direction != 0);
-            const auto next = quality_format(format_, candidate, direction != 0);
+            const auto current = quality_at(policy.level, direction != 0);
+            const auto next = quality_at(candidate, direction != 0);
             if (current.width == next.width && current.height == next.height && current.fps == next.fps)
                 return false;
             try {
@@ -459,7 +449,7 @@ std::vector<xmax_event> StreamController::observe_quality(
             false,
             now
         );
-        const auto previous = quality_format(format_, policy.level, direction != 0);
+        const auto previous = quality_at(policy.level, direction != 0);
         xmax_event event{};
         event.type = XMAX_EVENT_QUALITY_CHANGE;
         event.code = error.code;
@@ -505,11 +495,11 @@ xmax_event StreamController::set_quality(
     );
 
     auto& policy = direction ? quality_.down : quality_.up;
-    const auto next = quality_format(format_, level, direction != 0);
+    const auto next = quality_at(level, direction != 0);
 
     if (level != policy.level) {
         if (direction) {
-            const auto previous = quality_format(format_, policy.level, true);
+            const auto previous = quality_at(policy.level, true);
             if (next.width != previous.width || next.height != previous.height) {
                 auto message = room_event("change_target_size", room_.connection, room_.task);
                 const auto [minimum, maximum] = downlink_bitrate(next);

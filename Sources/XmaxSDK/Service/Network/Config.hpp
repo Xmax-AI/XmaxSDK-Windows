@@ -24,7 +24,7 @@ struct Config {
     std::string key;
 
     /**
-     * The realtime model identifier; only x2.1 is supported.
+     * The realtime model identifier; defaults to x2.1.
      */
     std::string model = "x2.1";
 

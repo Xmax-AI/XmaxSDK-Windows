@@ -11,8 +11,12 @@
 #pragma once
 #include "Foundation/Media/VideoFrame.hpp"
 #include <optional>
+#include <xmax/RealtimeModel.hpp>
 
 namespace xmax::detail {
+
+inline constexpr auto default_uplink_minimum_pixels =
+    model_capabilities(RealtimeModel::x2_1).minimum_input_pixels;
 
 /**
  * Resolves video dimensions and frame rate for a directional quality level.
@@ -20,11 +24,13 @@ namespace xmax::detail {
  * @param[in] baseline The bound input's baseline video format.
  * @param[in] level The quality level, in [1, 5].
  * @param[in] downlink True for downlink; false for uplink.
+ * @param[in] uplink_minimum_pixels The selected model's uplink pixel floor.
  */
 xmax_video_format quality_format(
     xmax_video_format baseline,
     int level,
-    bool downlink
+    bool downlink,
+    uint32_t uplink_minimum_pixels = default_uplink_minimum_pixels
 );
 
 /**

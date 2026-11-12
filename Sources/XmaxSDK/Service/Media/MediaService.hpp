@@ -32,15 +32,17 @@ class MediaService {
      * Validates external input while preserving its aspect ratio.
      *
      * @param[in] format The input dimensions and positive nominal frame rate.
+     * @param[in] model The selected model capability snapshot.
      *
      * @return The validated original input format.
      */
     static xmax_video_format input(
-        xmax_video_format format
+        xmax_video_format format,
+        const xmax_model_info& model = RealtimeModelDefinition::default_capabilities
     ) {
         validate_format(format);
         require(
-            uint64_t(format.width) * format.height <= RealtimeModelDefinition::maximum_input_pixels,
+            uint64_t(format.width) * format.height <= model.maximum_input_pixels,
             XMAX_INVALID_ARGUMENT,
             "Video input exceeds the model pixel limit"
         );
@@ -73,16 +75,16 @@ class MediaService {
     static xmax_media_size target_size(xmax_media_size source, xmax_media_size maximum);
 
     /**
-     * Validates camera targets against the five X2.1 formats without substituting dimensions.
+     * Validates camera targets against the selected model without substituting dimensions.
      *
      * @param[in] format The requested camera output dimensions and frame rate.
      * @param[in] model The selected model capability snapshot.
      */
     static xmax_video_format camera_input(
         xmax_video_format format,
-        xmax_model_info model = RealtimeModelDefinition::capabilities
+        const xmax_model_info& model = RealtimeModelDefinition::default_capabilities
     ) {
-        const auto result = input(format);
+        const auto result = input(format, model);
         require(result.fps <= uint32_t(std::numeric_limits<int32_t>::max()), XMAX_INVALID_ARGUMENT,
                 "Camera frame rate exceeds the supported integer range");
         media_size({double(result.width), double(result.height)}, true, model);
@@ -99,7 +101,7 @@ class MediaService {
      */
     static xmax_video_format generation(
         xmax_video_format format,
-        xmax_model_info model = RealtimeModelDefinition::capabilities
+        const xmax_model_info& model = RealtimeModelDefinition::default_capabilities
     ) {
         validate_format(format);
         const auto size = generation_size({double(format.width), double(format.height)}, model);

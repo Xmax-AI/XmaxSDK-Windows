@@ -117,6 +117,7 @@ public sealed partial class XmaxClient : IDisposable
     internal static string GetModelIdentifier(RealtimeModel model) => model switch
     {
         RealtimeModel.X2_1 => "x2.1",
+        RealtimeModel.X2_1Flash => "x2.1-flash",
         _ => throw new ArgumentOutOfRangeException(nameof(model))
     };
 

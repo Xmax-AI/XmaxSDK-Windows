@@ -100,14 +100,19 @@ class BehaviorTests : public QObject {
         QVERIFY(controller.error.isEmpty());
     }
 
-    void onlyX21IsSelectableAndDoesNotStartCapture() {
+    void modelSelectionDoesNotStartCapture() {
         XLabController controller(true);
         QCOMPARE(controller.model(), QString("x2.1"));
+        QCOMPARE(controller.models().size(), 2);
+        controller.setModel("x2.1-flash");
+        QCOMPARE(controller.model(), QString("x2.1-flash"));
+        QCOMPARE(controller.modelDisplayName(), QString("X2.1 Flash"));
         for (const auto& identifier : {"x2.1.1-preview-cn", "x2.1.1-preview-us", "unknown"}) {
             controller.setModel(identifier);
-            QCOMPARE(controller.model(), QString("x2.1"));
+            QCOMPARE(controller.model(), QString("x2.1-flash"));
         }
         controller.setModel("x2.1");
+        QCOMPARE(controller.modelDisplayName(), QString("X2.1"));
         QVERIFY(!controller.handles_);
     }
 

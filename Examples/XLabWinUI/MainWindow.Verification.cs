@@ -93,14 +93,16 @@ public sealed partial class MainWindow
         RealtimeModel original = Model.SelectedModel;
         try
         {
+            ArrangePage();
+            var originalLayout = (landingStage.Width, landingStage.Height, localPanel.Height, remotePanel.Height);
             foreach (RealtimeModel model in MainViewModel.Models.Reverse())
             {
                 OpenModels();
                 var surface = (Border)popups.Single().Child;
                 var list = (StackPanel)surface.Child;
-                Check(list.Children.Count == 1, "The model menu must contain only X2.1.");
-                string identifier = XmaxClient.GetModelInfo(model).Identifier;
-                var option = list.Children.OfType<Button>().Single(button => Microsoft.UI.Xaml.Automation.AutomationProperties.GetName(button) == identifier);
+                Check(list.Children.Count == MainViewModel.Models.Count, "The model menu must contain all supported models.");
+                var info = XmaxClient.GetModelInfo(model);
+                var option = list.Children.OfType<Button>().Single(button => Microsoft.UI.Xaml.Automation.AutomationProperties.GetName(button) == info.Identifier);
                 await UntilAsync(() => option.IsLoaded);
                 await SaveScreenshotAsync("model-menu", surface);
                 var peer = FrameworkElementAutomationPeer.CreatePeerForElement(option)!;
@@ -108,7 +110,11 @@ public sealed partial class MainWindow
                 await UntilAsync(() => Model.SelectedModel == model && popups.Count == 0);
                 Check(modelButton.Text == Model.ModelDisplayName && sessionModelLabel.Text == Model.ModelDisplayName, "Model labels did not follow selection.");
                 Check(Model.Session is null, "Selecting a model started a session.");
-                Check(Model.SelectedFormat == new VideoFormat(1920, 1080, 30), "The example must use the SDK’s 1920x1080 model default.");
+                var expectedFormat = model == RealtimeModel.X2_1Flash ? new VideoFormat(1280, 704) : new VideoFormat(1920, 1080);
+                Check(Model.SelectedFormat == expectedFormat, "The camera must use the selected model's widescreen format.");
+                ArrangePage();
+                Check((landingStage.Width, landingStage.Height, localPanel.Height, remotePanel.Height) == originalLayout,
+                    "Selecting a model changed the desktop video layout.");
             }
         }
         finally { ClosePopups(); Model.SelectedModel = original; }

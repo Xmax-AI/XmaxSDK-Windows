@@ -46,6 +46,21 @@ enum class RealtimeCameraPreset {
     /**
      * A landscape 4:3 X2.1 frame.
      */
-    resolution1536x1152 = XMAX_CAMERA_PRESET_1536_1152
+    resolution1536x1152 = XMAX_CAMERA_PRESET_1536_1152,
+
+    /** A portrait 704 by 1280 X2.1 Flash frame. */
+    resolution704x1280 = XMAX_CAMERA_PRESET_704_1280,
+
+    /** A landscape 1280 by 704 X2.1 Flash frame. */
+    resolution1280x704 = XMAX_CAMERA_PRESET_1280_704,
+
+    /** A square 960 by 960 X2.1 Flash frame. */
+    resolution960x960 = XMAX_CAMERA_PRESET_960_960,
+
+    /** A landscape 1024 by 768 X2.1 Flash frame. */
+    resolution1024x768 = XMAX_CAMERA_PRESET_1024_768,
+
+    /** A portrait 768 by 1024 X2.1 Flash frame. */
+    resolution768x1024 = XMAX_CAMERA_PRESET_768_1024
 };
 } // namespace xmax

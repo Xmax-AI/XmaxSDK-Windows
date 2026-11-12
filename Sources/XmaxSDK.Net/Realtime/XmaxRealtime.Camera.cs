@@ -45,7 +45,7 @@ internal sealed partial class XmaxRealtime
     }
 
     /// <summary>Creates camera media using a resolution preset and its model-defined frame rate.</summary>
-    /// <param name="preset">The X2.1 camera resolution preset.</param>
+    /// <param name="preset">A camera resolution preset supported by the selected model.</param>
     /// <param name="camera">The camera selection; null uses the system default.</param>
     /// <param name="microphone">The initial microphone selection; null disables capture.</param>
     /// <param name="mirror">Mirrors local preview and publication together.</param>
@@ -74,6 +74,11 @@ internal sealed partial class XmaxRealtime
             RealtimeCameraPreset.Resolution1408x1408 => (1408u, 1408u),
             RealtimeCameraPreset.Resolution1152x1536 => (1152u, 1536u),
             RealtimeCameraPreset.Resolution1536x1152 => (1536u, 1152u),
+            RealtimeCameraPreset.Resolution704x1280 => (704u, 1280u),
+            RealtimeCameraPreset.Resolution1280x704 => (1280u, 704u),
+            RealtimeCameraPreset.Resolution960x960 => (960u, 960u),
+            RealtimeCameraPreset.Resolution1024x768 => (1024u, 768u),
+            RealtimeCameraPreset.Resolution768x1024 => (768u, 1024u),
             _ => throw new ArgumentOutOfRangeException(nameof(preset))
         };
         foreach (var format in XmaxClient.GetModelInfo(Configuration.Model).SupportedFormats)
@@ -149,18 +154,17 @@ internal sealed partial class XmaxRealtime
     public Task<VideoFormat?> GetCurrentCameraVideoFormatAsync() => operations.Run<VideoFormat?>(ReadCameraFormat);
 
     /// <summary>Reads the resolution preset of the active camera.</summary>
-    public async Task<RealtimeCameraPreset?> GetCurrentCameraPresetAsync()
+    public Task<RealtimeCameraPreset?> GetCurrentCameraPresetAsync() =>
+        operations.Run<RealtimeCameraPreset?>(ReadCameraPreset);
+
+    private static unsafe RealtimeCameraPreset? ReadCameraPreset(nint value)
     {
-        var format = await GetCurrentCameraVideoFormatAsync().ConfigureAwait(false);
-        return (format?.Width, format?.Height) switch
-        {
-            (1920, 1080) => RealtimeCameraPreset.Resolution1920x1080,
-            (1080, 1920) => RealtimeCameraPreset.Resolution1080x1920,
-            (1408, 1408) => RealtimeCameraPreset.Resolution1408x1408,
-            (1152, 1536) => RealtimeCameraPreset.Resolution1152x1536,
-            (1536, 1152) => RealtimeCameraPreset.Resolution1536x1152,
-            _ => null
-        };
+        xmax_video_format format;
+        int nativePreset;
+        NativeError.Check(NativeMethods.xmax_realtime_get_camera_format(value, &format, &nativePreset));
+        // The native enum reserves zero for the absence of a camera preset.
+        var preset = (RealtimeCameraPreset)(nativePreset - 1);
+        return Enum.IsDefined(preset) ? preset : null;
     }
 
     private static unsafe VideoFormat? ReadCameraFormat(nint value)

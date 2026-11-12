@@ -431,7 +431,7 @@ typedef struct xmax_client_config {
     const char* api_key;
 
     /**
-     * The realtime model identifier; only x2.1 is supported and NULL selects the default.
+     * The realtime model identifier (x2.1 or x2.1-flash); NULL selects x2.1.
      */
     const char* model;
 
@@ -445,8 +445,8 @@ typedef struct xmax_client_config {
 /**
  * Video dimensions and frame rate for external input or camera output.
  *
- * X2.1 camera targets support 1920x1080, 1080x1920, 1408x1408, 1152x1536 and 1536x1152
- * at a positive frame rate supported by the capture device; dimensions must match one target exactly.
+ * Camera dimensions must match one of the selected model's targets returned by xmax_model_get_info.
+ * The frame rate must be positive and supported by the capture device.
  * External input accepts even dimensions in [4, 8192] and a positive nominal frame rate.
  * Resolved external processing dimensions remain within the model pixel budget.
  * Camera frames are center-cropped and scaled to the configured dimensions for preview and publication.
@@ -1287,7 +1287,22 @@ typedef enum xmax_camera_preset {
     /**
      * A landscape 4:3 X2.1 preset.
      */
-    XMAX_CAMERA_PRESET_1536_1152 = 5
+    XMAX_CAMERA_PRESET_1536_1152 = 5,
+
+    /** A portrait 704 by 1280 X2.1 Flash preset. */
+    XMAX_CAMERA_PRESET_704_1280 = 6,
+
+    /** A landscape 1280 by 704 X2.1 Flash preset. */
+    XMAX_CAMERA_PRESET_1280_704 = 7,
+
+    /** A square 960 by 960 X2.1 Flash preset. */
+    XMAX_CAMERA_PRESET_960_960 = 8,
+
+    /** A landscape 1024 by 768 X2.1 Flash preset. */
+    XMAX_CAMERA_PRESET_1024_768 = 9,
+
+    /** A portrait 768 by 1024 X2.1 Flash preset. */
+    XMAX_CAMERA_PRESET_768_1024 = 10
 
 } xmax_camera_preset;
 
