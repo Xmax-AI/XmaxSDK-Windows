@@ -63,7 +63,6 @@ public sealed partial class MainWindow : Window
     private readonly Pill keyButton = new() { Glyph = "key", LabelVerticalOffset = 2.75 };
     private readonly Pill statisticsButton = new() { Glyph = "statistics", Secondary = true };
     private readonly Pill beautyButton = new() { Text = "Beauty", Glyph = "sparkles" };
-    private readonly Pill interpolationButton = new() { Text = "2×", Secondary = true };
     private readonly BeautyPanel beautyPanel = new() { HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Bottom, Margin = new(12) };
     private readonly Pill volumeButton = new() { Glyph = "muted", Secondary = true };
     private readonly Pill elapsed = new() { Passive = true, MinWidth = 72, IsHitTestVisible = false };
@@ -163,10 +162,6 @@ public sealed partial class MainWindow : Window
         stopButton.IsEnabled = !closing;
         StartButton.Text = Model.StartLabel; stopButton.Text = Model.StopLabel;
         beautyButton.Accent = Model.BeautyEnabled; beautyButton.IsEnabled = Model.BeautyCanEdit && !closing;
-        interpolationButton.Accent = Model.InterpolationEnabled;
-        interpolationButton.IsLoading = Model.InterpolationSwitching;
-        interpolationButton.IsEnabled = Model.InterpolationCanEdit && !closing;
-        interpolationButton.Refresh();
         beautyPanel.Visibility = Model.BeautyPanelVisible ? Visibility.Visible : Visibility.Collapsed;
         beautyPanel.IsEnabled = Model.BeautyCanEdit && !closing;
         statisticsButton.Accent = Model.StatisticsVisible; volumeButton.Glyph = Model.VolumeGlyph; elapsed.Text = Model.Elapsed;

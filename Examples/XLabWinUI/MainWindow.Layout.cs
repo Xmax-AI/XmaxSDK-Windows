@@ -31,16 +31,13 @@ public sealed partial class MainWindow
         branding.Children.Add(brand); branding.Children.Add(previewBadge); header.Children.Add(branding);
         foreach (var button in new[] { cameraButton, modelButton, keyButton }) homeControls.Children.Add(button);
         header.Children.Add(homeControls); header.Children.Add(sessionControls);
-        foreach (var element in new UIElement[] { sessionModelLabel, statisticsButton, interpolationButton, beautyButton, volumeButton, elapsed, recordButton, stopButton }) sessionControls.Children.Add(element);
+        foreach (var element in new UIElement[] { sessionModelLabel, statisticsButton, beautyButton, volumeButton, elapsed, recordButton, stopButton }) sessionControls.Children.Add(element);
         AutomationProperties.SetName(cameraButton, "Select Camera"); AutomationProperties.SetName(keyButton, "API Key");
         AutomationProperties.SetName(StartButton, "Start Camera"); AutomationProperties.SetName(statisticsButton, "Show / hide statistics"); AutomationProperties.SetName(volumeButton, "Remote volume");
         ToolTipService.SetToolTip(statisticsButton, "Show / hide statistics"); ToolTipService.SetToolTip(volumeButton, "Remote volume"); ToolTipService.SetToolTip(keyButton, "API Key");
         cameraButton.Click += (_, _) => OpenCameras(); modelButton.Click += (_, _) => OpenModels(); keyButton.Click += (_, _) => OpenKey();
         statisticsButton.Click += (_, _) => Model.StatisticsVisible = !Model.StatisticsVisible;
         beautyButton.Click += (_, _) => Model.BeautyEnabled = !Model.BeautyEnabled;
-        interpolationButton.Click += async (_, _) => await Model.ToggleInterpolationAsync();
-        AutomationProperties.SetName(interpolationButton, "Frame interpolation");
-        ToolTipService.SetToolTip(interpolationButton, "2× video preview interpolation · adds 125 ms video delay");
         AutomationProperties.SetName(beautyButton, "Beauty");
         ToolTipService.SetToolTip(beautyButton, "Toggle beauty on generated results");
         beautyPanel.Bind(Model);

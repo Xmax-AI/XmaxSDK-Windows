@@ -83,7 +83,7 @@ internal sealed partial class MainViewModel
         foreach (var item in ReferenceCatalog.Load()) References(item.Mode).Add(item);
         StartCommand = new(() => GuardAsync(StartLandingAsync), () => !Busy);
         SubmitPromptCommand = new(() => GuardAsync(SubmitPromptAsync), CanSubmitPrompt);
-        elapsedTimer.Tick += async (_, _) => { Changed(nameof(Elapsed)); await PollInterpolationAsync(); };
+        elapsedTimer.Tick += (_, _) => Changed(nameof(Elapsed));
     }
     public void ConfigurePreview(bool sessionPage)
     {

@@ -11,7 +11,6 @@
 #pragma once
 #include "Render/Video/RemoteVideoFramePipeline.hpp"
 #include "Render/Beauty/RemoteVideoBeautyPipeline.hpp"
-#include "Render/Interpolation/RemoteVideoInterpolationPipeline.hpp"
 #include "Render/Video/RemoteMediaFrameDispatcher.hpp"
 #include "Render/Trajectory/TrajectoryRegistry.hpp"
 #include "Render/Trajectory/DefaultTrajectoryEffectRenderer.hpp"
@@ -25,21 +24,15 @@ class RenderController {
 
   public:
 
-    explicit RenderController(BeautyProcessorFactory factory = make_video_beauty_processor,
-        InterpolationProcessorFactory interpolation_factory = make_video_interpolation_processor)
-        : interpolation_([this](std::shared_ptr<Frame> frame, uint64_t token) {
-              remote_.submit_owned(std::move(frame), token);
-          }, std::move(interpolation_factory)),
-          beauty_([this](std::shared_ptr<Frame> frame, uint64_t token) {
-              interpolation_.submit(frame, token);
-              output_.video(std::move(frame), token);
+    explicit RenderController(BeautyProcessorFactory factory = make_video_beauty_processor)
+        : beauty_([this](std::shared_ptr<Frame> frame, uint64_t token) {
+              if (remote_.submit_owned(frame, token))
+                  output_.video(std::move(frame), token);
           }, std::move(factory)) {}
 
     void beauty(std::optional<BeautyOptions> options) { beauty_.configure(options); }
     BeautyErrorListener beauty_listener(BeautyErrorListener listener) { return beauty_.listener(std::move(listener)); }
     void close_beauty() { beauty_.reset(); }
-    void interpolation(std::optional<InterpolationOptions> options) { interpolation_.configure(std::move(options)); }
-    xmax_video_interpolation_status interpolation_status() const { return interpolation_.status(); }
 
     /** Waits for a processed result frame after the remote video publication was confirmed. */
     void wait_displayable_result(uint64_t token, const Cancel& cancel) {
@@ -64,7 +57,6 @@ class RenderController {
         result_bound_ = true;
         remote_.activate(token);
         output_.bind(token);
-        interpolation_.bind(token, true);
         beauty_.bind(token, true);
     }
 
@@ -79,7 +71,6 @@ class RenderController {
         std::lock_guard<std::mutex> lock(result_binding_);
         result_bound_ = false;
         beauty_.bind(token, false);
-        interpolation_.bind(token, false);
         remote_.deactivate(token);
         output_.unbind(token);
         ++result_revision_;
@@ -92,7 +83,6 @@ class RenderController {
             return;
         result_bound_ = false;
         beauty_.bind(token, false);
-        interpolation_.bind(token, false);
         remote_.deactivate(token);
         output_.unbind(token);
         ++result_revision_;
@@ -153,7 +143,6 @@ class RenderController {
      */
     void shutdown_output() {
         beauty_.shutdown();
-        interpolation_.shutdown();
         output_.shutdown();
     }
 
@@ -312,8 +301,7 @@ class RenderController {
      */
     RemoteMediaFrameDispatcher output_;
 
-    // Workers drain in reverse construction order before their consumers are destroyed.
-    RemoteVideoInterpolationPipeline interpolation_;
+    // Declared last so its worker drains before the consumers are destroyed.
     RemoteVideoBeautyPipeline beauty_;
 };
 } // namespace xmax::detail

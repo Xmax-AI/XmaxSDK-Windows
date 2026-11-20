@@ -209,7 +209,6 @@ internal sealed partial class MainViewModel : INotifyPropertyChanged, IAsyncDisp
             if (cancellation is not null) await cancellation.CancelAsync();
             await StopRecordingAsync();
             LocalVideo = RemoteVideo = null;
-            ResetInterpolation();
             Status = previous is null ? "准备就绪" : "正在关闭会话…";
             RefreshCommands();
             try { if (previous is not null) await CloseRealtimeAsync(previous); }

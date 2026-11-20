@@ -171,20 +171,6 @@ class realtime : public detail::owner<xmax_realtime, xmax_realtime_destroy> {
         return result;
     }
 
-    /** Configures optional two-times interpolation for the result preview; nullopt disables. */
-    void remote_video_interpolation(std::optional<xmax_video_interpolation_options> options) {
-        if (options) options->struct_size = sizeof(*options);
-        check(xmax_realtime_set_remote_video_interpolation(get(), options ? &*options : nullptr));
-    }
-
-    /** Returns interpolation counters and any recoverable processing error. */
-    xmax_video_interpolation_status remote_video_interpolation_status() const {
-        xmax_video_interpolation_status status{};
-        status.struct_size = sizeof(status);
-        check(xmax_realtime_get_remote_video_interpolation_status(get(), &status));
-        return status;
-    }
-
     /** Configures generated result beauty; nullopt disables. Same semantics as the C API. */
     void remote_video_beauty(std::optional<xmax_realtime_video_beauty_options> options) {
         if (options) options->struct_size = sizeof(*options);

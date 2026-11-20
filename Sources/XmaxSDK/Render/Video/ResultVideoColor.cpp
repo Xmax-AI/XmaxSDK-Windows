@@ -70,11 +70,6 @@ const std::array<uint8_t, 4097>& bt709_lut() {
 
 } // namespace
 
-bool result_video_color_is_native(const Frame& frame) {
-    return to_bt709(frame.color_primaries) == &identity &&
-        linear_transfer(frame.color_transfer) == bt709_to_linear;
-}
-
 bool prepare_result_video_color(Frame& frame) {
     const auto matrix = to_bt709(frame.color_primaries);
     const auto linearize = linear_transfer(frame.color_transfer);

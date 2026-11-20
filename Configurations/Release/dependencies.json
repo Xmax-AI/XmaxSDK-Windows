@@ -21,14 +21,5 @@
       "url": "https://raw.githubusercontent.com/nlohmann/json/v3.11.3/LICENSE.MIT",
       "sha256": "86b998c792894ccb911a1cb7994f7a9652894e7a094c0b5e45be2f553f45cf14"
     }
-  },
-  "rife": {
-    "repository": "https://github.com/nihui/rife-ncnn-vulkan.git",
-    "revision": "a7532fc3f9f8f008cd6eecd6f2ffe2a9698e0cf7",
-    "model": "rife-v4.6",
-    "models": {
-      "flownet.bin": "f334ed2260149ce0188a6dcf049844e8b0cdd912e01cbcfb63553157d2508958",
-      "flownet.param": "724569596bcd1e7b9fa50455c604777ebed99746d2ef40aa86e31b5725f1053c"
-    }
   }
 }

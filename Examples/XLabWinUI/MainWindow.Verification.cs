@@ -144,7 +144,6 @@ public sealed partial class MainWindow
         {
             await Task.Delay(650);
             if (mode == "--smoke-test-beauty") await VerifyBeautyAsync();
-            if (mode == "--smoke-test-interpolation") await VerifyInterpolationAsync();
             if (mode == "--smoke-test-ui")
             {
                 await VerifyModelsAsync();

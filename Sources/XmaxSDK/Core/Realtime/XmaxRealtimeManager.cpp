@@ -834,7 +834,6 @@ Lifecycle::CleanupResult XmaxRealtimeManager::cleanup(
     }
 
     if (close) {
-        render_.interpolation(std::nullopt);
         render_.close_beauty();
         media_.close();
         unbind_local();
@@ -1159,15 +1158,6 @@ void XmaxRealtimeManager::emit_timing(
 } // namespace xmax::detail
 
 namespace xmax::detail {
-void XmaxRealtimeManager::remote_video_interpolation(std::optional<InterpolationOptions> options) {
-    if (options) validate_interpolation(*options);
-    lifecycle_.sync([this, options = std::move(options)] { render_.interpolation(options); });
-}
-// Status reads use the preview pipeline mutex and never wait for GPU inference.
-xmax_video_interpolation_status XmaxRealtimeManager::remote_video_interpolation_status() const {
-    return render_.interpolation_status();
-}
-
 void XmaxRealtimeManager::remote_video_beauty(std::optional<BeautyOptions> options) {
     if (options) validate_beauty(*options);
     lifecycle_.sync([this, options] { render_.beauty(options); });

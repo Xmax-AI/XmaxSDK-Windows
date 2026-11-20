@@ -3053,35 +3053,6 @@ xmax_result XMAX_CALL xmax_realtime_set_remote_video_beauty_error_listener(
     });
 }
 
-/** Copies interpolation options before scheduling initialization.
- * @see xmax_realtime_set_remote_video_interpolation in xmax.h for the public contract.
- */
-xmax_result XMAX_CALL xmax_realtime_set_remote_video_interpolation(
-    xmax_realtime realtime, const xmax_video_interpolation_options* options) {
-    return protect(__func__, [&] {
-        handle(realtime);
-        std::optional<InterpolationOptions> value;
-        if (options) {
-            sized(options);
-            value = InterpolationOptions{options->model_directory ? options->model_directory : "",
-                options->device_index, options->cpu_threads, options->buffer_ms};
-        }
-        realtime->session->remote_video_interpolation(std::move(value));
-    });
-}
-
-/** Returns preview interpolation counters independently of inference.
- * @see xmax_realtime_get_remote_video_interpolation_status in xmax.h for the public contract.
- */
-xmax_result XMAX_CALL xmax_realtime_get_remote_video_interpolation_status(
-    xmax_realtime realtime, xmax_video_interpolation_status* status) {
-    return protect(__func__, [&] {
-        handle(realtime);
-        sized(status);
-        *status = realtime->session->remote_video_interpolation_status();
-    });
-}
-
 /** Maps the typed account query and borrowed cancellation callback to the public C boundary.
  * @see xmax_client_get_credit_balance in xmax.h for the public contract.
  */

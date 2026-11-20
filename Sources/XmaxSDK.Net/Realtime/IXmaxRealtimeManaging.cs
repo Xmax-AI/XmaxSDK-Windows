@@ -109,15 +109,6 @@ public interface IXmaxRealtimeManaging : IAsyncDisposable
     /// </remarks>
     Task SetRemoteVideoBeautyAsync(RealtimeVideoBeautyOptions? options);
 
-    /// <summary>Configures two-times interpolation for the remote preview; null disables it.</summary>
-    /// <remarks>Requires the optional RIFE backend. Reconnection retains settings and full close clears
-    /// them. Initialization errors throw here. Runtime failures restore original preview delivery and
-    /// appear in GetRemoteVideoInterpolationStatusAsync. Preview buffering adds latency relative to
-    /// native audio. Remote media callbacks retain original video/audio timing for recording.</remarks>
-    Task SetRemoteVideoInterpolationAsync(RealtimeVideoInterpolationOptions? options);
-
-    /// <summary>Reads interpolation counters and recoverable errors without waiting for inference.</summary>
-    Task<RealtimeVideoInterpolationStatus> GetRemoteVideoInterpolationStatusAsync();
     /// <summary>
     /// Reads the applied uplink quality level.
     /// </summary>

@@ -303,12 +303,6 @@ internal static unsafe partial class NativeMethods
     internal static partial int xmax_realtime_set_remote_video_beauty_error_listener(nint @realtime, xmax_video_beauty_error_listener* @listener);
     [LibraryImport(Library)]
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
-    internal static partial int xmax_realtime_set_remote_video_interpolation(nint @realtime, xmax_video_interpolation_options* @options);
-    [LibraryImport(Library)]
-    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
-    internal static partial int xmax_realtime_get_remote_video_interpolation_status(nint @realtime, xmax_video_interpolation_status* @status);
-    [LibraryImport(Library)]
-    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
     internal static partial int xmax_media_frame_retain(nint @frame, nint* @out_frame);
     [LibraryImport(Library)]
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]

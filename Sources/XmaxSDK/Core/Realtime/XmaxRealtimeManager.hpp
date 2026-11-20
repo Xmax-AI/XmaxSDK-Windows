@@ -329,12 +329,6 @@ class XmaxRealtimeManager {
      */
     void remote_video_beauty_error_listener(BeautyErrorListener listener);
 
-    /** Configures optional two-times interpolation of the result preview. */
-    void remote_video_interpolation(std::optional<InterpolationOptions> options);
-
-    /** Reads interpolation counters and recoverable processing failures. */
-    xmax_video_interpolation_status remote_video_interpolation_status() const;
-
     /**
      * Replaces the serialized remote audio/video listener, preserving playback and the current listener
      * if native audio observation cannot be enabled.

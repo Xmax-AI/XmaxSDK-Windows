@@ -3325,55 +3325,6 @@ XMAX_API xmax_result XMAX_CALL xmax_realtime_set_remote_video_beauty(
 XMAX_API xmax_result XMAX_CALL xmax_realtime_set_remote_video_beauty_error_listener(
     xmax_realtime realtime, const xmax_video_beauty_error_listener* listener);
 
-/** Optional two-times interpolation for the result video preview. Initialize every field.
- * Model files must be RIFE v4.6 flownet.param/flownet.bin. A NULL directory uses
- * models/rife-v4.6 beside XmaxSDK. Device -1 explicitly selects CPU; nonnegative values select Vulkan.
- */
-typedef struct xmax_video_interpolation_options {
-    /** Initialize with sizeof(xmax_video_interpolation_options). */
-    uint32_t struct_size;
-    /** UTF-8 model directory, copied during configuration; NULL selects the bundled model. */
-    const char* model_directory;
-    /** Vulkan device index, or -1 for explicit CPU processing. */
-    int32_t device_index;
-    /** CPU worker count in [1, 32]. */
-    uint32_t cpu_threads;
-    /** Video preview buffering in milliseconds, in [50, 500]. */
-    uint32_t buffer_ms;
-} xmax_video_interpolation_options;
-
-/** Snapshot of interpolation processing for the current configuration. */
-typedef struct xmax_video_interpolation_status {
-    /** Initialize with sizeof(xmax_video_interpolation_status). */
-    uint32_t struct_size;
-    /** One when configured and available; zero after disabling or a processing failure. */
-    int32_t enabled;
-    /** Original frames admitted while enabled. */
-    uint64_t input_frames;
-    /** Intermediate frames delivered to the preview mailbox. */
-    uint64_t interpolated_frames;
-    /** Intermediate frames skipped because of deadlines, discontinuities, or queue pressure. */
-    uint64_t skipped_frames;
-    /** Processing failure code, or XMAX_OK. */
-    xmax_result error_code;
-    /** UTF-8 processing failure text, terminated with NUL. */
-    char error_message[256];
-} xmax_video_interpolation_status;
-
-/** Configures two-times interpolation for the remote video preview; NULL disables it.
- * Default is disabled. Use a worker thread because model initialization can block. Reconnection retains
- * settings; full close releases the processor. Initialization errors return here. Later failures restore
- * original preview frames and appear in xmax_realtime_get_remote_video_interpolation_status.
- * Preview buffering adds latency relative to native audio playback. Remote media callbacks retain the
- * original video/audio timestamps and frame cadence for recording.
- */
-XMAX_API xmax_result XMAX_CALL xmax_realtime_set_remote_video_interpolation(
-    xmax_realtime realtime, const xmax_video_interpolation_options* options);
-
-/** Reads the current interpolation state and counters without waiting for inference. */
-XMAX_API xmax_result XMAX_CALL xmax_realtime_get_remote_video_interpolation_status(
-    xmax_realtime realtime, xmax_video_interpolation_status* status);
-
 /**
  * Retains a callback-borrowed or owned packet without copying its media bytes.
  *

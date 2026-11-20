@@ -387,28 +387,6 @@ internal unsafe struct xmax_video_beauty_error_listener
 }
 
 [StructLayout(LayoutKind.Sequential, Pack = 8)]
-internal unsafe struct xmax_video_interpolation_options
-{
-    public uint @struct_size;
-    public byte* @model_directory;
-    public int @device_index;
-    public uint @cpu_threads;
-    public uint @buffer_ms;
-}
-
-[StructLayout(LayoutKind.Sequential, Pack = 8)]
-internal unsafe struct xmax_video_interpolation_status
-{
-    public uint @struct_size;
-    public int @enabled;
-    public ulong @input_frames;
-    public ulong @interpolated_frames;
-    public ulong @skipped_frames;
-    public int @error_code;
-    public fixed byte @error_message[256];
-}
-
-[StructLayout(LayoutKind.Sequential, Pack = 8)]
 internal unsafe struct xmax_camera_stream_options
 {
     public uint @struct_size;

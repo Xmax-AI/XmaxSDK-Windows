@@ -235,28 +235,6 @@ try
         Check(stream.VideoTrack.VideoFormat is { } format && format.Width * format.Height <= model.MaximumInputPixels,
             "Flash external stream respects the pixel limit");
     });
-    await Test("interpolation validates options and resets with the realtime lifecycle", async () =>
-    {
-        using var client = new XmaxClient();
-        await using var manager = client.CreateRealtimeManager();
-        Check(!(await manager.GetRemoteVideoInterpolationStatusAsync()).Enabled, "Interpolation defaults to disabled");
-        await manager.SetRemoteVideoInterpolationAsync(null);
-        await ThrowsAsync<XmaxException>(() => manager.SetRemoteVideoInterpolationAsync(new(DeviceIndex: -2)));
-        await ThrowsAsync<XmaxException>(() => manager.SetRemoteVideoInterpolationAsync(new(CpuThreads: 0)));
-        await ThrowsAsync<XmaxException>(() => manager.SetRemoteVideoInterpolationAsync(new(BufferMilliseconds: 0)));
-        string? model = Environment.GetEnvironmentVariable("XMAX_TEST_INTERPOLATION_MODEL_DIR");
-        if (model is not null)
-        {
-            await manager.SetRemoteVideoInterpolationAsync(new(ModelDirectory: model, DeviceIndex: -1));
-            Check((await manager.GetRemoteVideoInterpolationStatusAsync()).Enabled, "The real RIFE processor initializes");
-            await ThrowsAsync<XmaxException>(() => manager.SetRemoteVideoInterpolationAsync(
-                new(ModelDirectory: Path.Combine(model, "missing"), DeviceIndex: -1)));
-            Check((await manager.GetRemoteVideoInterpolationStatusAsync()).Enabled, "Failed configuration retains the current processor");
-        }
-        Check((await manager.GetStateAsync()).ConnectionState == RealtimeConnectionState.Idle, "Interpolation does not start capture or a session");
-        await manager.CloseAsync();
-        Check(!(await manager.GetRemoteVideoInterpolationStatusAsync()).Enabled, "Full close disables interpolation");
-    });
     await Test("beauty configuration uses the public SDK and validates before native changes", async () =>
     {
         Check(new RealtimeVideoBeautyOptions() == new RealtimeVideoBeautyOptions(0, 0, 0, 0), "All default beauty strengths are zero");
