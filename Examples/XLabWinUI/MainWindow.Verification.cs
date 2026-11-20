@@ -252,15 +252,28 @@ public sealed partial class MainWindow
     private async Task<object> VerifyTransitionAsync(bool active)
     {
         FrameworkElement target = active ? workspace : landing;
-        await Task.Delay(100);
+        var storyboard = Controls.PageEntry.Current(target);
+        storyboard?.Pause();
         bool animations = new Windows.UI.ViewManagement.UISettings().AnimationsEnabled;
-        // A newly revealed page can start composing after the first dispatcher delay.
-        if (animations && target.Opacity == 0) await UntilAsync(() => target.Opacity > 0, 2);
-        double opacity = target.Opacity, offset = ((TranslateTransform)target.RenderTransform).Y;
-        await SaveScreenshotAsync(active ? "transition-generation" : "transition-landing");
-        if (animations) Check(opacity > 0 && opacity < 1 && offset > 0 && offset < 14, $"Page entry is not fading and moving (opacity={opacity}, offset={offset}).");
-        await Task.Delay(500);
-        Check(target.Opacity == 1 && ((TranslateTransform)target.RenderTransform).Y == 0, "Page entry did not settle.");
-        return new { page = active ? "generation" : "landing", sampledOpacity = opacity, sampledOffset = offset, durationMilliseconds = 450, offsetDip = 14, settled = true };
+        Check(!animations || storyboard is not null, "Page entry did not start an animation.");
+        var completed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        void OnCompleted(object? sender, object args) => completed.TrySetResult();
+        if (storyboard is not null) storyboard.Completed += OnCompleted;
+        try
+        {
+            // Sample the animation clock directly; dispatcher delays can outlast the whole transition.
+            storyboard?.SeekAlignedToLastTick(TimeSpan.FromMilliseconds(100));
+            double opacity = target.Opacity, offset = ((TranslateTransform)target.RenderTransform).Y;
+            await SaveScreenshotAsync(active ? "transition-generation" : "transition-landing");
+            if (animations) Check(opacity > 0 && opacity < 1 && offset > 0 && offset < 14, $"Page entry is not fading and moving (opacity={opacity}, offset={offset}).");
+            if (storyboard is not null)
+            {
+                storyboard.Resume();
+                await completed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            }
+            await UntilAsync(() => target.Opacity == 1 && ((TranslateTransform)target.RenderTransform).Y == 0, 2);
+            return new { page = active ? "generation" : "landing", sampledOpacity = opacity, sampledOffset = offset, durationMilliseconds = 450, offsetDip = 14, settled = true };
+        }
+        finally { if (storyboard is not null) storyboard.Completed -= OnCompleted; }
     }
 }

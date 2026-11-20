@@ -8,6 +8,7 @@ namespace XLabWinUI.Controls;
 internal static class PageEntry
 {
     private static readonly Dictionary<FrameworkElement, Storyboard> Running = [];
+    internal static Storyboard? Current(FrameworkElement page) => Running.GetValueOrDefault(page);
     internal static void Reveal(FrameworkElement page)
     {
         if (Running.Remove(page, out var previous)) previous.Stop();
