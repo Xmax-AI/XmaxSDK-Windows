@@ -3,7 +3,7 @@
     <Content Include="$(XmaxNativeDir)/models/**/*" Link="models/%(RecursiveDir)%(Filename)%(Extension)"
              CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Pack="false">
       <Pack Condition="'$(MSBuildProjectName)' == 'XmaxSDK.Net'">true</Pack>
-      <PackagePath Condition="'$(MSBuildProjectName)' == 'XmaxSDK.Net'">contentFiles/any/any/models/%(RecursiveDir)</PackagePath>
+      <PackagePath Condition="'$(MSBuildProjectName)' == 'XmaxSDK.Net'">contentFiles/any/any/models/</PackagePath>
       <PackageCopyToOutput>true</PackageCopyToOutput>
       <PackageFlatten>false</PackageFlatten>
     </Content>
