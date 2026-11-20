@@ -279,6 +279,38 @@ governed by the applicable Xmax service terms.
 
 XmaxSDK is available under the terms of the [MIT License](LICENSE).
 
+## Preview frame interpolation
+
+Two-times result-preview interpolation is available in builds configured with `XMAX_WITH_RIFE=ON`.
+Set `XMAX_RIFE_SOURCE_DIR` to the RIFE checkout identified in
+`Configurations/Release/dependencies.json`, including its ncnn/glslang submodules and RIFE v4.6 models.
+The build verifies the model hashes. Deploy the installed `bin/models/rife-v4.6` directory with the DLL.
+
+```csharp
+await realtime.SetRemoteVideoInterpolationAsync(new RealtimeVideoInterpolationOptions());
+var status = await realtime.GetRemoteVideoInterpolationStatusAsync();
+await realtime.SetRemoteVideoInterpolationAsync(null);
+```
+
+The WinUI X-Lab session toolbar includes a `2×` toggle. Interpolation defaults to disabled and selects
+Vulkan device 0. CPU processing requires an explicit `DeviceIndex: -1`; the demo can select that device
+with `XMAX_INTERPOLATION_DEVICE=-1`. A custom model directory can be supplied through the options or
+the demo's `XMAX_INTERPOLATION_MODEL_DIR` environment variable.
+
+Preview delivery uses a bounded queue and a default 125 ms video buffer. Late intermediate frames are
+skipped while original frames continue. Processing failures disable interpolation and appear in its
+status. This preview buffer adds video delay relative to native audio playback. Remote media callbacks
+retain original audio/video timing and frame cadence for recording.
+
+The Vulkan path uploads owned BGRA input directly, converts and pads it on the GPU, and retains the
+last input tensor for the next frame pair. It packs the midpoint into BGRA on the GPU before one
+readback for the existing CPU preview API. Input caches are cleared on binding changes, discontinuities,
+resolution changes, and scene cuts. The CPU backend remains available with `DeviceIndex: -1`.
+
+To compare transfer reuse, image output, and processing time against the pinned upstream path, run
+`xmax_video_interpolation_tests <model-directory> <device-index>`, or opt into timing with
+`xmax_video_interpolation_tests --benchmark <model-directory> <device-index> 1280 704 30`.
+
 ## Generated result beauty
 
 `IXmaxRealtimeManaging.SetRemoteVideoBeautyAsync(new RealtimeVideoBeautyOptions(Smoothness: 0.5f, Lightening: 0.3f))`
@@ -356,33 +388,57 @@ in parallel with local RTC cleanup; delayed heartbeat failures cannot terminate 
 
 ```csharp
 var localStream = await realtime.CreateLocalCameraStreamAsync(
-    videoFormat: new VideoFormat(1920, 1080, 30),
-    camera: RealtimeCamera.SystemDefault,
+    videoFormat: RealtimeCameraFormat.Resolution1920x1080,
+    captureFormat: (width: 1920, height: 1080, fps: null),
+    camera: RealtimeCamera.Position(CameraPosition.Front),
     microphone: RealtimeMicrophone.SystemDefault,
-    mirror: true
+    rotation: CameraRotation.None,
+    mirror: null,
+    warmupMs: 200
 );
 localView.Track = localStream.VideoTrack;
 ```
 
-The preset overload accepts `RealtimeCameraPreset`. Enumerate inputs with
-`MediaDevices.ListCameraDevicesAsync()` and `MediaDevices.ListMicrophoneDevicesAsync()` before creating
-a controller. Use `RealtimeCamera.Device(id)` to select a specific camera. Camera creation requires a
-native mode that supports the requested frame rate. Omitted microphone selection disables capture;
-`RealtimeMicrophone.Device(id)` selects a Windows recording endpoint. Mirroring applies to local
-preview and published camera video together, preserving the independent generated-result display
-setting. Creation starts no cloud session and returns once native capture starts. You can pass
-the returned stream to connection or generation immediately. Preview readiness requires an attached
-view and the first usable frame. The controller owns capture lifetime. Use
-`StopLocalCameraStreamAsync` after disconnection, or `CloseAsync`, to release it.
-Windows checks microphone privacy and endpoint access when an enabled camera stream is created.
-The SDK captures microphone audio through WASAPI on connection and publishes timestamped PCM
-through the RTC custom audio track. Microphone level callbacks report the local capture level.
-`CreateLocalCameraStreamAsync` replaces camera preparation in ABI v2. Rebuild applications and
-deploy the matching managed SDK and native DLL together; ABI v1 binaries are incompatible.
+Use `videoFormat` for a custom `RealtimeVideoFormat` (including encoder settings), or a `RealtimeCameraFormat` preset through the same `videoFormat` argument. Parameters are direct optional/named arguments, with no options wrapper. Omission
+of `videoFormat` uses the selected model's default target. The target describes the
+shared output after rotation. `captureFormat` independently requests input dimensions and an optional
+frame rate before rotation; the native device chooses a supported mode closest to that preference.
+When omitted, capture dimensions follow the target, swapped for a quarter turn, and capture fps follows
+the target fps. Frames are center-cropped, rotated clockwise by 0/90/180/270 degrees, and mirrored in the
+output orientation. Preview and publication use the same target geometry and nominal frame-rate limit.
+
+Camera omission prefers a front-facing device with system-default fallback. Select an explicit device
+with `RealtimeCamera.Device(id)` or a facing preference with `RealtimeCamera.Position(...)`. An omitted `mirror` mirrors front-facing cameras; a device
+with unknown facing is mirrored when it is the system default. An explicit Boolean overrides this
+choice and is retained across camera switches. Automatic mirroring follows the newly selected device.
+Both overloads expose `videoFormat`, `captureFormat`, `camera`, `microphone`, `rotation`, `mirror`, and
+`warmupMs`, in that order. `captureFormat` is a nullable named tuple `(uint width, uint height, double? fps)`;
+use `fps: null` to follow the target rate. It introduces no public capture-format class. The former five-argument
+signatures have been removed; rebuild callers against the updated SDK. Camera creation has no public
+cancellation token; `CloseAsync`, `StopLocalCameraStreamAsync`, and disposal cancel pending creation.
+
+Microphone omission disables capture. `RealtimeMicrophone.Device(id)` selects a Windows recording
+endpoint. Enumerate devices with `MediaDevices.ListCameraDevicesAsync()` and
+`MediaDevices.ListMicrophoneDevicesAsync()` without opening capture. Windows checks privacy and
+endpoint access during camera creation, while WASAPI microphone capture and RTC audio publication
+start on connection. Microphone level callbacks report the local capture level.
+
+Creation starts no cloud session and returns once native capture starts. Bind the returned video track
+to a view for first-frame readiness; connection may start independently of preview attachment.
+`warmupMs` defaults to zero and must be finite and non-negative. It starts on each connection,
+overlaps microphone/session preparation, and gates RTC publication while preview continues. Cancellation
+ends the wait. Capture preferences, rotation, and warmup survive camera switches and target updates.
+Remote playback initially defaults to zero; camera and external stream creation retain any volume set
+through `SetRemoteVolumeAsync`, including a setting made before creation.
+
+A current local source must be stopped before creating another one. Invalid options do not replace the
+active source. Use `StopLocalCameraStreamAsync` after disconnection, or `CloseAsync`, to release capture.
+The new native entry point is `xmax_realtime_create_local_camera_stream_with_options`; legacy C option
+layouts and entry points are retained. Deploy the matching managed SDK and native DLL together.
 
 The stream's `VideoTrack` exposes its identity, current format, and camera device. Windows reports
 front or back position when it has enclosure metadata for the selected device. Set
-`MinimumBitrateKbps`, `MaximumBitrateKbps`, and `EncoderPreference` on `VideoFormat` to configure
+`Fps`, `MinimumBitrate`, `MaximumBitrate`, and `EncoderPreference` on `RealtimeVideoFormat` to configure
 uplink encoding when creating or updating a camera stream or binding external video.
 
 Typed state and microphone level listeners replay the current value at registration. Video statistics
@@ -393,7 +449,7 @@ serialized background callback.
 ## Media sizing
 
 `CreateMediaService()` returns an `IMediaServicing` instance. Its size resolvers take `MediaSize`
-values in pixels. Camera frame rate and encoder settings belong to `VideoFormat` on stream creation
+values in pixels. Camera frame rate and encoder settings belong to `RealtimeVideoFormat` on stream creation
 and format updates.
 
 ## Media transfers

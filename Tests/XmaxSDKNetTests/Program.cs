@@ -47,6 +47,75 @@ try
             }
             return Task.CompletedTask;
         });
+    // Opt-in hardware check; the normal regression suite never opens a physical capture device.
+    if (Environment.GetEnvironmentVariable("XMAX_TEST_CAMERA_OPTIONS") == "1")
+    {
+        await Test("real camera respects independent capture, rotation, mirror, and retained playback", async () =>
+        {
+            var devices = await MediaDevices.ListCameraDevicesAsync();
+            var selected = devices.FirstOrDefault(item => item.Name.Contains("MacBook", StringComparison.OrdinalIgnoreCase))
+                ?? devices.FirstOrDefault(item => item.IsDefault) ?? devices.First();
+            using var client = new XmaxClient();
+            await using var realtime = client.CreateRealtimeManager(new() { Model = RealtimeModel.X2_1Flash });
+            await realtime.SetRemoteVolumeAsync(.55f);
+            foreach (bool explicitMirror in new[] { true, false })
+            {
+                var stream = await realtime.CreateLocalCameraStreamAsync(
+                    videoFormat: explicitMirror ? RealtimeCameraFormat.Resolution704x1280 : RealtimeCameraFormat.Resolution1280x704,
+                    captureFormat: (1280, 720, 30), camera: RealtimeCamera.Device(selected.Id),
+                    rotation: explicitMirror ? CameraRotation.Clockwise90 : CameraRotation.None,
+                    mirror: explicitMirror ? false : null, warmupMs: 100);
+                await stream.VideoTrack.NotifyPreviewAttachedAsync();
+                var expected = explicitMirror ? new RealtimeVideoFormat(704, 1280) : new RealtimeVideoFormat(1280, 704);
+                var expectedMirror = !explicitMirror && (selected.Position == CameraPosition.Front ||
+                    selected.Position == CameraPosition.Unspecified && selected.IsDefault);
+                int received = 0;
+                long last = -1;
+                var deadline = DateTime.UtcNow.AddSeconds(15);
+                while (received < 3 && DateTime.UtcNow < deadline)
+                {
+                    using var frame = stream.VideoTrack.TryAcquireFrame();
+                    if (frame is not null && frame.TimestampMicroseconds > last)
+                    {
+                        Check(frame.Width == expected.Width && frame.Height == expected.Height, "rotated target dimensions");
+                        Check(frame.Mirrored == expectedMirror, "explicit/automatic mirror state");
+                        last = frame.TimestampMicroseconds; ++received;
+                    }
+                    await Task.Delay(20);
+                }
+                Check(received == 3 && stream.VideoTrack.VideoFormat == expected, "processed camera frames and target metadata");
+                Check(stream.VideoTrack.Device?.Id == selected.Id, "track metadata identifies the selected native camera");
+                Check((await realtime.GetStateAsync()).ConnectionState == RealtimeConnectionState.Ready, "preview attachment and usable frame gate readiness");
+                Check(await realtime.GetRemoteVolumeAsync() == .55f && !await realtime.GetMicrophoneEnabledAsync(), "volume retained and microphone disabled");
+                Console.WriteLine($"Camera {selected.Name}: {expected}, mirror={expectedMirror}, frames={received}");
+                await realtime.CloseAsync();
+            }
+            foreach (string action in new[] { "close", "stop", "dispose" })
+            {
+                var pending = client.CreateRealtimeManager(new() { Model = RealtimeModel.X2_1Flash });
+                try
+                {
+                    var creating = pending.CreateLocalCameraStreamAsync(camera: RealtimeCamera.Device(selected.Id));
+                    Task cleanup = action == "close" ? pending.CloseAsync()
+                        : action == "stop" ? pending.StopLocalCameraStreamAsync() : pending.DisposeAsync().AsTask();
+                    await cleanup.WaitAsync(TimeSpan.FromSeconds(15));
+                    try { await creating.WaitAsync(TimeSpan.FromSeconds(15)); }
+                    catch (OperationCanceledException) { }
+                    catch (ObjectDisposedException) when (action == "dispose") { }
+                    if (action != "dispose")
+                    {
+                        Check((await pending.GetStateAsync()).ConnectionState == RealtimeConnectionState.Idle,
+                            "cleanup leaves pending camera creation idle");
+                        Check(await pending.GetCurrentCameraVideoFormatAsync() is null, "cleanup releases pending capture");
+                    }
+                    Console.WriteLine($"Camera creation interrupted through {action} without a caller token");
+                }
+                finally { await pending.DisposeAsync(); }
+            }
+        });
+        Console.WriteLine($"{passed} opt-in camera checks passed");
+        return 0;
+    }
     await Test("trajectory pointer ends immediately and the trail fades independently", () =>
     {
         var effect = new DefaultTrajectoryEffect();
@@ -85,9 +154,9 @@ try
             "retired types must not remain in the public assembly surface");
         var model = XmaxClient.GetModelInfo();
         Check(model.Identifier == "x2.1", "default model");
-        Check(model.DisplayName == "X2.1" && model.DefaultCameraFormat == new VideoFormat(1920, 1080), "X2.1 defaults to 1920×1080 capture");
-        Check(model.SupportedFormats.SequenceEqual(new[] { new VideoFormat(1920,1080), new VideoFormat(1080,1920),
-            new VideoFormat(1408,1408), new VideoFormat(1152,1536), new VideoFormat(1536,1152) }), "five standard formats");
+        Check(model.DisplayName == "X2.1" && model.DefaultCameraFormat == new RealtimeVideoFormat(1920, 1080), "X2.1 defaults to 1920×1080 capture");
+        Check(model.SupportedFormats.SequenceEqual(new[] { new RealtimeVideoFormat(1920,1080), new RealtimeVideoFormat(1080,1920),
+            new RealtimeVideoFormat(1408,1408), new RealtimeVideoFormat(1152,1536), new RealtimeVideoFormat(1536,1152) }), "five standard formats");
         await ThrowsAsync<ArgumentOutOfRangeException>(() =>
         {
             XmaxClient.GetModelInfo((RealtimeModel)999);
@@ -108,23 +177,85 @@ try
             Check((await realtime.GetStateAsync()).ConnectionState == RealtimeConnectionState.Ready, "independent child");
         }
     });
+    await Test("camera creation options retain playback and reject invalid inputs without replacing media", async () =>
+    {
+        using var client = new XmaxClient();
+        await using var realtime = client.CreateRealtimeManager();
+        await realtime.SetRemoteVolumeAsync(.65f);
+        var source = new ExternalTestSource();
+        var stream = await realtime.CreateExternalVideoStreamAsync(source);
+        Check(await realtime.GetRemoteVolumeAsync() == .65f, "creating local media retains a preconfigured playback volume");
+        Func<Task<RealtimeMediaStream>>[] invalid = [
+            () => realtime.CreateLocalCameraStreamAsync(rotation: (CameraRotation)45),
+            () => realtime.CreateLocalCameraStreamAsync(warmupMs: -1),
+            () => realtime.CreateLocalCameraStreamAsync(warmupMs: double.NaN),
+            () => realtime.CreateLocalCameraStreamAsync(captureFormat: (1920, 0, null)),
+            () => realtime.CreateLocalCameraStreamAsync(captureFormat: (1920, 1080, 0)),
+            () => realtime.CreateLocalCameraStreamAsync(captureFormat: (1920, 1080, double.PositiveInfinity))
+        ];
+        foreach (var create in invalid) await ThrowsAsync<ArgumentOutOfRangeException>(async () => { await create(); });
+        Check(typeof(XmaxClient).Assembly.GetExportedTypes().All(type => type.Name is not
+            ("CreateLocalCameraStreamOptions" or "CameraCaptureFormat" or "VideoFormat" or "RealtimeCameraPreset" or "EncodingPreference")), "camera API uses Web core type names without aliases or an options wrapper");
+        await ThrowsAsync<ArgumentOutOfRangeException>(() => {
+            RealtimeCamera.Position(CameraPosition.Unspecified); return Task.CompletedTask;
+        });
+        await ThrowsAsync<XmaxException>(() => realtime.CreateLocalCameraStreamAsync(
+            videoFormat: new RealtimeVideoFormat(1280, 720), captureFormat: (1920, 1080, 29.97),
+            camera: RealtimeCamera.Position(CameraPosition.Front), mirror: null, warmupMs: 200));
+        Check((await realtime.GetStateAsync()).ConnectionState == RealtimeConnectionState.Ready && source.Sink!.IsRequestingFrames,
+            "camera creation cannot replace active external media");
+        Check(await realtime.GetRemoteVolumeAsync() == .65f, "rejected creation retains playback volume");
+        foreach (var type in new[] { typeof(IXmaxRealtimeManaging), realtime.GetType() })
+        {
+            var methods = type.GetMethods().Where(method => method.Name == "CreateLocalCameraStreamAsync").ToArray();
+            Check(methods.Length == 2 && methods.All(method => method.GetParameters().Length == 7 &&
+                method.GetParameters().Select(parameter => parameter.Name).SequenceEqual(new[] {
+                    "videoFormat", "captureFormat", "camera", "microphone", "rotation", "mirror", "warmupMs" })),
+                "camera creation exposes only the custom-format and preset seven-parameter methods without a cancellation token");
+        }
+        await using var flash = client.CreateRealtimeManager(new() { Model = RealtimeModel.X2_1Flash });
+        await ThrowsAsync<ArgumentException>(() => flash.CreateLocalCameraStreamAsync(
+            videoFormat: RealtimeCameraFormat.Resolution1920x1080));
+    });
     await Test("Flash model uses its own camera and generation formats", async () =>
     {
         var model = XmaxClient.GetModelInfo(RealtimeModel.X2_1Flash);
         Check(model.Identifier == "x2.1-flash" && model.DisplayName == "X2.1 Flash", "Flash model identity");
-        Check(model.DefaultCameraFormat == new VideoFormat(704, 1280), "Flash defaults to 704×1280 capture");
-        Check(model.SupportedFormats.SequenceEqual(new[] { new VideoFormat(704, 1280), new VideoFormat(1280, 704),
-            new VideoFormat(960, 960), new VideoFormat(1024, 768), new VideoFormat(768, 1024) }), "five Flash formats");
+        Check(model.DefaultCameraFormat == new RealtimeVideoFormat(704, 1280), "Flash defaults to 704×1280 capture");
+        Check(model.SupportedFormats.SequenceEqual(new[] { new RealtimeVideoFormat(704, 1280), new RealtimeVideoFormat(1280, 704),
+            new RealtimeVideoFormat(960, 960), new RealtimeVideoFormat(1024, 768), new RealtimeVideoFormat(768, 1024) }), "five Flash formats");
         Check(model.MaximumInputPixels == 960 * 960, "Flash pixel limit");
 
         using var client = new XmaxClient();
         var media = client.CreateMediaService(RealtimeModel.X2_1Flash);
         Check(media.ResolveGenerationSize(new(1920, 1080)) == new MediaSize(1280, 704), "Flash landscape canvas");
         await using var manager = client.CreateRealtimeManager(new() { Model = RealtimeModel.X2_1Flash });
-        await ThrowsAsync<ArgumentException>(() => manager.CreateLocalCameraStreamAsync(RealtimeCameraPreset.Resolution1920x1080));
+        await ThrowsAsync<ArgumentException>(() => manager.CreateLocalCameraStreamAsync(RealtimeCameraFormat.Resolution1920x1080));
         var stream = await manager.CreateExternalVideoStreamAsync(new ExternalTestSource(format: new(1920, 1080)));
         Check(stream.VideoTrack.VideoFormat is { } format && format.Width * format.Height <= model.MaximumInputPixels,
             "Flash external stream respects the pixel limit");
+    });
+    await Test("interpolation validates options and resets with the realtime lifecycle", async () =>
+    {
+        using var client = new XmaxClient();
+        await using var manager = client.CreateRealtimeManager();
+        Check(!(await manager.GetRemoteVideoInterpolationStatusAsync()).Enabled, "Interpolation defaults to disabled");
+        await manager.SetRemoteVideoInterpolationAsync(null);
+        await ThrowsAsync<XmaxException>(() => manager.SetRemoteVideoInterpolationAsync(new(DeviceIndex: -2)));
+        await ThrowsAsync<XmaxException>(() => manager.SetRemoteVideoInterpolationAsync(new(CpuThreads: 0)));
+        await ThrowsAsync<XmaxException>(() => manager.SetRemoteVideoInterpolationAsync(new(BufferMilliseconds: 0)));
+        string? model = Environment.GetEnvironmentVariable("XMAX_TEST_INTERPOLATION_MODEL_DIR");
+        if (model is not null)
+        {
+            await manager.SetRemoteVideoInterpolationAsync(new(ModelDirectory: model, DeviceIndex: -1));
+            Check((await manager.GetRemoteVideoInterpolationStatusAsync()).Enabled, "The real RIFE processor initializes");
+            await ThrowsAsync<XmaxException>(() => manager.SetRemoteVideoInterpolationAsync(
+                new(ModelDirectory: Path.Combine(model, "missing"), DeviceIndex: -1)));
+            Check((await manager.GetRemoteVideoInterpolationStatusAsync()).Enabled, "Failed configuration retains the current processor");
+        }
+        Check((await manager.GetStateAsync()).ConnectionState == RealtimeConnectionState.Idle, "Interpolation does not start capture or a session");
+        await manager.CloseAsync();
+        Check(!(await manager.GetRemoteVideoInterpolationStatusAsync()).Enabled, "Full close disables interpolation");
     });
     await Test("beauty configuration uses the public SDK and validates before native changes", async () =>
     {
@@ -194,7 +325,7 @@ try
         var source = new ExternalTestSource(framesPerSecond: 90);
         var stream = await realtime.CreateExternalVideoStreamAsync(source, new(640, 480, 24));
         var sink = source.Sink ?? throw new Exception("Source did not receive a sink");
-        Check(sink.Format == new VideoFormat(16, 8, 90) && sink.VideoFormat == new VideoFormat(640, 480, 24),
+        Check(sink.Format == new RealtimeVideoFormat(16, 8, 90) && sink.VideoFormat == new RealtimeVideoFormat(640, 480, 24),
             "capture and processing formats");
         Check((await realtime.GetStateAsync()).ConnectionState == RealtimeConnectionState.Ready, "external stream is ready without a frame");
         Check(stream.VideoTrack.TryAcquireFrame() is null, "no frame before the source pushes one");
@@ -287,12 +418,12 @@ try
             if (item.ConnectionState == RealtimeConnectionState.Ready)
                 state.TrySetResult();
         });
-        var encoding = new VideoFormat(1280, 720, 30, 0, 2500, EncodingPreference.MaintainQuality);
+        var encoding = new RealtimeVideoFormat(1280, 720, 30, 0, 2500, RealtimeVideoEncoderPreference.MaintainQuality);
         var original = await realtime.CreateExternalVideoStreamAsync(new ExternalTestSource(), encoding);
         var trackFormat = original.VideoTrack.VideoFormat;
         Check(original.VideoTrack.Id == original.Id && original.VideoTrack.Device is null &&
-            trackFormat?.MinimumBitrateKbps == 0 && trackFormat?.MaximumBitrateKbps == 2500 &&
-            trackFormat?.EncoderPreference == EncodingPreference.MaintainQuality, "track carries applied external encoding");
+            trackFormat?.MinimumBitrate == 0 && trackFormat?.MaximumBitrate == 2500 &&
+            trackFormat?.EncoderPreference == RealtimeVideoEncoderPreference.MaintainQuality, "track carries applied external encoding");
         await state.Task.WaitAsync(TimeSpan.FromSeconds(3));
         await ThrowsAsync<ArgumentException>(() => other.ConnectAsync(original));
         await ThrowsAsync<XmaxException>(() => realtime.ConnectAsync(original));
@@ -554,9 +685,9 @@ try
 catch (Exception error) { Console.Error.WriteLine(error); return 1; }
 
 
-sealed class ExternalTestSource(bool blockStartup = false, uint framesPerSecond = 30, VideoFormat? format = null) : IRealtimeExternalVideoSource
+sealed class ExternalTestSource(bool blockStartup = false, uint framesPerSecond = 30, RealtimeVideoFormat? format = null) : IRealtimeExternalVideoSource
 {
-    public VideoFormat VideoFormat => format ?? new(16, 8, framesPerSecond);
+    public RealtimeVideoFormat VideoFormat => format ?? new(16, 8, framesPerSecond);
     public IRealtimeExternalFrameSink? Sink { get; private set; }
     public int StopCount { get; private set; }
     public SynchronizationContext? StartContext { get; private set; }

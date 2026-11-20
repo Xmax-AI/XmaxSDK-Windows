@@ -17,10 +17,10 @@ public sealed class RealtimeVideoTrack
     private readonly ulong revision;
     private readonly bool cameraPreview;
     private readonly object metadata = new();
-    private VideoFormat? format;
-    private VideoFormat? observedFormat;
+    private RealtimeVideoFormat? format;
+    private RealtimeVideoFormat? observedFormat;
     private CameraDevice? device;
-    internal VideoFormat? InteractionFormat { get; set; }
+    internal RealtimeVideoFormat? InteractionFormat { get; set; }
     private long interactionRevision;
     internal long InteractionRevision => Interlocked.Read(ref interactionRevision);
     internal void ResetInteraction() => Interlocked.Increment(ref interactionRevision);
@@ -42,10 +42,10 @@ public sealed class RealtimeVideoTrack
     public bool IsRemote { get; }
 
     /// <summary>Gets the current input format or the negotiated result format.</summary>
-    public VideoFormat? VideoFormat { get { lock (metadata) return format; } }
+    public RealtimeVideoFormat? VideoFormat { get { lock (metadata) return format; } }
 
     /// <summary>Gets the most recent decoded result format, when available.</summary>
-    public VideoFormat? ObservedVideoFormat { get { lock (metadata) return observedFormat; } }
+    public RealtimeVideoFormat? ObservedVideoFormat { get { lock (metadata) return observedFormat; } }
 
     /// <summary>Gets the selected camera, when the track represents a camera.</summary>
     public CameraDevice? Device { get { lock (metadata) return device; } }
@@ -55,7 +55,7 @@ public sealed class RealtimeVideoTrack
     /// </summary>
     public CameraPosition? Position => Device?.Position;
 
-    internal void UpdateFormat(VideoFormat? value) { lock (metadata) format = value; }
+    internal void UpdateFormat(RealtimeVideoFormat? value) { lock (metadata) format = value; }
     internal void UpdateDevice(CameraDevice? value) { lock (metadata) device = value; }
 
     /// <summary>Acquires the latest owned frame for this track, if one is available.</summary>
@@ -81,10 +81,10 @@ public sealed class RealtimeVideoTrack
         ? owner.CompleteLocalCameraPreviewAsync(revision)
         : Task.CompletedTask;
 
-    internal void ObserveFrame(uint width, uint height, uint? framesPerSecond = null)
+    internal void ObserveFrame(uint width, uint height, uint? fps = null)
     {
         lock (metadata)
-            observedFormat = new(width, height, framesPerSecond ?? observedFormat?.FramesPerSecond ?? 0);
+            observedFormat = new(width, height, fps ?? observedFormat?.Fps ?? 0);
     }
 
     internal void ClearObservedFormat() { lock (metadata) observedFormat = null; }

@@ -1,5 +1,5 @@
 //
-//  RealtimeCameraPreset.hpp
+//  RealtimeCameraFormat.hpp
 //  XmaxSDK
 //
 //  Author: 翁跃庭 (Yueting Weng)
@@ -16,7 +16,7 @@ namespace xmax {
 /**
  * Camera encoding-resolution presets; supported formats depend on the model.
  */
-enum class RealtimeCameraPreset {
+enum class RealtimeCameraFormat {
 
     /**
      * No camera stream or no matching preset.

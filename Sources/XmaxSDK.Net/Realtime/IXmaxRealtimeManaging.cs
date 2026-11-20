@@ -30,21 +30,18 @@ public interface IXmaxRealtimeManaging : IAsyncDisposable
     Task<IReadOnlyList<CameraDevice>> ListCameraDevicesAsync(CancellationToken cancellationToken = default);
     /// <summary>Lists recording endpoints without starting capture or requesting permission.</summary>
     Task<IReadOnlyList<MicrophoneDevice>> ListMicrophoneDevicesAsync(CancellationToken cancellationToken = default);
-    /// <summary>Creates a local camera track without opening a server session. Omitted selections use
-    /// the model default format and system camera, with the microphone disabled.</summary>
+    /// <summary>Creates a camera stream using optional output, input, device, transform, and warmup parameters.</summary>
+    /// <remarks>Omission of camera prefers front-facing; microphone defaults to disabled, mirror is automatic,
+    /// rotation and warmup default to zero. Creation retains playback volume. Bind the video track for readiness.</remarks>
     Task<RealtimeMediaStream> CreateLocalCameraStreamAsync(
-        VideoFormat videoFormat = default, RealtimeCamera? camera = null, RealtimeMicrophone? microphone = null,
-        bool mirror = false, CancellationToken cancellationToken = default);
-    /// <summary>Creates camera media using a resolution preset and its model-defined frame rate.</summary>
-    /// <param name="preset">A camera resolution preset supported by the selected model.</param>
-    /// <param name="camera">The camera selection; null uses the system default.</param>
-    /// <param name="microphone">The initial microphone selection; null disables capture.</param>
-    /// <param name="mirror">Mirrors local preview and publication together.</param>
-    /// <param name="cancellationToken">Cancels preparation and releases local media.</param>
-    /// <returns>The prepared local camera stream.</returns>
+        RealtimeVideoFormat videoFormat = default, (uint width, uint height, double? fps)? captureFormat = null,
+        RealtimeCamera? camera = null, RealtimeMicrophone? microphone = null, CameraRotation rotation = CameraRotation.None,
+        bool? mirror = null, double warmupMs = 0);
+    /// <summary>Creates camera media using a model-supported preset and optional capture parameters.</summary>
     Task<RealtimeMediaStream> CreateLocalCameraStreamAsync(
-        RealtimeCameraPreset preset, RealtimeCamera? camera = null, RealtimeMicrophone? microphone = null,
-        bool mirror = false, CancellationToken cancellationToken = default);
+        RealtimeCameraFormat videoFormat, (uint width, uint height, double? fps)? captureFormat = null,
+        RealtimeCamera? camera = null, RealtimeMicrophone? microphone = null, CameraRotation rotation = CameraRotation.None,
+        bool? mirror = null, double warmupMs = 0);
     /// <summary>Stops local camera capture after disconnection.</summary>
     Task StopLocalCameraStreamAsync();
     /// <summary>
@@ -58,9 +55,9 @@ public interface IXmaxRealtimeManaging : IAsyncDisposable
     /// </remarks>
     Task<RealtimeMediaStream> SwitchCameraAsync(string deviceId);
     /// <summary>Reads the active camera format, or null when no camera is active.</summary>
-    Task<VideoFormat?> GetCurrentCameraVideoFormatAsync();
+    Task<RealtimeVideoFormat?> GetCurrentCameraVideoFormatAsync();
     /// <summary>Reads the resolution preset of the active camera.</summary>
-    Task<RealtimeCameraPreset?> GetCurrentCameraPresetAsync();
+    Task<RealtimeCameraFormat?> GetCurrentCameraFormatAsync();
     /// <summary>
     /// Changes a ready, disconnected camera encoding target while retaining the device and preview binding.
     /// </summary>
@@ -69,13 +66,13 @@ public interface IXmaxRealtimeManaging : IAsyncDisposable
     /// <remarks>
     /// Preparation failure attempts to restore the previous format and reports the original error.
     /// </remarks>
-    Task UpdateCameraFormatAsync(VideoFormat format);
+    Task UpdateCameraFormatAsync(RealtimeVideoFormat format);
     /// <summary>Changes camera dimensions while preserving the current frame rate and encoding options.</summary>
-    Task UpdateCameraFormatAsync(RealtimeCameraPreset preset);
+    Task UpdateCameraFormatAsync(RealtimeCameraFormat preset);
 
     /// <summary>Binds an application-owned source without taking ownership of its capture devices.</summary>
     Task<RealtimeMediaStream> CreateExternalVideoStreamAsync(
-        IRealtimeExternalVideoSource source, VideoFormat? videoFormat = null, CancellationToken cancellationToken = default);
+        IRealtimeExternalVideoSource source, RealtimeVideoFormat? videoFormat = null, CancellationToken cancellationToken = default);
     /// <summary>Stops external frame delivery and clears the local preview after disconnection.</summary>
     /// <returns>A task completing after the source releases its SDK receiver.</returns>
     Task StopExternalVideoStreamAsync();
@@ -111,6 +108,16 @@ public interface IXmaxRealtimeManaging : IAsyncDisposable
     /// Initialization/configuration failures throw here; later frame failures notify the independent listener.
     /// </remarks>
     Task SetRemoteVideoBeautyAsync(RealtimeVideoBeautyOptions? options);
+
+    /// <summary>Configures two-times interpolation for the remote preview; null disables it.</summary>
+    /// <remarks>Requires the optional RIFE backend. Reconnection retains settings and full close clears
+    /// them. Initialization errors throw here. Runtime failures restore original preview delivery and
+    /// appear in GetRemoteVideoInterpolationStatusAsync. Preview buffering adds latency relative to
+    /// native audio. Remote media callbacks retain original video/audio timing for recording.</remarks>
+    Task SetRemoteVideoInterpolationAsync(RealtimeVideoInterpolationOptions? options);
+
+    /// <summary>Reads interpolation counters and recoverable errors without waiting for inference.</summary>
+    Task<RealtimeVideoInterpolationStatus> GetRemoteVideoInterpolationStatusAsync();
     /// <summary>
     /// Reads the applied uplink quality level.
     /// </summary>

@@ -1,5 +1,5 @@
 //
-//  EncodingPreference.cs
+//  RealtimeVideoEncoderPreference.cs
 //  XmaxSDK
 //
 //  Author: 翁跃庭 (Yueting Weng)
@@ -13,21 +13,16 @@ namespace Xmax.SDK;
 /// <summary>
 /// The encoder tradeoff when network or device conditions are constrained.
 /// </summary>
-public enum EncodingPreference
+public enum RealtimeVideoEncoderPreference
 {
-
-    /// <summary>
-    /// Lets the RTC encoder select its adaptation strategy.
-    /// </summary>
-    Automatic,
 
     /// <summary>
     /// Prefers maintaining frame rate.
     /// </summary>
-    MaintainFramerate,
+    MaintainFramerate = 1,
 
     /// <summary>
     /// Prefers maintaining image quality.
     /// </summary>
-    MaintainQuality
+    MaintainQuality = 2
 }

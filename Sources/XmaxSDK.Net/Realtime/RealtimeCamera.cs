@@ -13,12 +13,19 @@ namespace Xmax.SDK;
 /// <summary>Selects the input for a local camera stream.</summary>
 public sealed record RealtimeCamera
 {
-    /// <summary>Uses the system default camera when the stream is created.</summary>
-    public static RealtimeCamera SystemDefault { get; } = new(deviceId: null);
-
     internal string? DeviceId { get; }
+    internal CameraPosition? PreferredPosition { get; }
 
-    private RealtimeCamera(string? deviceId) => DeviceId = deviceId;
+    private RealtimeCamera(string? deviceId, CameraPosition? position = null) { DeviceId = deviceId; PreferredPosition = position; }
+
+    /// <summary>Prefers a front or rear camera, falling back to the system default if unavailable.</summary>
+    /// <param name="position">Front or Back.</param>
+    /// <returns>A selection by facing direction.</returns>
+    public static RealtimeCamera Position(CameraPosition position)
+    {
+        if (position is not (CameraPosition.Front or CameraPosition.Back)) throw new ArgumentOutOfRangeException(nameof(position));
+        return new(null, position);
+    }
 
     /// <summary>Selects a camera by the identifier returned by device enumeration.</summary>
     public static RealtimeCamera Device(string deviceId)

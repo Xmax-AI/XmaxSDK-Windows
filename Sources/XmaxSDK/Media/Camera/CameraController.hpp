@@ -10,6 +10,7 @@
 
 #pragma once
 #include "Foundation/Media/Camera/CameraCapture.hpp"
+#include "Service/Media/CameraStreamSettings.hpp"
 #include <atomic>
 #include <condition_variable>
 #include <deque>
@@ -66,7 +67,8 @@ class CameraController {
         xmax_video_format format,
         CaptureCallbacks output,
         const Cancel& cancel,
-        bool wait_for_first_frame = true
+        bool wait_for_first_frame = true,
+        CameraProcessingOptions processing = {}
     );
 
     /**

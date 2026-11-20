@@ -117,7 +117,7 @@ public partial class MainWindow : Window
                 var info = XmaxClient.GetModelInfo(model);
                 if (ModelPopup.IsOpen || Model.SelectedModel != model || ModelButton.Text != info.DisplayName)
                     throw new InvalidOperationException("Selecting a model must close the menu and update its label.");
-                var expectedFormat = model == RealtimeModel.X2_1Flash ? new VideoFormat(1280, 704) : new VideoFormat(1920, 1080);
+                var expectedFormat = model == RealtimeModel.X2_1Flash ? new RealtimeVideoFormat(1280, 704) : new RealtimeVideoFormat(1920, 1080);
                 if (Model.SelectedFormat != expectedFormat)
                     throw new InvalidOperationException("The camera must use the selected model's widescreen format.");
                 ArrangePage();

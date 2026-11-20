@@ -22,7 +22,7 @@
 #include "RealtimeModel.hpp"
 #include "XmaxEnvironment.hpp"
 #include "RealtimeQualityLevel.hpp"
-#include "RealtimeCameraPreset.hpp"
+#include "RealtimeCameraFormat.hpp"
 #include "XmaxConfiguration.hpp"
 #include "RealtimeConfiguration.hpp"
 #include "error.hpp"

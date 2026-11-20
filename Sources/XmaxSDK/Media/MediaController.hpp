@@ -127,9 +127,12 @@ class MediaController {
         xmax_video_format format,
         std::function<void(Error)> failure,
         const Cancel& cancel,
-        bool wait_for_first_frame = true
+        bool wait_for_first_frame = true,
+        CameraProcessingOptions processing = {}
     ) {
+        validate_camera_processing(processing);
         close();
+        processing_ = processing;
         external_.prepare(format);
         camera_active_ = true;
 
@@ -144,7 +147,8 @@ class MediaController {
                 format,
                 {[this](Frame frame) { external_.push_owned(std::move(frame)); }, std::move(failure)},
                 cancel,
-                wait_for_first_frame
+                wait_for_first_frame,
+                processing_
             );
         } catch (...) {
             close();
@@ -199,6 +203,8 @@ class MediaController {
     bool camera_active() const {
         return camera_active_.load();
     }
+
+    double camera_warmup_ms() const { return camera_active() ? processing_.warmup_ms : 0; }
 
     /**
      * Enumerates camera devices without starting capture.
@@ -260,7 +266,9 @@ class MediaController {
                 device,
                 format,
                 callbacks,
-                cancel
+                cancel,
+                true,
+                processing_
             );
         } catch (...) {
             const auto original = std::current_exception();
@@ -273,7 +281,9 @@ class MediaController {
                         device_,
                         previous,
                         callbacks,
-                        cancel
+                        cancel,
+                        true,
+                        processing_
                     );
                 } catch (...) {
                     close();
@@ -303,5 +313,6 @@ class MediaController {
      * The current camera's device identifier.
      */
     std::string device_;
+    CameraProcessingOptions processing_;
 };
 } // namespace xmax::detail

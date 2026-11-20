@@ -58,6 +58,7 @@ internal sealed partial class XmaxRealtime
             disposingLocalMedia |= disposing;
             ++externalCloseCount;
             _ = CancelExternalStartup();
+            _ = CancelCameraStartup();
         }
     }
 

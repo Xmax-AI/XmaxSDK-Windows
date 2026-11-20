@@ -30,14 +30,14 @@ internal sealed partial class MainViewModel : INotifyPropertyChanged, IAsyncDisp
     private bool busy;
     private string status = "准备就绪 · 摄像头预览不需要 API Key", error = "", metrics = "等待视频统计";
     private CameraDevice? camera;
-    private VideoFormat format;
+    private RealtimeVideoFormat format;
     private string sessionKey = "", sessionCamera = "";
     private RealtimeModel sessionModel;
     private const XmaxEnvironment ServiceEnvironment = XmaxEnvironment.China;
-    private VideoFormat sessionFormat;
+    private RealtimeVideoFormat sessionFormat;
     private RealtimeVideoTrack? local, remote;
     public ObservableCollection<CameraDevice> Cameras { get; } = [];
-    public ObservableCollection<VideoFormat> Formats { get; } = [];
+    public ObservableCollection<RealtimeVideoFormat> Formats { get; } = [];
     public static IReadOnlyList<RealtimeModel> Models { get; } = Array.AsReadOnly(Enum.GetValues<RealtimeModel>());
     internal const double DesktopVideoAspect = 9d / 16;
     private RealtimeModel selectedModel = RealtimeModel.X2_1;
@@ -67,7 +67,7 @@ internal sealed partial class MainViewModel : INotifyPropertyChanged, IAsyncDisp
         get => camera;
         set { camera = value; if (value is not null && !IsPreview) CameraSelectionStore.Save(value.Id); Changed(); Changed(nameof(LocalTitle)); }
     }
-    public VideoFormat SelectedFormat { get => format; set { format = value; Changed(); } }
+    public RealtimeVideoFormat SelectedFormat { get => format; set { format = value; Changed(); } }
     public bool Busy { get => busy; private set { busy = value; Changed(); Changed(nameof(CanEdit)); Changed(nameof(StartLabel)); RefreshCommands(); } }
     public string Status { get => status; private set { status = value; Changed(); } }
     public string Error { get => error; private set { error = value; Changed(); } }
@@ -165,8 +165,7 @@ internal sealed partial class MainViewModel : INotifyPropertyChanged, IAsyncDisp
                 videoFormat: SelectedFormat,
                 camera: RealtimeCamera.Device(SelectedCamera.Id),
                 mirror: true,
-                microphone: Microphone ? RealtimeMicrophone.SystemDefault : RealtimeMicrophone.Disabled,
-                cancellationToken: preparationToken
+                microphone: Microphone ? RealtimeMicrophone.SystemDefault : RealtimeMicrophone.Disabled
             );
             if (current != revision) throw new OperationCanceledException(preparationToken);
             LocalVideo = cameraStream.VideoTrack;
@@ -210,6 +209,7 @@ internal sealed partial class MainViewModel : INotifyPropertyChanged, IAsyncDisp
             if (cancellation is not null) await cancellation.CancelAsync();
             await StopRecordingAsync();
             LocalVideo = RemoteVideo = null;
+            ResetInterpolation();
             Status = previous is null ? "准备就绪" : "正在关闭会话…";
             RefreshCommands();
             try { if (previous is not null) await CloseRealtimeAsync(previous); }

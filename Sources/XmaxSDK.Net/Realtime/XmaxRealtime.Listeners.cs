@@ -174,7 +174,7 @@ internal sealed partial class XmaxRealtime
                 performanceListener.Publish(new(
                     item.Code != 0 ? RealtimePerformanceStatus.Limited : RealtimePerformanceStatus.Recovered,
                     item.Width > 0 && item.Height > 0 && item.FramesPerSecond > 0
-                        ? new VideoFormat((uint)item.Width, (uint)item.Height, (uint)item.FramesPerSecond)
+                        ? new RealtimeVideoFormat((uint)item.Width, (uint)item.Height, (uint)item.FramesPerSecond)
                         : null));
                 break;
             case RealtimeEventType.MicrophoneLevel:

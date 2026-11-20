@@ -6,6 +6,7 @@
 - **Agora Native Windows SDK 4.6.2** — optional RTC and generated-result ClearVision beauty dependency; obtained from the download URL locked in `Configurations/Release/dependencies.json`. Preserve the upstream SDK notices. SDK archive SHA-256: `44d0caabc2b5232b0416df63845d88e45de45681b9d32d99617dbd41ba8e6523`.
 - **Agora ClearVision** — local result beauty runs in the SDK-owned `Xmax.VideoBeautyWorker.exe`, using the same Agora 4.6.2 runtime. Low-level headers are supplied by the build environment and are not vendored. Preserve the upstream SDK and extension redistribution terms and notices.
 - **System platform APIs** — WinHTTP, BCrypt, Media Foundation and GDI on Windows; libcurl, CommonCrypto and AVFoundation for the macOS development build.
+- **RIFE ncnn Vulkan** — optional preview interpolation backend, MIT; source revision and RIFE v4.6 model hashes are in `Configurations/Release/dependencies.json`. Uses the checkout's pinned ncnn (BSD 3-Clause) and glslang dependencies. Builds with `XMAX_WITH_RIFE=ON` install their license texts in `licenses/rife`, `licenses/ncnn`, and `licenses/glslang`.
 
 The Xmax wordmark and preset catalog originate from the user-supplied macOS XmaxSDK project. Reference image URLs remain the same as that project's catalog.
 

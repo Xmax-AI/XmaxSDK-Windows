@@ -10,6 +10,7 @@
 
 #include "Media/Camera/CameraController.hpp"
 #include "Media/Video/VideoFrameScaler.hpp"
+#include "Foundation/Media/FrameConverter.hpp"
 #include "Foundation/Logging/XmaxLogger.hpp"
 
 namespace xmax::detail {
@@ -205,8 +206,14 @@ void CameraController::start(
     xmax_video_format format,
     CaptureCallbacks output,
     const Cancel& cancel,
-    bool wait_for_first_frame
+    bool wait_for_first_frame,
+    CameraProcessingOptions processing
 ) {
+    validate_camera_processing(processing);
+    auto before_rotation = format;
+    if (processing.rotation == 90 || processing.rotation == 270)
+        std::swap(before_rotation.width, before_rotation.height);
+    const auto capture_format = processing.capture_format.value_or(before_rotation);
     stop();
     XmaxLogger::write(
         LogCategory::Media,
@@ -232,26 +239,41 @@ void CameraController::start(
 
     const auto metrics = std::make_shared<CameraMetrics>();
     CaptureCallbacks callbacks;
-    callbacks.frame = [this, output, metrics, format](Frame frame) {
+    callbacks.frame = [this, output, metrics, before_rotation, processing, format](Frame frame) {
         try {
             const bool profiling = XmaxLogger::is_enabled(XMAX_LOG_PERFORMANCE);
             const auto begin = profiling ? Clock::now() : Clock::time_point{};
             const auto width = frame.width, height = frame.height;
-            if (frame.width == format.width && frame.height == format.height) {
+            validate_frame(frame.view());
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                if (failure_) return;
+                // Capture preferences may run faster than the shared output target. Drop surplus
+                // source frames before crop/rotation; allow timestamp rounding at common rates.
+                const auto minimum_step = std::max<int64_t>(1, int64_t(1000000.0 / format.fps) - 500);
+                if (processing.limit_output_rate && last_timestamp_ >= 0 && frame.timestamp_us > last_timestamp_ &&
+                    frame.timestamp_us - last_timestamp_ < minimum_step) return;
+                frame.timestamp_us = std::max(last_timestamp_ + 1, frame.timestamp_us);
+                last_timestamp_ = frame.timestamp_us;
+            }
+            if (frame.width == before_rotation.width && frame.height == before_rotation.height) {
                 validate_frame(frame.view());
             } else {
-                auto scaled = copy_scaled_video_frame(frame.view(), format, false);
+                auto scaled = copy_scaled_video_frame(frame.view(), before_rotation, false);
                 scaled.presentation_mirrored = frame.presentation_mirrored;
                 scaled.color_primaries = frame.color_primaries;
                 scaled.color_transfer = frame.color_transfer;
                 frame = std::move(scaled);
             }
+            if (processing.rotation) {
+                if (frame.format == XMAX_I420)
+                    frame = bgra_frame(frame);
+                frame = rotate_camera_frame(std::move(frame), processing.rotation);
+            }
             {
                 std::lock_guard<std::mutex> lock(mutex_);
                 if (failure_)
                     return;
-                frame.timestamp_us = std::max(last_timestamp_ + 1, frame.timestamp_us);
-                last_timestamp_ = frame.timestamp_us;
             }
 
             const auto validated = profiling ? Clock::now() : Clock::time_point{};
@@ -290,7 +312,7 @@ void CameraController::start(
 
     auto binding = std::make_shared<Recovery>();
     binding->device = device;
-    binding->format = format;
+    binding->format = capture_format;
     binding->failure = output.failure;
     binding->callbacks = std::move(callbacks);
     binding->callbacks.interrupted = [this, weak = std::weak_ptr<Recovery>(binding)] {
@@ -306,7 +328,7 @@ void CameraController::start(
         queue_capture(std::packaged_task<void()>([&, binding] {
             require(!cancel() && !binding->cancelled, XMAX_CANCELLED, "Camera startup cancelled");
             capture_ = factory_();
-            capture_->start(device, format, binding->callbacks, cancel);
+            capture_->start(device, capture_format, binding->callbacks, cancel);
             if (!wait_for_first_frame) {
                 std::lock_guard<std::mutex> lock(mutex_);
                 if (failure_)

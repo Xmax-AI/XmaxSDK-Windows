@@ -187,7 +187,8 @@ class XmaxRealtimeManager {
         bool mirror = false,
         std::string microphone_device = {},
         bool wait_for_preview = false,
-        std::optional<xmax_encoding_config> encoding = {}
+        std::optional<xmax_encoding_config> encoding = {},
+        std::optional<CameraStreamSettings> settings = {}
     );
 
     /** Registers preview attachment so readiness can follow the first usable frame. */
@@ -327,6 +328,12 @@ class XmaxRealtimeManager {
      * Sets the recoverable result-beauty error listener; empty clears it.
      */
     void remote_video_beauty_error_listener(BeautyErrorListener listener);
+
+    /** Configures optional two-times interpolation of the result preview. */
+    void remote_video_interpolation(std::optional<InterpolationOptions> options);
+
+    /** Reads interpolation counters and recoverable processing failures. */
+    xmax_video_interpolation_status remote_video_interpolation_status() const;
 
     /**
      * Replaces the serialized remote audio/video listener, preserving playback and the current listener
@@ -557,6 +564,7 @@ class XmaxRealtimeManager {
     std::atomic<bool> camera_preview_pending_{false};
     bool camera_preview_attached_ = false;
     bool camera_preview_has_frame_ = false;
+    std::optional<CameraStreamSettings> camera_stream_settings_;
 
     /**
      * Whether the external receiver is installed and waiting for source startup to finish.

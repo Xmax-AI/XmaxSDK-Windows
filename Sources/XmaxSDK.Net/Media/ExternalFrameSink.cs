@@ -27,15 +27,15 @@ internal sealed class ExternalFrameSink : IRealtimeExternalFrameSink
     /// <summary>
     /// Gets the exact source format retained at binding, including after the binding becomes inactive.
     /// </summary>
-    public VideoFormat Format { get; }
+    public RealtimeVideoFormat Format { get; }
 
     /// <summary>Gets the resolved preview and publication format.</summary>
-    public VideoFormat VideoFormat { get; }
+    public RealtimeVideoFormat VideoFormat { get; }
 
     internal ExternalFrameSink(
         NativeHandle handle,
-        VideoFormat format,
-        VideoFormat? processingFormat = null
+        RealtimeVideoFormat format,
+        RealtimeVideoFormat? processingFormat = null
     )
     {
         this.handle = handle;

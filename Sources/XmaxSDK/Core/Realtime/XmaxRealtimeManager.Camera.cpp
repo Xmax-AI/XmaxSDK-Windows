@@ -47,8 +47,14 @@ void XmaxRealtimeManager::create_local_camera_stream(
     bool mirror,
     std::string microphone_device,
     bool wait_for_preview,
-    std::optional<xmax_encoding_config> encoding
+    std::optional<xmax_encoding_config> encoding,
+    std::optional<CameraStreamSettings> settings
 ) {
+    if (settings) {
+        validate_camera_processing(*settings);
+        require(settings->position >= XMAX_CAMERA_POSITION_UNSPECIFIED && settings->position <= XMAX_CAMERA_POSITION_BACK,
+            XMAX_INVALID_ARGUMENT, "Invalid camera position preference");
+    }
     lifecycle_.run(
         OperationKind::Media,
         [
@@ -59,7 +65,8 @@ void XmaxRealtimeManager::create_local_camera_stream(
             mirror,
             microphone_device = std::move(microphone_device),
             wait_for_preview,
-            encoding
+            encoding,
+            settings
         ](const Lifecycle::Token& token) {
             require(
                 lifecycle_.state() == XMAX_IDLE || (!wait_for_preview && lifecycle_.state() == XMAX_READY),
@@ -71,29 +78,51 @@ void XmaxRealtimeManager::create_local_camera_stream(
                 EncodingController::validate(*encoding);
             if (microphone)
                 media_.microphone().validate(microphone_device);
+            auto selected_device = device;
+            auto selected_mirror = mirror;
+            if (settings) {
+                const auto devices = media_.devices();
+                require(!devices.empty(), XMAX_MEDIA_ERROR, "No camera is available");
+                auto selected = devices.end();
+                if (!device.empty()) {
+                    selected = std::find_if(devices.begin(), devices.end(), [&](const auto& item) { return item.id == device; });
+                    require(selected != devices.end(), XMAX_MEDIA_ERROR, "The requested camera is unavailable");
+                } else if (settings->position != XMAX_CAMERA_POSITION_UNSPECIFIED) {
+                    selected = std::find_if(devices.begin(), devices.end(), [&](const auto& item) { return item.position == settings->position; });
+                }
+                if (selected == devices.end())
+                    selected = std::find_if(devices.begin(), devices.end(), [](const auto& item) { return item.is_default; });
+                if (selected == devices.end()) selected = devices.begin();
+                selected_device = selected->id;
+                const auto position = selected->position != XMAX_CAMERA_POSITION_UNSPECIFIED ? selected->position
+                    : device.empty() ? settings->position : XMAX_CAMERA_POSITION_UNSPECIFIED;
+                selected_mirror = settings->mirror.value_or(position == XMAX_CAMERA_POSITION_FRONT ||
+                    (position == XMAX_CAMERA_POSITION_UNSPECIFIED && selected->is_default));
+            }
             token.failure_scope(Scope::All);
             errors_.reset();
             change_state(XMAX_PREPARING);
-            stream_.mirror(mirror);
+            stream_.mirror(selected_mirror);
             render_.mirror(
-                mirror,
+                selected_mirror,
                 mirror_.remote_view != 0
             );
-            mirror_.local_preview = mirror_.published_video = mirror ? 1 : 0;
+            mirror_.local_preview = mirror_.published_video = selected_mirror ? 1 : 0;
             bind_local();
             camera_preview_pending_ = wait_for_preview;
             media_.prepare_camera(
-                device,
+                selected_device,
                 resolved,
                 media_failure(media_epoch_),
                 token.cancellation(),
-                !wait_for_preview
+                !wait_for_preview,
+                settings ? static_cast<const CameraProcessingOptions&>(*settings) : CameraProcessingOptions{}
             );
             token.ensure_current();
             if (encoding)
                 stream_.encoding(*encoding);
             media_.microphone().configure(microphone, std::move(microphone_device));
-            stream_.volume(0);
+            camera_stream_settings_ = settings;
             if (!wait_for_preview)
                 complete_state(XMAX_READY, token);
         }
@@ -178,6 +207,15 @@ void XmaxRealtimeManager::switch_camera(
                 XMAX_MEDIA_ERROR,
                 "The requested camera is unavailable"
             );
+            const auto old_mirror = mirror_;
+            if (camera_stream_settings_ && !camera_stream_settings_->mirror) {
+                const auto selected = std::find_if(devices.begin(), devices.end(), [&](const auto& item) { return item.id == device; });
+                const bool mirrored = selected->position == XMAX_CAMERA_POSITION_FRONT ||
+                    (selected->position == XMAX_CAMERA_POSITION_UNSPECIFIED && selected->is_default);
+                stream_.mirror(mirrored);
+                render_.mirror(mirrored, mirror_.remote_view != 0);
+                mirror_.local_preview = mirror_.published_video = mirrored ? 1 : 0;
+            }
             media_.stop();
             render_.unbind(epoch);
             bind_local(true);
@@ -199,6 +237,9 @@ void XmaxRealtimeManager::switch_camera(
                 );
                 token.ensure_current();
             } catch (...) {
+                stream_.mirror(old_mirror.published_video != 0);
+                render_.mirror(old_mirror.local_preview != 0, old_mirror.remote_view != 0);
+                mirror_ = old_mirror;
                 if (!media_.camera_active())
                     token.failure_scope(Scope::All);
                 else if (state == XMAX_CONNECTED && !cancel())

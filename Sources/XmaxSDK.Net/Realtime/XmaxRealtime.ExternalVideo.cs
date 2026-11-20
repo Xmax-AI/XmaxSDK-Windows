@@ -26,7 +26,7 @@ internal sealed partial class XmaxRealtime
     /// </remarks>
     public async Task<RealtimeMediaStream> CreateExternalVideoStreamAsync(
         IRealtimeExternalVideoSource source,
-        VideoFormat? videoFormat = null,
+        RealtimeVideoFormat? videoFormat = null,
         CancellationToken cancellationToken = default
     )
     {
@@ -113,8 +113,8 @@ internal sealed partial class XmaxRealtime
 
     private static unsafe ExternalFrameSink BindExternalStream(
         nint realtime,
-        VideoFormat sourceFormat,
-        VideoFormat? processingFormat,
+        RealtimeVideoFormat sourceFormat,
+        RealtimeVideoFormat? processingFormat,
         bool hasAudio
     )
     {
@@ -136,6 +136,6 @@ internal sealed partial class XmaxRealtime
             &sink,
             &encoding
         ));
-        return new(new(sink, HandleKind.ExternalSink), sourceFormat, VideoFormat.From(resolved).WithEncoding(encoding));
+        return new(new(sink, HandleKind.ExternalSink), sourceFormat, RealtimeVideoFormat.From(resolved).WithEncoding(encoding));
     }
 }

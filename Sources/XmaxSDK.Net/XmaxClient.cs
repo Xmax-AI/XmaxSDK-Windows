@@ -72,11 +72,11 @@ public sealed partial class XmaxClient : IDisposable
         var info = new xmax_model_info { struct_size = (uint)sizeof(xmax_model_info) };
         NativeError.Check(NativeMethods.xmax_model_get_info(name.Pointer, &info));
         xmax_video_format* formats = &info.supported_formats_0;
-        var values = new VideoFormat[checked((int)info.format_count)];
+        var values = new RealtimeVideoFormat[checked((int)info.format_count)];
         if (values.Length > 5) throw new NotSupportedException("Invalid model format count.");
-        for (int i = 0; i < values.Length; ++i) values[i] = VideoFormat.From(formats[i]);
+        for (int i = 0; i < values.Length; ++i) values[i] = RealtimeVideoFormat.From(formats[i]);
         return new(NativeError.Text(info.identifier), NativeError.Text(info.display_name), values,
-            VideoFormat.From(info.default_camera_format), info.minimum_input_pixels, info.maximum_input_pixels, info.input_size_alignment);
+            RealtimeVideoFormat.From(info.default_camera_format), info.minimum_input_pixels, info.maximum_input_pixels, info.input_size_alignment);
     }
 
     /// <summary>Creates an independent realtime controller and captures the current UI context.</summary>

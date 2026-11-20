@@ -1145,6 +1145,45 @@ xmax_result XMAX_CALL xmax_realtime_create_local_camera_stream_with_encoding(
     return create_local_camera_stream(realtime, options, true, encoding);
 }
 
+xmax_result XMAX_CALL xmax_realtime_create_local_camera_stream_with_options(
+    xmax_realtime realtime, const xmax_camera_stream_options* options
+) {
+    return protect(__func__, [&] {
+        handle(realtime);
+        sized(options);
+        require(options->mirror >= -1 && options->mirror <= 1, XMAX_INVALID_ARGUMENT, "Invalid camera mirror override");
+        require(options->rotation >= 0, XMAX_INVALID_ARGUMENT, "Invalid camera rotation");
+        require(options->microphone >= XMAX_MICROPHONE_DISABLED && options->microphone <= XMAX_MICROPHONE_DEVICE,
+            XMAX_INVALID_ARGUMENT, "Invalid microphone selection");
+        const std::string microphone = options->microphone_device_id ? options->microphone_device_id : "";
+        require(options->microphone == XMAX_MICROPHONE_DEVICE ? !microphone.empty() : microphone.empty(),
+            XMAX_INVALID_ARGUMENT, "Microphone endpoint must match its selection kind");
+        if (options->device_id)
+            require(*options->device_id != '\0', XMAX_INVALID_ARGUMENT, "Camera device ID must not be empty");
+        auto format = options->video_format;
+        if (!format.width && !format.height && !format.fps)
+            format = realtime->session->model_info().default_camera_format;
+        CameraStreamSettings settings;
+        settings.position = static_cast<xmax_camera_position>(options->camera_position);
+        settings.rotation = static_cast<unsigned>(options->rotation);
+        settings.warmup_ms = options->warmup_ms;
+        if (options->mirror != -1) settings.mirror = options->mirror != 0;
+        require(std::isfinite(options->capture_fps) && options->capture_fps >= 0 && options->capture_fps <= INT32_MAX,
+            XMAX_INVALID_ARGUMENT, "Invalid camera capture frame rate");
+        if (options->capture_width || options->capture_height) {
+            const auto fps = options->capture_fps == 0 ? format.fps :
+                static_cast<uint32_t>(std::max(1.0, std::round(options->capture_fps)));
+            settings.capture_format = xmax_video_format{options->capture_width, options->capture_height, fps};
+        } else {
+            require(options->capture_fps == 0, XMAX_INVALID_ARGUMENT, "Capture fps requires capture dimensions");
+        }
+        std::optional<xmax_encoding_config> encoding;
+        if (options->encoding.struct_size) { sized(&options->encoding); encoding = options->encoding; }
+        realtime->session->create_local_camera_stream(options->device_id ? options->device_id : "", format,
+            options->microphone != XMAX_MICROPHONE_DISABLED, false, microphone, true, encoding, settings);
+    });
+}
+
 /**
  * Updates a camera binding and its encoder overrides.
  *
@@ -3011,6 +3050,35 @@ xmax_result XMAX_CALL xmax_realtime_set_remote_video_beauty_error_listener(
             context->listener.on_error(context->listener.user_data, &info);
         });
         context->adopted = true;
+    });
+}
+
+/** Copies interpolation options before scheduling initialization.
+ * @see xmax_realtime_set_remote_video_interpolation in xmax.h for the public contract.
+ */
+xmax_result XMAX_CALL xmax_realtime_set_remote_video_interpolation(
+    xmax_realtime realtime, const xmax_video_interpolation_options* options) {
+    return protect(__func__, [&] {
+        handle(realtime);
+        std::optional<InterpolationOptions> value;
+        if (options) {
+            sized(options);
+            value = InterpolationOptions{options->model_directory ? options->model_directory : "",
+                options->device_index, options->cpu_threads, options->buffer_ms};
+        }
+        realtime->session->remote_video_interpolation(std::move(value));
+    });
+}
+
+/** Returns preview interpolation counters independently of inference.
+ * @see xmax_realtime_get_remote_video_interpolation_status in xmax.h for the public contract.
+ */
+xmax_result XMAX_CALL xmax_realtime_get_remote_video_interpolation_status(
+    xmax_realtime realtime, xmax_video_interpolation_status* status) {
+    return protect(__func__, [&] {
+        handle(realtime);
+        sized(status);
+        *status = realtime->session->remote_video_interpolation_status();
     });
 }
 

@@ -214,7 +214,6 @@ uint64_t XmaxRealtimeManager::prepare(
                 stream_.mirror(false);
                 render_.mirror(false, mirror_.remote_view != 0);
                 mirror_.local_preview = mirror_.published_video = 0;
-                stream_.volume(0);
             }
             bind_local();
             media_.prepare_external(
@@ -316,6 +315,7 @@ void XmaxRealtimeManager::unbind_local() {
     std::lock_guard<std::mutex> lock(media_binding_mutex_);
     external_start_pending_ = false;
     camera_preview_pending_ = false;
+    camera_stream_settings_.reset();
     ++local_stream_id_;
     render_.unbind_local(++media_epoch_);
 }
@@ -481,6 +481,9 @@ void XmaxRealtimeManager::connect_impl(
     camera_preview_pending_ = false;
     change_state(XMAX_CONNECTING);
 
+    const auto warmup_deadline = Clock::now() + std::chrono::duration_cast<Clock::duration>(
+        std::chrono::duration<double, std::milli>(media_.camera_warmup_ms()));
+
     const bool capture_microphone = media_.external().allows_microphone() &&
                                     (microphone || media_.microphone().enabled());
     if (capture_microphone) {
@@ -562,6 +565,12 @@ void XmaxRealtimeManager::connect_impl(
             [this, epoch] { return lifecycle_.epoch() == epoch; }
         );
     };
+    // Preview remains live while warmup overlaps microphone/session preparation. No RTC publication
+    // can start before the barrier; cancellation is checked throughout the wait.
+    while (Clock::now() < warmup_deadline) {
+        require(!cancel(), XMAX_CANCELLED, "Camera warmup cancelled");
+        std::this_thread::sleep_until(std::min(warmup_deadline, Clock::now() + std::chrono::milliseconds(5)));
+    }
     connection_.join(
         stream_,
         media_.external().format(),
@@ -825,6 +834,7 @@ Lifecycle::CleanupResult XmaxRealtimeManager::cleanup(
     }
 
     if (close) {
+        render_.interpolation(std::nullopt);
         render_.close_beauty();
         media_.close();
         unbind_local();
@@ -1149,6 +1159,15 @@ void XmaxRealtimeManager::emit_timing(
 } // namespace xmax::detail
 
 namespace xmax::detail {
+void XmaxRealtimeManager::remote_video_interpolation(std::optional<InterpolationOptions> options) {
+    if (options) validate_interpolation(*options);
+    lifecycle_.sync([this, options = std::move(options)] { render_.interpolation(options); });
+}
+// Status reads use the preview pipeline mutex and never wait for GPU inference.
+xmax_video_interpolation_status XmaxRealtimeManager::remote_video_interpolation_status() const {
+    return render_.interpolation_status();
+}
+
 void XmaxRealtimeManager::remote_video_beauty(std::optional<BeautyOptions> options) {
     if (options) validate_beauty(*options);
     lifecycle_.sync([this, options] { render_.beauty(options); });

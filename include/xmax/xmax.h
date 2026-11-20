@@ -2673,8 +2673,7 @@ xmax_realtime_push_video_frame(
  * @return XMAX_OK on success, or a negative error code on failure. Use xmax_last_error for details.
  *
  * @note Independent of connection and generation operations. The setting is retained before result-user
- * audio is available and applied before audio subscription starts. Set after preparing the local stream
- * to override its initial playback volume.
+ * audio is available and applied before audio subscription starts. Creating local media retains this setting.
  */
 XMAX_API xmax_result XMAX_CALL xmax_realtime_set_remote_volume(
     xmax_realtime realtime,
@@ -3326,6 +3325,55 @@ XMAX_API xmax_result XMAX_CALL xmax_realtime_set_remote_video_beauty(
 XMAX_API xmax_result XMAX_CALL xmax_realtime_set_remote_video_beauty_error_listener(
     xmax_realtime realtime, const xmax_video_beauty_error_listener* listener);
 
+/** Optional two-times interpolation for the result video preview. Initialize every field.
+ * Model files must be RIFE v4.6 flownet.param/flownet.bin. A NULL directory uses
+ * models/rife-v4.6 beside XmaxSDK. Device -1 explicitly selects CPU; nonnegative values select Vulkan.
+ */
+typedef struct xmax_video_interpolation_options {
+    /** Initialize with sizeof(xmax_video_interpolation_options). */
+    uint32_t struct_size;
+    /** UTF-8 model directory, copied during configuration; NULL selects the bundled model. */
+    const char* model_directory;
+    /** Vulkan device index, or -1 for explicit CPU processing. */
+    int32_t device_index;
+    /** CPU worker count in [1, 32]. */
+    uint32_t cpu_threads;
+    /** Video preview buffering in milliseconds, in [50, 500]. */
+    uint32_t buffer_ms;
+} xmax_video_interpolation_options;
+
+/** Snapshot of interpolation processing for the current configuration. */
+typedef struct xmax_video_interpolation_status {
+    /** Initialize with sizeof(xmax_video_interpolation_status). */
+    uint32_t struct_size;
+    /** One when configured and available; zero after disabling or a processing failure. */
+    int32_t enabled;
+    /** Original frames admitted while enabled. */
+    uint64_t input_frames;
+    /** Intermediate frames delivered to the preview mailbox. */
+    uint64_t interpolated_frames;
+    /** Intermediate frames skipped because of deadlines, discontinuities, or queue pressure. */
+    uint64_t skipped_frames;
+    /** Processing failure code, or XMAX_OK. */
+    xmax_result error_code;
+    /** UTF-8 processing failure text, terminated with NUL. */
+    char error_message[256];
+} xmax_video_interpolation_status;
+
+/** Configures two-times interpolation for the remote video preview; NULL disables it.
+ * Default is disabled. Use a worker thread because model initialization can block. Reconnection retains
+ * settings; full close releases the processor. Initialization errors return here. Later failures restore
+ * original preview frames and appear in xmax_realtime_get_remote_video_interpolation_status.
+ * Preview buffering adds latency relative to native audio playback. Remote media callbacks retain the
+ * original video/audio timestamps and frame cadence for recording.
+ */
+XMAX_API xmax_result XMAX_CALL xmax_realtime_set_remote_video_interpolation(
+    xmax_realtime realtime, const xmax_video_interpolation_options* options);
+
+/** Reads the current interpolation state and counters without waiting for inference. */
+XMAX_API xmax_result XMAX_CALL xmax_realtime_get_remote_video_interpolation_status(
+    xmax_realtime realtime, xmax_video_interpolation_status* status);
+
 /**
  * Retains a callback-borrowed or owned packet without copying its media bytes.
  *
@@ -3683,6 +3731,48 @@ XMAX_API xmax_result XMAX_CALL xmax_realtime_get_video_statistics(
     int32_t direction,
     xmax_video_statistics* statistics
 );
+
+/** Camera options matching the Web creation contract. Legacy option layouts remain unchanged. */
+typedef struct xmax_camera_stream_options {
+    /** Initialize with sizeof(xmax_camera_stream_options). */
+    uint32_t struct_size;
+    /** Optional UTF-8 device ID. Otherwise select by camera_position. */
+    const char* device_id;
+    /** Front/back preference, or unspecified for the system default. */
+    int32_t camera_position;
+    /** Output dimensions after rotation; all zeros uses the model default. */
+    xmax_video_format video_format;
+    /** Preferred unrotated capture dimensions; both zeros omit the preference. */
+    uint32_t capture_width;
+    /** Preferred unrotated capture height. */
+    uint32_t capture_height;
+    /** Preferred capture fps; zero inherits the target fps. Native capture chooses a supported rate. */
+    double capture_fps;
+    /** Clockwise rotation: 0, 90, 180, or 270. */
+    int32_t rotation;
+    /** -1 selects automatic front/default-device mirroring; 0/1 is an explicit override. */
+    int32_t mirror;
+    /** One of xmax_microphone_kind, disabled by default. */
+    int32_t microphone;
+    /** Recording endpoint ID required only for device selection. */
+    const char* microphone_device_id;
+    /** Finite non-negative extra camera warmup at connection time, before publication. */
+    double warmup_ms;
+    /** Optional encoder overrides; set struct_size to zero for defaults. */
+    xmax_encoding_config encoding;
+} xmax_camera_stream_options;
+
+/**
+ * Starts camera capture without a cloud session. Bind the returned local track to a preview for
+ * first-frame readiness. Capture preferences are independent of the model-sized output; pixels are
+ * center-cropped, rotated, then mirrored in output orientation. Remote playback volume is retained.
+ *
+ * @param realtime The realtime controller.
+ * @param options Sized options; use front preference and mirror = -1 for Web defaults.
+ * @return XMAX_OK, or a negative result without replacing active local media for invalid arguments.
+ */
+XMAX_API xmax_result XMAX_CALL xmax_realtime_create_local_camera_stream_with_options(
+    xmax_realtime realtime, const xmax_camera_stream_options* options);
 
 #ifdef __cplusplus
 }

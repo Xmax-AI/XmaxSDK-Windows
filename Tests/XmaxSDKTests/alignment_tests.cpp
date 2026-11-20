@@ -444,7 +444,7 @@ static void public_configuration() {
     auto overseas = client.create_realtime(xmax::RealtimeConfiguration{xmax::RealtimeModel::x2_1});
     overseas.prepare({1280, 720, 30});
     CHECK(overseas.state().connection_state == xmax::realtime_connection_state::ready);
-    CHECK(realtime.camera_preset() == xmax::RealtimeCameraPreset::none);
+    CHECK(realtime.camera_preset() == xmax::RealtimeCameraFormat::none);
     realtime.prepare({1280, 720, 30});
     const auto state = realtime.state();
     CHECK(state.connection_state == xmax::realtime_connection_state::ready && !state.reason);

@@ -16,10 +16,10 @@ namespace Xmax.SDK;
 public interface IRealtimeExternalFrameSink
 {
     /// <summary>Gets the dimensions and rate required of the source frames.</summary>
-    VideoFormat Format { get; }
+    RealtimeVideoFormat Format { get; }
 
     /// <summary>Gets the processed preview and publication format.</summary>
-    VideoFormat VideoFormat { get; }
+    RealtimeVideoFormat VideoFormat { get; }
 
     /// <summary>Gets whether this attachment still accepts preview and publication frames.</summary>
     bool IsRequestingFrames { get; }

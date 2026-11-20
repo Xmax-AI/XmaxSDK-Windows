@@ -46,7 +46,7 @@ public static class MediaDevices
         return ReadCameraList(value);
     }
 
-    private static unsafe IReadOnlyList<CameraDevice> ReadCameraList(nint value)
+    internal static unsafe IReadOnlyList<CameraDevice> ReadCameraList(nint value)
     {
         using var list = new NativeHandle(value, HandleKind.CameraList);
         nuint count = NativeMethods.xmax_camera_list_count(value);

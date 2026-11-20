@@ -11,6 +11,7 @@
 #include "Foundation/Media/Camera/CameraPositions.hpp"
 #include "Foundation/Logging/XmaxLogger.hpp"
 #include "Foundation/Media/Camera/CameraCapture.hpp"
+#include "Foundation/Media/Camera/CameraCaptureFormat.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -45,10 +46,8 @@ bool request_capture_rate(IMFMediaType* type, UINT32 fps) {
     const auto minimum = media_type_rate(type, MF_MT_FRAME_RATE_RANGE_MIN);
     const auto maximum = media_type_rate(type, MF_MT_FRAME_RATE_RANGE_MAX);
     if (minimum <= 0 || maximum < minimum)
-        return false;
+        return nominal > 0;
     const auto supported = std::clamp(double(fps), minimum, maximum);
-    if (std::abs(supported - fps) > camera_rate_tolerance)
-        return false;
     if (supported == fps)
         return SUCCEEDED(MFSetAttributeRatio(type, MF_MT_FRAME_RATE, fps, 1));
 
@@ -1015,8 +1014,7 @@ class MfCamera final : public CameraCapture {
 
         struct CaptureMode {
             Com<IMFMediaType> type;
-            bool wide;
-            uint64_t area;
+            double distance;
         };
         std::vector<CaptureMode> modes;
         for (DWORD i = 0;; ++i) {
@@ -1029,15 +1027,17 @@ class MfCamera final : public CameraCapture {
                 width < 2 || height < 2 || width % 2 || height % 2)
                 continue;
 
-            const auto long_side = std::max(width, height);
-            const auto short_side = std::min(width, height);
-            if (long_side > 1920 || short_side > 1440 || !request_capture_rate(type.get(), format.fps))
+            if (width > 8192 || height > 8192 || !request_capture_rate(type.get(), format.fps))
                 continue;
-
-            modes.push_back({std::move(type), long_side * 9 == short_side * 16, uint64_t(width) * height});
+            const auto rate = media_type_rate(type.get(), MF_MT_FRAME_RATE);
+            if (rate <= 0) continue;
+            const auto rotation = MFGetAttributeUINT32(type.get(), MF_MT_VIDEO_ROTATION, MFVideoRotationFormat_0);
+            const auto quarter = rotation == MFVideoRotationFormat_90 || rotation == MFVideoRotationFormat_270;
+            const auto distance = camera_capture_distance(quarter ? height : width, quarter ? width : height, rate, format);
+            modes.push_back({std::move(type), distance});
         }
         std::stable_sort(modes.begin(), modes.end(), [](const auto& left, const auto& right) {
-            return left.wide != right.wide ? left.wide : left.area > right.area;
+            return left.distance < right.distance;
         });
 
         bool configured = false;
@@ -1054,14 +1054,14 @@ class MfCamera final : public CameraCapture {
             checked(state_->reader->GetCurrentMediaType(MF_SOURCE_READER_FIRST_VIDEO_STREAM, active.put()),
                     "Read selected camera capture format");
             const auto active_rate = media_type_rate(active.get(), MF_MT_FRAME_RATE);
-            if (std::abs(active_rate - format.fps) > camera_rate_tolerance)
+            if (active_rate <= 0)
                 continue;
 
             state_->native_rotation = MFGetAttributeUINT32(mode.type.get(), MF_MT_VIDEO_ROTATION, MFVideoRotationFormat_0);
             configured = true;
             break;
         }
-        require(configured, XMAX_MEDIA_ERROR, "The camera does not support a compatible format at the requested frame rate");
+        require(configured, XMAX_MEDIA_ERROR, "The camera does not support a compatible capture format");
 
         Com<IMFMediaType> output;
         checked(MFCreateMediaType(output.put()), "Create camera output format");

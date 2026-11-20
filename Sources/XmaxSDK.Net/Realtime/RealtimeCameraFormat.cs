@@ -1,5 +1,5 @@
 //
-//  RealtimeCameraPreset.cs
+//  RealtimeCameraFormat.cs
 //  XmaxSDK
 //
 //  Author: 翁跃庭 (Yueting Weng)
@@ -11,7 +11,7 @@
 namespace Xmax.SDK;
 
 /// <summary>Camera encoding resolution presets. Supported presets depend on the model.</summary>
-public enum RealtimeCameraPreset
+public enum RealtimeCameraFormat
 {
     /// <summary>Landscape 16:9, 1920 by 1080 pixels.</summary>
     Resolution1920x1080,

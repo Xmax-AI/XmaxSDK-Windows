@@ -19,7 +19,7 @@ namespace Xmax.SDK;
 public interface IRealtimeExternalVideoSource
 {
     /// <summary>Gets the dimensions and frame rate of the submitted video.</summary>
-    VideoFormat VideoFormat { get; }
+    RealtimeVideoFormat VideoFormat { get; }
 
     /// <summary>Gets whether the source supplies PCM on the video clock.</summary>
     bool HasAudio => false;

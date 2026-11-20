@@ -9,8 +9,11 @@
 //
 
 #include "Foundation/Media/Camera/CameraCapture.hpp"
+#include "Foundation/Media/Camera/CameraCaptureFormat.hpp"
 #include <AVFoundation/AVFoundation.h>
 #include <CoreVideo/CoreVideo.h>
+#include <algorithm>
+#include <limits>
 #include <cstring>
 #include <mutex>
 
@@ -314,10 +317,6 @@ class AppleCamera final : public CameraCapture {
             session_ = [[AVCaptureSession alloc] init];
             [session_ beginConfiguration];
 
-            if ([session_ canSetSessionPreset:AVCaptureSessionPreset1920x1080])
-                session_.sessionPreset = AVCaptureSessionPreset1920x1080;
-            else if ([session_ canSetSessionPreset:AVCaptureSessionPreset1280x720])
-                session_.sessionPreset = AVCaptureSessionPreset1280x720;
 
             require(
                 [session_ canAddInput:input],
@@ -344,21 +343,28 @@ class AppleCamera final : public CameraCapture {
                 "Cannot attach camera output"
             );
             [session_ addOutput:output_];
-            [session_ commitConfiguration];
 
             if ([selected lockForConfiguration:&error]) {
-                const auto target = CMTimeMake(
-                    1,
-                    int32_t(format.fps)
-                );
-                for (AVFrameRateRange* range in selected.activeFormat.videoSupportedFrameRateRanges)
-                    if (format.fps >= range.minFrameRate && format.fps <= range.maxFrameRate) {
-                        selected.activeVideoMinFrameDuration = target;
-                        selected.activeVideoMaxFrameDuration = target;
-                        break;
+                AVCaptureDeviceFormat* best = nil;
+                double best_rate = 0, distance = std::numeric_limits<double>::infinity();
+                for (AVCaptureDeviceFormat* candidate in selected.formats) {
+                    const auto size = CMVideoFormatDescriptionGetDimensions(candidate.formatDescription);
+                    if (size.width < 2 || size.height < 2 || size.width > 8192 || size.height > 8192) continue;
+                    for (AVFrameRateRange* range in candidate.videoSupportedFrameRateRanges) {
+                        const auto rate = std::clamp(double(format.fps), range.minFrameRate, range.maxFrameRate);
+                        const auto score = camera_capture_distance(size.width, size.height, rate, format);
+                        if (score < distance) { distance = score; best = candidate; best_rate = rate; }
                     }
+                }
+                if (best) {
+                    selected.activeFormat = best;
+                    const auto duration = CMTimeMakeWithSeconds(1 / best_rate, 1000000000);
+                    selected.activeVideoMinFrameDuration = duration;
+                    selected.activeVideoMaxFrameDuration = duration;
+                }
                 [selected unlockForConfiguration];
             }
+            [session_ commitConfiguration];
 
             require(
                 !cancel(),

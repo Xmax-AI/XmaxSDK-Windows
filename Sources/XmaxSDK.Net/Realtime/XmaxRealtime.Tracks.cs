@@ -59,13 +59,13 @@ internal sealed partial class XmaxRealtime
         }
     }
 
-    private static unsafe VideoFormat? ReadResultTrackFormat(nint value, ulong revision)
+    private static unsafe RealtimeVideoFormat? ReadResultTrackFormat(nint value, ulong revision)
     {
         xmax_video_format format;
         var encoding = new xmax_encoding_config { struct_size = (uint)sizeof(xmax_encoding_config) };
         int result = NativeMethods.xmax_realtime_get_video_track_info(value, 0, revision, &format, &encoding, null);
         NativeError.Check(result);
-        return result == 0 ? VideoFormat.From(format).WithEncoding(encoding) : null;
+        return result == 0 ? RealtimeVideoFormat.From(format).WithEncoding(encoding) : null;
     }
 
     private void RefreshResultTrackFormat(nint value)
@@ -85,10 +85,10 @@ internal sealed partial class XmaxRealtime
         {
             try
             {
-                var devices = MediaDevices.ReadCameraSnapshot();
-                device = string.IsNullOrEmpty(cameraDeviceId)
-                    ? devices.FirstOrDefault(item => item.IsDefault) ?? devices.FirstOrDefault()
-                    : devices.FirstOrDefault(item => item.Id == cameraDeviceId);
+                xmax_video_format cameraFormat;
+                nint cameras = 0;
+                NativeError.Check(NativeMethods.xmax_realtime_get_video_track_info(value, 1, revision, &cameraFormat, null, &cameras));
+                if (cameras != 0) device = MediaDevices.ReadCameraList(cameras).FirstOrDefault();
             }
             catch (XmaxException) { /* Metadata discovery must not invalidate prepared capture. */ }
         }
@@ -103,11 +103,11 @@ internal sealed partial class XmaxRealtime
         }
     }
 
-    private static unsafe VideoFormat? ReadLocalFormat(nint value)
+    private static unsafe RealtimeVideoFormat? ReadLocalFormat(nint value)
     {
         xmax_video_format format;
         NativeError.Check(NativeMethods.xmax_realtime_get_format(value, &format));
-        return format.width == 0 ? null : VideoFormat.From(format).WithEncoding(ReadEncoding(value));
+        return format.width == 0 ? null : RealtimeVideoFormat.From(format).WithEncoding(ReadEncoding(value));
     }
 
     private static unsafe xmax_encoding_config ReadEncoding(nint value)

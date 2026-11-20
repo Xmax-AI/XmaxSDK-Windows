@@ -69,7 +69,7 @@ public sealed partial class MainWindow
         internal const int Height = 320;
         internal const int Stride = Width * 4;
         internal IRealtimeExternalFrameSink? Sink { get; private set; }
-        public VideoFormat VideoFormat => new(Width, Height);
+        public RealtimeVideoFormat VideoFormat => new(Width, Height);
 
         public Task StartAsync(IRealtimeExternalFrameSink sink, CancellationToken cancellationToken)
         {

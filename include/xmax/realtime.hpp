@@ -17,7 +17,7 @@
 #include "external_frame_sink.hpp"
 #include <functional>
 #include <memory>
-#include "RealtimeCameraPreset.hpp"
+#include "RealtimeCameraFormat.hpp"
 #include "realtime_context.hpp"
 #include "realtime_media_stream.hpp"
 #include "realtime_state.hpp"
@@ -171,6 +171,20 @@ class realtime : public detail::owner<xmax_realtime, xmax_realtime_destroy> {
         return result;
     }
 
+    /** Configures optional two-times interpolation for the result preview; nullopt disables. */
+    void remote_video_interpolation(std::optional<xmax_video_interpolation_options> options) {
+        if (options) options->struct_size = sizeof(*options);
+        check(xmax_realtime_set_remote_video_interpolation(get(), options ? &*options : nullptr));
+    }
+
+    /** Returns interpolation counters and any recoverable processing error. */
+    xmax_video_interpolation_status remote_video_interpolation_status() const {
+        xmax_video_interpolation_status status{};
+        status.struct_size = sizeof(status);
+        check(xmax_realtime_get_remote_video_interpolation_status(get(), &status));
+        return status;
+    }
+
     /** Configures generated result beauty; nullopt disables. Same semantics as the C API. */
     void remote_video_beauty(std::optional<xmax_realtime_video_beauty_options> options) {
         if (options) options->struct_size = sizeof(*options);
@@ -251,6 +265,13 @@ class realtime : public detail::owner<xmax_realtime, xmax_realtime_destroy> {
         } else {
             check(xmax_realtime_create_local_camera_preview_stream(get(), &options));
         }
+        return local_stream();
+    }
+
+    /** Creates camera capture with Web-compatible selection, capture, rotation, and warmup options. */
+    realtime_media_stream create_local_camera_stream_with_options(xmax_camera_stream_options options) {
+        options.struct_size = sizeof(options);
+        check(xmax_realtime_create_local_camera_stream_with_options(get(), &options));
         return local_stream();
     }
 
@@ -373,8 +394,8 @@ class realtime : public detail::owner<xmax_realtime, xmax_realtime_destroy> {
      * @param[in] value A finite volume in [0, 1]; 0 mutes playback.
      *
      * @note Independent of connection and generation operations. The setting is retained before
-     * result-user audio is available and applied before audio subscription starts. Set after preparing the
-     * local stream to override its initial playback volume.
+     * result-user audio is available and applied before audio subscription starts. Creating local media
+     * retains the selected playback volume.
      *
      * @see xmax_realtime_set_remote_volume
      */
@@ -668,7 +689,7 @@ class realtime : public detail::owner<xmax_realtime, xmax_realtime_destroy> {
      * @param[in] preset The model-supported camera resolution.
      */
     void update_camera_format(
-        RealtimeCameraPreset preset
+        RealtimeCameraFormat preset
     ) {
         check(xmax_realtime_update_camera_preset(
             get(),
@@ -693,7 +714,7 @@ class realtime : public detail::owner<xmax_realtime, xmax_realtime_destroy> {
     /**
      * Returns the current camera preset, or none without a camera stream.
      */
-    RealtimeCameraPreset camera_preset() const {
+    RealtimeCameraFormat camera_preset() const {
         xmax_video_format format{};
         xmax_camera_preset result{};
         check(xmax_realtime_get_camera_format(
@@ -701,7 +722,7 @@ class realtime : public detail::owner<xmax_realtime, xmax_realtime_destroy> {
             &format,
             &result
         ));
-        return static_cast<RealtimeCameraPreset>(result);
+        return static_cast<RealtimeCameraFormat>(result);
     }
 
     /**
