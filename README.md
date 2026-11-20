@@ -213,20 +213,10 @@ await using var realtime = client.CreateRealtimeManager(new RealtimeConfiguratio
 var videoView = new XmaxRealtimeDualVideoView();
 videoContainer.Children.Add(videoView);
 
-var previewReady = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-await realtime.SetStateListenerAsync(state =>
-{
-    if (state.Reason is RealtimeReason.Failure failure)
-        previewReady.TrySetException(failure.Error);
-    else if (state.ConnectionState == RealtimeConnectionState.Ready)
-        previewReady.TrySetResult();
-});
-
 var cameraStream = await realtime.CreateLocalCameraStreamAsync(
     microphone: RealtimeMicrophone.Disabled
 );
 videoView.LocalTrack = cameraStream.VideoTrack;
-await previewReady.Task.WaitAsync(TimeSpan.FromSeconds(15));
 
 var resultStream = await realtime.StartGenerationAsync(
     cameraStream,
