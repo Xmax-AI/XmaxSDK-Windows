@@ -235,24 +235,68 @@ void CameraController::start(
         running_ = false;
         failure_.reset();
         last_timestamp_ = -1;
+        next_output_timestamp_us_ = -1;
     }
 
+    auto binding = std::make_shared<Recovery>();
+    binding->device = device;
+    binding->format = capture_format;
+    binding->failure = output.failure;
+    binding->check_orientation = processing.rotation == 0 && format.width != format.height &&
+        capture_format.width != capture_format.height &&
+        (format.width > format.height) == (capture_format.width > capture_format.height);
     const auto metrics = std::make_shared<CameraMetrics>();
     CaptureCallbacks callbacks;
-    callbacks.frame = [this, output, metrics, before_rotation, processing, format](Frame frame) {
+    callbacks.frame = [this, output, metrics, before_rotation, processing, format,
+                       weak = std::weak_ptr<Recovery>(binding)](Frame frame) {
         try {
             const bool profiling = XmaxLogger::is_enabled(XMAX_LOG_PERFORMANCE);
             const auto begin = profiling ? Clock::now() : Clock::time_point{};
             const auto width = frame.width, height = frame.height;
             validate_frame(frame.view());
+            const auto current = weak.lock();
+            if (!current)
+                return;
+            bool retry_orientation = false;
             {
                 std::lock_guard<std::mutex> lock(mutex_);
-                if (failure_) return;
-                // Capture preferences may run faster than the shared output target. Drop surplus
-                // source frames before crop/rotation; allow timestamp rounding at common rates.
-                const auto minimum_step = std::max<int64_t>(1, int64_t(1000000.0 / format.fps) - 500);
-                if (processing.limit_output_rate && last_timestamp_ >= 0 && frame.timestamp_us > last_timestamp_ &&
-                    frame.timestamp_us - last_timestamp_ < minimum_step) return;
+                if (failure_ || current->cancelled || recovery_ != current || current->orientation_retrying)
+                    return;
+                if (current->check_orientation) {
+                    current->check_orientation = false;
+                    // Match Web: reopen once with transposed capture preferences when the first
+                    // frame has the opposite orientation. Explicit opposite-orientation capture
+                    // and manual rotation keep their requested capture mode.
+                    if (width != height && (width > height) != (current->format.width > current->format.height)) {
+                        current->orientation_retrying = true;
+                        std::swap(current->format.width, current->format.height);
+                        retry_orientation = true;
+                    }
+                }
+            }
+            if (retry_orientation) {
+                queue_capture(std::packaged_task<void()>([this, current] { retry_capture_orientation(current); }), false);
+                return;
+            }
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                if (failure_ || current->cancelled)
+                    return;
+                // Advance an output schedule instead of imposing a full interval after every
+                // accepted arrival. Half-frame scheduling tolerance absorbs capture jitter;
+                // a long stall resets the schedule without releasing a burst of old frames.
+                if (processing.limit_output_rate) {
+                    const double interval = 1000000.0 / format.fps;
+                    const double timestamp = double(frame.timestamp_us);
+                    if (last_timestamp_ >= 0 && frame.timestamp_us > last_timestamp_ &&
+                        timestamp + interval / 2 < next_output_timestamp_us_)
+                        return;
+                    if (next_output_timestamp_us_ < 0 || frame.timestamp_us <= last_timestamp_ ||
+                        timestamp - next_output_timestamp_us_ > interval)
+                        next_output_timestamp_us_ = timestamp + interval;
+                    else
+                        next_output_timestamp_us_ += interval;
+                }
                 frame.timestamp_us = std::max(last_timestamp_ + 1, frame.timestamp_us);
                 last_timestamp_ = frame.timestamp_us;
             }
@@ -310,10 +354,6 @@ void CameraController::start(
         );
     };
 
-    auto binding = std::make_shared<Recovery>();
-    binding->device = device;
-    binding->format = capture_format;
-    binding->failure = output.failure;
     binding->callbacks = std::move(callbacks);
     binding->callbacks.interrupted = [this, weak = std::weak_ptr<Recovery>(binding)] {
         if (auto current = weak.lock())
@@ -384,6 +424,33 @@ void CameraController::start(
     } catch (...) {
         stop();
         throw;
+    }
+}
+
+void CameraController::retry_capture_orientation(const std::shared_ptr<Recovery>& binding) {
+    const Cancel cancelled = [binding] { return binding->cancelled.load(); };
+    if (cancelled())
+        return;
+    try {
+        // Reopen on the capture worker; stopping drains callbacks from the original request.
+        if (capture_) {
+            capture_->stop();
+            capture_.reset();
+        }
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (cancelled() || recovery_ != binding || failure_)
+                return;
+            binding->orientation_retrying = false;
+        }
+        capture_ = factory_();
+        capture_->start(binding->device, binding->format, binding->callbacks, cancelled);
+    } catch (const Error& error) {
+        if (!cancelled())
+            binding->callbacks.failure(error);
+    } catch (const std::exception& error) {
+        if (!cancelled())
+            binding->callbacks.failure(Error(XMAX_MEDIA_ERROR, error.what()));
     }
 }
 

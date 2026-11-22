@@ -441,10 +441,11 @@ struct CaptureState {
             ),
             "Read camera dimensions"
         );
+        // Native capture can exceed the model-sized frames produced after crop and scaling.
         require(
-            width >= 2 && height >= 2 && uint64_t(width) * height <= 2100000,
+            width >= 2 && height >= 2 && width <= 8192 && height <= 8192,
             XMAX_MEDIA_ERROR,
-            "Camera output dimensions exceed the frame budget"
+            "Camera output dimensions exceed the capture limits"
         );
 
         GUID subtype{};

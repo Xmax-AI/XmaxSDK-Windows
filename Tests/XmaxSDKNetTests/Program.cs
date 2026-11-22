@@ -50,6 +50,37 @@ try
     // Opt-in hardware check; the normal regression suite never opens a physical capture device.
     if (Environment.GetEnvironmentVariable("XMAX_TEST_CAMERA_OPTIONS") == "1")
     {
+        await Test("real camera starts every model aspect without a capture override", async () =>
+        {
+            var devices = await MediaDevices.ListCameraDevicesAsync();
+            var selected = devices.FirstOrDefault(item => item.Name.Contains("MacBook", StringComparison.OrdinalIgnoreCase))
+                ?? devices.FirstOrDefault(item => item.IsDefault) ?? devices.First();
+            using var client = new XmaxClient();
+            await using var realtime = client.CreateRealtimeManager(new() { Model = RealtimeModel.X2_1 });
+            foreach (var expected in new[] { new RealtimeVideoFormat(1920, 1080), new(1080, 1920),
+                new(1408, 1408), new(1152, 1536), new(1536, 1152) })
+            {
+                var stream = await realtime.CreateLocalCameraStreamAsync(
+                    videoFormat: expected, camera: RealtimeCamera.Device(selected.Id), mirror: false);
+                await stream.VideoTrack.NotifyPreviewAttachedAsync();
+                int received = 0;
+                long last = -1;
+                var deadline = DateTime.UtcNow.AddSeconds(15);
+                while (received < 3 && DateTime.UtcNow < deadline)
+                {
+                    using var frame = stream.VideoTrack.TryAcquireFrame();
+                    if (frame is not null && frame.TimestampMicroseconds > last)
+                    {
+                        Check(frame.Width == expected.Width && frame.Height == expected.Height, "automatic capture preserves output dimensions");
+                        last = frame.TimestampMicroseconds; ++received;
+                    }
+                    await Task.Delay(20);
+                }
+                Check(received == 3, "automatic capture produces continuous preview frames");
+                Console.WriteLine($"Automatic camera {selected.Name}: {expected}, frames={received}");
+                await realtime.CloseAsync();
+            }
+        });
         await Test("real camera respects independent capture, rotation, mirror, and retained playback", async () =>
         {
             var devices = await MediaDevices.ListCameraDevicesAsync();

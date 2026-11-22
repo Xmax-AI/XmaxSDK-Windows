@@ -99,10 +99,13 @@ class CameraController {
         std::atomic<bool> cancelled{false};
         bool retrying = false;
         bool interrupted = false;
+        bool check_orientation = false;
+        bool orientation_retrying = false;
     };
 
     void interrupted(const std::shared_ptr<Recovery>& binding);
     void recover_capture(const std::shared_ptr<Recovery>& binding);
+    void retry_capture_orientation(const std::shared_ptr<Recovery>& binding);
 
     /** Releases the native adapter on the camera thread. */
     void stop_capture() noexcept;
@@ -166,5 +169,6 @@ class CameraController {
      * The latest accepted monotonic timestamp for this input binding, in microseconds.
      */
     int64_t last_timestamp_ = -1;
+    double next_output_timestamp_us_ = -1;
 };
 } // namespace xmax::detail

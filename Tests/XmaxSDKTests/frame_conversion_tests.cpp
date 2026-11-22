@@ -13,6 +13,7 @@
 #include "Media/MediaController.hpp"
 #include "Service/Media/MediaService.hpp"
 #include "TestSupport.hpp"
+#include <algorithm>
 #include <array>
 #include <iostream>
 
@@ -149,6 +150,37 @@ static void render_conversion() {
     }
 }
 
+static void conversion_preserves_pixels_with_padded_planes() {
+    for (auto format : {XMAX_NV12, XMAX_I420})
+        for (uint32_t width : {2u, 6u, 8u, 10u, 16u, 18u, 32u, 34u}) {
+            auto source = native_frame(width, 6, format, 19);
+            source.presentation_mirrored = true;
+            source.color_primaries = 9;
+            source.color_transfer = 16;
+            for (unsigned plane = 0; plane < (format == XMAX_NV12 ? 2u : 3u); ++plane) {
+                source.strides[plane] += 7;
+                source.planes[plane].resize(source.strides[plane] * (plane == 0 ? source.height : source.height / 2));
+                for (size_t index = 0; index < source.planes[plane].size(); ++index)
+                    source.planes[plane][index] = uint8_t(index * 73 + plane * 59);
+            }
+            const auto converted = bgra_frame(source);
+            CHECK(converted.timestamp_us == source.timestamp_us && converted.presentation_mirrored);
+            CHECK(converted.color_primaries == 9 && converted.color_transfer == 16);
+            for (uint32_t y = 0; y < source.height; ++y) for (uint32_t x = 0; x < width; ++x) {
+                const int luma = int(source.planes[0][y * source.strides[0] + x]) - 16;
+                const auto uv = y / 2 * source.strides[1] + (format == XMAX_NV12 ? x & ~1u : x / 2);
+                const int u = int(source.planes[1][uv]) - 128;
+                const int v = int(format == XMAX_NV12 ? source.planes[1][uv + 1]
+                    : source.planes[2][y / 2 * source.strides[2] + x / 2]) - 128;
+                const auto* pixel = converted.planes[0].data() + y * converted.strides[0] + x * 4;
+                CHECK(pixel[0] == std::clamp((298 * luma + 516 * u + 128) >> 8, 0, 255));
+                CHECK(pixel[1] == std::clamp((298 * luma - 100 * u - 208 * v + 128) >> 8, 0, 255));
+                CHECK(pixel[2] == std::clamp((298 * luma + 409 * v + 128) >> 8, 0, 255));
+                CHECK(pixel[3] == 255);
+            }
+        }
+}
+
 static void external_center_crop() {
     auto bgra = native_frame(8, 4, XMAX_BGRA, 10);
     for (size_t y = 0; y < bgra.height; ++y)
@@ -194,6 +226,7 @@ int main() {
         camera_output_format(XMAX_NV12);
         camera_output_format(XMAX_I420);
         render_conversion();
+        conversion_preserves_pixels_with_padded_planes();
         external_center_crop();
         std::cout << "Native frame ownership, dimensions, pixel formats and model presets passed\n";
         return 0;

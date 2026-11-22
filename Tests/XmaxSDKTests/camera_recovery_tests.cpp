@@ -89,10 +89,11 @@ struct CaptureScript {
 static Frame camera_frame() {
     Frame frame;
     frame.width = 640;
-    frame.height = 480;
+    // Keep recovery scripts orientation-neutral; camera creation tests cover orientation retries.
+    frame.height = 640;
     frame.timestamp_us = 1;
     frame.strides[0] = 2560;
-    frame.planes[0].resize(2560 * 480);
+    frame.planes[0].resize(2560 * 640);
     return frame;
 }
 

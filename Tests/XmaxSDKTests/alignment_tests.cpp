@@ -136,10 +136,11 @@ struct ProbeCamera : CameraCapture {
         require(format.width != probe->fail_width, XMAX_MEDIA_ERROR, "Device configuration failed");
         Frame frame;
         frame.width = 640;
-        frame.height = 480;
+        // Format rollback is independent of first-frame orientation negotiation.
+        frame.height = 640;
         frame.timestamp_us = 1;
         frame.strides[0] = 2560;
-        frame.planes[0].resize(2560 * 480);
+        frame.planes[0].resize(2560 * 640);
         callbacks.frame(std::move(frame));
     }
     void stop() noexcept override {}

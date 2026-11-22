@@ -130,6 +130,9 @@ void resample(
     thread_local FilterCache vertical_cache;
     thread_local std::vector<float> rows;
     thread_local std::vector<float> output;
+#if defined(_M_X64) || defined(__SSE2__)
+    thread_local std::vector<const float*> vertical_rows;
+#endif
 
     const auto& horizontal = horizontal_cache.get(source_width, width);
     const auto& vertical = vertical_cache.get(source_height, height);
@@ -160,6 +163,36 @@ void resample(
             }
         }
         cached_end = end;
+#if defined(_M_X64) || defined(__SSE2__)
+        vertical_rows.resize(filter.weights.size());
+        for (size_t tap = 0; tap < filter.weights.size(); ++tap)
+            vertical_rows[tap] = rows.data() + ((first + tap) % row_count) * row_bytes;
+        size_t x = 0;
+        // Keep independent output samples in registers across every vertical tap. This preserves
+        // summation order while avoiding a full intermediate-row read/write for every tap.
+        for (; x + 16 <= row_bytes; x += 16) {
+            auto sum0 = _mm_setzero_ps(), sum1 = _mm_setzero_ps();
+            auto sum2 = _mm_setzero_ps(), sum3 = _mm_setzero_ps();
+            for (size_t tap = 0; tap < filter.weights.size(); ++tap) {
+                const auto weight = _mm_set1_ps(filter.weights[tap]);
+                const auto* row = vertical_rows[tap] + x;
+                sum0 = _mm_add_ps(sum0, _mm_mul_ps(_mm_loadu_ps(row), weight));
+                sum1 = _mm_add_ps(sum1, _mm_mul_ps(_mm_loadu_ps(row + 4), weight));
+                sum2 = _mm_add_ps(sum2, _mm_mul_ps(_mm_loadu_ps(row + 8), weight));
+                sum3 = _mm_add_ps(sum3, _mm_mul_ps(_mm_loadu_ps(row + 12), weight));
+            }
+            _mm_storeu_ps(output.data() + x, sum0);
+            _mm_storeu_ps(output.data() + x + 4, sum1);
+            _mm_storeu_ps(output.data() + x + 8, sum2);
+            _mm_storeu_ps(output.data() + x + 12, sum3);
+        }
+        for (; x < row_bytes; ++x) {
+            float value = 0;
+            for (size_t tap = 0; tap < filter.weights.size(); ++tap)
+                value += vertical_rows[tap][x] * filter.weights[tap];
+            output[x] = value;
+        }
+#else
         std::fill(output.begin(), output.end(), 0.0f);
         for (size_t tap = 0; tap < filter.weights.size(); ++tap) {
             const auto weight = filter.weights[tap];
@@ -167,6 +200,7 @@ void resample(
             for (size_t x = 0; x < row_bytes; ++x)
                 output[x] += row[x] * weight;
         }
+#endif
         store_row(output.data(), row_bytes, destination);
         destination += row_bytes;
     }

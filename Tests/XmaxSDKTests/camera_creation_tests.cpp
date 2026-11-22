@@ -23,6 +23,8 @@ struct CaptureState {
     std::atomic<int> starts{0};
     CaptureCallbacks callbacks;
     Frame source;
+    std::vector<xmax_video_format> requests;
+    std::function<Frame(int)> source_for_attempt;
 };
 
 static Frame pixels(uint32_t width = 4, uint32_t height = 2) {
@@ -43,11 +45,56 @@ struct Camera : CameraCapture {
     std::vector<CameraDevice> devices() override { return state->devices; }
     void start(const std::string& device, xmax_video_format format, CaptureCallbacks output, const Cancel&) override {
         state->selected = device; state->requested = format; state->callbacks = output;
-        output.frame(state->source);
-        ++state->starts;
+        state->requests.push_back(format);
+        const auto attempt = state->starts.fetch_add(1);
+        output.frame(state->source_for_attempt ? state->source_for_attempt(attempt) : state->source);
     }
     void stop() noexcept override { state->callbacks = {}; }
 };
+
+static void orientation_retry_matches_web() {
+    for (bool portrait : {true, false}) for (bool manual : {true, false}) for (bool corrected : {true, false}) {
+        const uint32_t width = portrait ? 2 : 4, height = portrait ? 4 : 2;
+        auto state = std::make_shared<CaptureState>();
+        state->source_for_attempt = [=](int attempt) {
+            return attempt > 0 && corrected ? pixels(width, height) : pixels(height, width);
+        };
+        CameraController camera([state] { return std::make_unique<Camera>(state); });
+        CameraProcessingOptions options;
+        if (manual) options.capture_format = xmax_video_format{width * 2, height * 2, 24};
+        Frame result;
+        camera.start("front", {width, height, 30},
+            {[&](Frame frame) { result = std::move(frame); }, [](Error error) { throw error; }},
+            [] { return false; }, true, options);
+        CHECK(state->starts == 2 && state->requests.size() == 2);
+        const auto first = state->requests[0], retry = state->requests[1];
+        CHECK(first.width == width * (manual ? 2 : 1) && first.height == height * (manual ? 2 : 1));
+        CHECK(retry.width == first.height && retry.height == first.width && retry.fps == first.fps);
+        CHECK(result.width == width && result.height == height);
+    }
+    for (unsigned rotation : {0u, 90u}) {
+        auto state = std::make_shared<CaptureState>(); state->source = pixels(4, 2);
+        CameraController camera([state] { return std::make_unique<Camera>(state); });
+        CameraProcessingOptions options; options.rotation = rotation;
+        options.capture_format = xmax_video_format{4, 2, 30};
+        Frame result;
+        camera.start("front", {2, 4, 30},
+            {[&](Frame frame) { result = std::move(frame); }, [](Error error) { throw error; }},
+            [] { return false; }, true, options);
+        CHECK(state->starts == 1 && state->requested.width == 4 && state->requested.height == 2);
+        CHECK(result.width == 2 && result.height == 4);
+    }
+    auto failed = std::make_shared<CaptureState>();
+    failed->source_for_attempt = [](int attempt) {
+        if (attempt > 0) throw Error(XMAX_CAMERA_PERMISSION_DENIED, "Orientation retry rejected");
+        return pixels(4, 2);
+    };
+    CameraController camera([failed] { return std::make_unique<Camera>(failed); });
+    expect_error(XMAX_CAMERA_PERMISSION_DENIED, [&] {
+        camera.start("front", {2, 4, 30}, {[](Frame) {}, [](Error) {}}, [] { return false; });
+    });
+    CHECK(failed->starts == 2);
+}
 
 static void rotated_capture_geometry() {
     CHECK(camera_capture_distance(3840, 2160, 30, {3840, 2160, 30}) == 0);
@@ -84,6 +131,25 @@ static void rotated_capture_geometry() {
         auto frame = pixels(); frame.timestamp_us = timestamp; state->callbacks.frame(std::move(frame));
     }
     CHECK(delivered == 3);
+}
+
+static void camera_rate_limit_preserves_nominal_rate_with_jitter() {
+    for (bool jittered : {true, false}) {
+        auto state = std::make_shared<CaptureState>(); state->source = pixels();
+        CameraController camera([state] { return std::make_unique<Camera>(state); });
+        CameraProcessingOptions options; options.limit_output_rate = true;
+        int delivered = 0;
+        camera.start("front", {4, 2, 30}, {[&](Frame) { ++delivered; }, [](Error error) { throw error; }},
+            [] { return false; }, true, options);
+        const int source_fps = jittered ? 30 : 120;
+        for (int index = 1; index <= source_fps * 10; ++index) {
+            auto frame = pixels();
+            const int jitter = !jittered || index % 3 == 0 ? 0 : index % 3 == 1 ? 1500 : -1500;
+            frame.timestamp_us = 1 + std::llround(index * 1000000.0 / source_fps) + jitter;
+            state->callbacks.frame(std::move(frame));
+        }
+        CHECK(delivered >= 300 && delivered <= 302);
+    }
 }
 
 struct Fixture {
@@ -194,7 +260,8 @@ static void warmup_before_publication_and_cancellation() {
 
 int main() {
     try {
-        rotated_capture_geometry(); creation_defaults_and_retained_settings(); selection_and_validation();
+        orientation_retry_matches_web(); rotated_capture_geometry(); camera_rate_limit_preserves_nominal_rate_with_jitter();
+        creation_defaults_and_retained_settings(); selection_and_validation();
         warmup_before_publication_and_cancellation();
         std::cout << "Camera creation alignment tests passed\n";
         return 0;
