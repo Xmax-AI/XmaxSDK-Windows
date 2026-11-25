@@ -99,6 +99,7 @@ ApiService::ApiService(
  * @param[in] cancelled A cooperative cancellation predicate; true requests termination of the operation.
  * @param[in] realtime Whether to use the realtime-session API endpoint.
  * @param[out] http_status Optional destination for the HTTP status received from transport.
+ * @param[in] on_send Optional notification at the transport send boundary.
  *
  * @return The data payload of a successfully validated service response.
  */
@@ -108,7 +109,8 @@ json ApiService::request(
     const json* body,
     const Cancel& cancelled,
     bool realtime,
-    int32_t* http_status
+    int32_t* http_status,
+    std::function<void()> on_send
 ) const {
     const auto& config = config_;
     require(
@@ -138,6 +140,7 @@ json ApiService::request(
     HttpRequest request;
     request.url = config.base_url(realtime) + path;
     request.method = method;
+    request.on_send = std::move(on_send);
     request.timeout_ms = config.timeout_ms;
     request.headers = {
         {"Accept", "application/json"},

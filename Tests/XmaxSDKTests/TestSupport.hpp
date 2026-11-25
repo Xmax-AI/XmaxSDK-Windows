@@ -38,6 +38,8 @@ struct FakeHttp : Http {
     bool model_id = false;
     std::atomic<bool> malformed{false}, heartbeat_failure{false}, close_failure{false};
     HttpResponse request(const HttpRequest& input, const Cancel&) override {
+        if (input.on_send)
+            input.on_send();
         const auto& method = input.method;
         const auto path = input.url.substr(input.url.find("/open/api/v1") + 12);
         const auto response = [](json data) -> HttpResponse {

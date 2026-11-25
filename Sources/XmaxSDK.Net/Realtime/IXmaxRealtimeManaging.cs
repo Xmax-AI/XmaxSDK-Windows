@@ -132,6 +132,11 @@ public interface IXmaxRealtimeManaging : IAsyncDisposable
     Task SetStateListenerAsync(Action<RealtimeState>? listener, SynchronizationContext? callbackContext = null);
     /// <summary>Registers a microphone observer and awaits delivery of the current reading, if any.</summary>
     Task SetMicrophoneLevelListenerAsync(Action<float?>? listener);
+    /// <summary>Observes the first and each subsequent HTTP session heartbeat send attempt.</summary>
+    /// <param name="listener">Receives the session ID. Pass null to unregister.</param>
+    /// <remarks>The listener runs on the sending worker immediately before the native HTTP send call.
+    /// Return promptly and dispatch UI or blocking work separately. Full close clears the listener.</remarks>
+    Task SetHeartbeatListenerAsync(Action<string>? listener);
     /// <summary>Registers a generation startup timing listener, or clears it when null.</summary>
     Task SetLaunchTimingListenerAsync(Action<RealtimeLaunchTiming>? listener);
     /// <summary>Registers the uplink video statistics listener, for future snapshots, including unavailable measurements.</summary>

@@ -43,6 +43,11 @@ class RealtimeSessionService {
         : api_(std::move(api)) {
     }
 
+    using HeartbeatListener = std::function<void(const std::string&)>;
+
+    /** Replaces the send observer; in-flight invocations retain their previous registration. */
+    void heartbeat_listener(HeartbeatListener listener);
+
     /**
      * Stops and drains the heartbeat worker without making a session-close request.
      */
@@ -112,6 +117,12 @@ class RealtimeSessionService {
      * The active session and RTC information, cleared on closing.
      */
     RealtimeSession session_;
+
+    /** Accessed atomically by registration and the HTTP worker. */
+    std::shared_ptr<HeartbeatListener> heartbeat_listener_;
+
+    /** Binds the current session ID while allowing its observer to change between sends. */
+    std::function<void()> heartbeat_observer() const;
 
     /**
      * The session heartbeat worker, drained before releasing its HTTP dependencies.

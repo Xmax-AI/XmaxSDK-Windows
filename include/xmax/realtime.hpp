@@ -171,6 +171,26 @@ class realtime : public detail::owner<xmax_realtime, xmax_realtime_destroy> {
         return result;
     }
 
+    /** Observes each HTTP session heartbeat on the sending worker. Return promptly.
+     * @see xmax_realtime_set_heartbeat_listener
+     */
+    void heartbeat_listener(std::function<void(std::string)> listener) {
+        if (!listener) {
+            check(xmax_realtime_set_heartbeat_listener(get(), nullptr));
+            return;
+        }
+        using Callback = std::function<void(std::string)>;
+        auto context = std::make_unique<Callback>(std::move(listener));
+        const xmax_heartbeat_listener registration{
+            sizeof(xmax_heartbeat_listener),
+            [](void* data, const char* id) { (*static_cast<Callback*>(data))(id); },
+            context.get(),
+            [](void* data) { delete static_cast<Callback*>(data); }
+        };
+        check(xmax_realtime_set_heartbeat_listener(get(), &registration));
+        context.release();
+    }
+
     /** Configures generated result beauty; nullopt disables. Same semantics as the C API. */
     void remote_video_beauty(std::optional<xmax_realtime_video_beauty_options> options) {
         if (options) options->struct_size = sizeof(*options);

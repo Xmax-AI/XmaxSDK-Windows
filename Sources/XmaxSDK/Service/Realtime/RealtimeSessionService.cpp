@@ -153,7 +153,8 @@ void RealtimeSessionService::heartbeat(
         *api_,
         session_.id,
         cancel,
-        first_grace_seconds
+        first_grace_seconds,
+        heartbeat_observer()
     );
 }
 
@@ -178,8 +179,23 @@ void RealtimeSessionService::start_heartbeat(
         session_.id,
         first_grace_seconds,
         interval,
-        std::move(failure)
+        std::move(failure),
+        heartbeat_observer()
     );
+}
+
+void RealtimeSessionService::heartbeat_listener(HeartbeatListener listener) {
+    std::atomic_store(&heartbeat_listener_,
+                      listener ? std::make_shared<HeartbeatListener>(std::move(listener)) : nullptr);
+}
+
+std::function<void()> RealtimeSessionService::heartbeat_observer() const {
+    return [this, id = session_.id] {
+        if (auto listener = std::atomic_load(&heartbeat_listener_)) {
+            // An observer exception must never cancel or fail the HTTP request.
+            try { (*listener)(id); } catch (...) {}
+        }
+    };
 }
 
 void RealtimeSessionService::stop_heartbeat() {

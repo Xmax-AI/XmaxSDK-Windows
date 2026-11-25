@@ -18,13 +18,15 @@ RealtimeSessionHeartbeat::RealtimeSessionHeartbeat(
     std::string session_id,
     int64_t first_grace_seconds,
     std::chrono::milliseconds interval,
-    std::function<void(Error)> failure
+    std::function<void(Error)> failure,
+    std::function<void()> on_send
 )
     : api_(std::move(api)),
       session_id_(std::move(session_id)),
       first_grace_seconds_(first_grace_seconds),
       interval_(interval),
       failure_(std::move(failure)),
+      on_send_(std::move(on_send)),
       worker_([this] { run(); }) {
 }
 
@@ -47,7 +49,8 @@ void RealtimeSessionHeartbeat::run() {
                 *api_,
                 session_id_,
                 cancelled,
-                grace
+                grace,
+                on_send_
             );
         } catch (const Error& error) {
             report_failure(error);
@@ -87,7 +90,8 @@ void RealtimeSessionHeartbeat::request(
     const ApiService& api,
     const std::string& session_id,
     const Cancel& cancelled,
-    std::optional<int64_t> grace
+    std::optional<int64_t> grace,
+    const std::function<void()>& on_send
 ) {
     const json body = grace ? json{{"firstHeartbeatGraceSeconds", *grace}} : json();
     const auto value = api.request(
@@ -95,7 +99,9 @@ void RealtimeSessionHeartbeat::request(
         "/session/" + session_id + "/heartbeat",
         grace ? &body : nullptr,
         cancelled,
-        true
+        true,
+        nullptr,
+        on_send
     );
     require(
         !cancelled(),

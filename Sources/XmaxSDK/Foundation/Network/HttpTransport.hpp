@@ -72,6 +72,9 @@ struct HttpRequest {
 
     /** Enables bounded HTTP(S) redirects on an unsigned storage GET. */
     bool follow_download_redirects = false;
+
+    /** Called once at the native send attempt, after setup and the final cancellation check. */
+    std::function<void()> on_send{};
 };
 
 /**

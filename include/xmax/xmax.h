@@ -3299,6 +3299,25 @@ XMAX_API xmax_result XMAX_CALL xmax_realtime_set_remote_media_frame_listener(
     const xmax_remote_media_listener* listener
 );
 
+/** HTTP session heartbeat send attempt. The UTF-8 session ID is borrowed for the call. */
+typedef void(XMAX_CALL* xmax_heartbeat_callback)(void* user_data, const char* session_id);
+
+/** Registration for session heartbeat send attempts. Set struct_size to sizeof(xmax_heartbeat_listener). */
+typedef struct xmax_heartbeat_listener {
+    uint32_t struct_size;
+    xmax_heartbeat_callback on_heartbeat;
+    void* user_data;
+    xmax_listener_context_release release_user_data;
+} xmax_heartbeat_listener;
+
+/** Registers one HTTP session heartbeat observer. NULL unregisters it. Full close clears it.
+ * Invoked on the sending worker immediately before each native HTTP send attempt, including the first.
+ * Return promptly and dispatch blocking SDK operations to another thread. RTC room keepalives are separate.
+ * The context is adopted on success and released after the last in-flight callback returns.
+ */
+XMAX_API xmax_result XMAX_CALL xmax_realtime_set_heartbeat_listener(
+    xmax_realtime realtime, const xmax_heartbeat_listener* listener);
+
 /** Runtime beauty failure after fallback; error is borrowed during the callback.
  * Dispatch blocking SDK work elsewhere; callbacks must not synchronously close or configure the controller.
  */

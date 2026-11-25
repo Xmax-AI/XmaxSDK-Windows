@@ -72,7 +72,12 @@ class XmaxRealtimeConnectionManager {
         xmax_video_format canvas
     );
 
-        /**
+    /** Observes HTTP heartbeat sends independently of room keepalives. */
+    void heartbeat_listener(RealtimeSessionService::HeartbeatListener listener) {
+        service_.heartbeat_listener(std::move(listener));
+    }
+
+    /**
      * Starts session billing heartbeats once after this session's generating state is committed.
      */
     void start_heartbeat(

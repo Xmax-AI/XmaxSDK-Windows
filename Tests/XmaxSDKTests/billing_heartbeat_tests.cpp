@@ -47,10 +47,16 @@ static std::vector<HttpRequest> heartbeat_requests(FakeHttp& http) {
 static void first_request_grace_and_periodic_body() {
     auto http = std::make_shared<FakeHttp>();
     http->model_id = true;
+    std::atomic<int> failures{0};
+    std::atomic<int> sends{0};
     RealtimeSessionService service(api(http));
     const auto session = service.create([] { return false; });
     CHECK(session.model_id == "model-1");
-    std::atomic<int> failures{0};
+    service.heartbeat_listener([&, expected = session.id](const std::string& id) {
+        if (id == expected)
+            ++sends;
+        throw std::runtime_error("Application observer failed");
+    });
     service.start_heartbeat(9, 5ms, [&](auto) { ++failures; });
     eventually([&] { return heartbeat_requests(*http).size() >= 3; });
     service.stop_heartbeat();
@@ -58,7 +64,7 @@ static void first_request_grace_and_periodic_body() {
     CHECK(json::parse(requests[0].body) == json({{"firstHeartbeatGraceSeconds", 9}}));
     for (size_t i = 1; i < requests.size(); ++i)
         CHECK(requests[i].body.empty());
-    CHECK(failures == 0);
+    CHECK(failures == 0 && size_t(sends.load()) == requests.size());
     service.close();
 }
 
@@ -136,10 +142,12 @@ static void failed_start_has_no_billing_heartbeat() {
     auto rtc = std::make_shared<ReadyRtc>();
     rtc->result = true;
     rtc->fail = true;
+    std::atomic<int> sends{0};
     XmaxRealtimeManager sdk(api(http), [rtc] { return rtc; }, 5ms);
+    sdk.heartbeat_listener([&](const std::string&) { ++sends; });
     sdk.prepare({1280, 720, 30});
     expect_error(XMAX_RTC_ERROR, [&] { sdk.start("prompt", "", false, false); });
-    CHECK(heartbeat_requests(*http).empty());
+    CHECK(heartbeat_requests(*http).empty() && sends == 0);
     CHECK(http->count("DELETE /session/session-1") == 1);
 }
 
@@ -147,6 +155,8 @@ struct ClosedHttp : FakeHttp {
     HttpResponse request(const HttpRequest& input, const Cancel& cancel) override {
         if (input.method != "PUT")
             return FakeHttp::request(input, cancel);
+        if (input.on_send)
+            input.on_send();
         {
             std::lock_guard<std::mutex> lock(mutex);
             calls.push_back("PUT /session/session-1/heartbeat");
@@ -161,7 +171,9 @@ struct ClosedHttp : FakeHttp {
 static void closure_reason_preserved() {
     auto http = std::make_shared<ClosedHttp>();
     auto rtc = std::make_shared<FakeRtc>();
+    std::atomic<int> sends{0};
     XmaxRealtimeManager sdk(api(http), [rtc] { return rtc; }, 5ms);
+    sdk.heartbeat_listener([&](const std::string&) { ++sends; });
     sdk.prepare({1280, 720, 30});
     sdk.start("prompt", "", false, false);
     eventually([&] { return http->count("DELETE /session/session-1") == 1; });
@@ -173,7 +185,7 @@ static void closure_reason_preserved() {
             CHECK(event.code == XMAX_SESSION_ERROR && std::string(event.message) == "Credits exhausted");
             found = true;
         }
-    CHECK(found && heartbeat_requests(*http).size() == 1);
+    CHECK(found && heartbeat_requests(*http).size() == 1 && sends == 1);
 }
 
 struct BlockingLeave : FakeRtc {
@@ -210,6 +222,8 @@ struct DelayedHeartbeat : FakeHttp {
     HttpResponse request(const HttpRequest& input, const Cancel& cancel) override {
         if (input.method != "PUT")
             return FakeHttp::request(input, cancel);
+        if (input.on_send)
+            input.on_send();
         entered = true;
         while (!release)
             std::this_thread::sleep_for(1ms);
@@ -223,11 +237,18 @@ struct DelayedHeartbeat : FakeHttp {
 static void cancelled_heartbeat_failure_is_discarded() {
     auto http = std::make_shared<DelayedHeartbeat>();
     auto rtc = std::make_shared<FakeRtc>();
+    std::atomic<int> attempts{0};
     XmaxRealtimeManager sdk(api(http), [rtc] { return rtc; }, 5ms);
     ReleaseFlag release_heartbeat{http->release};
+    sdk.heartbeat_listener([&](const std::string& id) {
+        if (id == "session-1")
+            ++attempts;
+    });
     sdk.prepare({1280, 720, 30});
     sdk.start("prompt", "", false, false);
     eventually([&] { return http->entered.load(); });
+    CHECK(attempts == 1); // The HTTP response is still blocked.
+    sdk.heartbeat_listener({});
     auto closing = std::async(std::launch::async, [&] { sdk.disconnect(false); });
     const auto until = Clock::now() + 5s;
     while (http->count("DELETE /session/session-1") == 0 && Clock::now() < until)

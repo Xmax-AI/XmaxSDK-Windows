@@ -834,6 +834,7 @@ Lifecycle::CleanupResult XmaxRealtimeManager::cleanup(
     }
 
     if (close) {
+        heartbeat_listener({});
         render_.close_beauty();
         media_.close();
         unbind_local();

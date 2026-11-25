@@ -378,6 +378,15 @@ internal unsafe struct xmax_interaction_frame
 }
 
 [StructLayout(LayoutKind.Sequential, Pack = 8)]
+internal unsafe struct xmax_heartbeat_listener
+{
+    public uint @struct_size;
+    public nint @on_heartbeat;
+    public void* @user_data;
+    public nint @release_user_data;
+}
+
+[StructLayout(LayoutKind.Sequential, Pack = 8)]
 internal unsafe struct xmax_video_beauty_error_listener
 {
     public uint @struct_size;

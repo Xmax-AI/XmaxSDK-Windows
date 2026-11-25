@@ -297,6 +297,9 @@ internal static unsafe partial class NativeMethods
     internal static partial int xmax_realtime_set_remote_media_frame_listener(nint @realtime, xmax_remote_media_listener* @listener);
     [LibraryImport(Library)]
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+    internal static partial int xmax_realtime_set_heartbeat_listener(nint @realtime, xmax_heartbeat_listener* @listener);
+    [LibraryImport(Library)]
+    [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
     internal static partial int xmax_realtime_set_remote_video_beauty(nint @realtime, xmax_realtime_video_beauty_options* @options);
     [LibraryImport(Library)]
     [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]

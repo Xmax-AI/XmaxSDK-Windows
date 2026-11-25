@@ -278,6 +278,8 @@ class NativeHttp final : public Http {
             XMAX_CANCELLED,
             "Operation cancelled"
         );
+        if (input.on_send)
+            input.on_send();
         http_checked(
             WinHttpSendRequest(
                 req,
@@ -686,6 +688,9 @@ class NativeHttp final : public Http {
             }
         );
 
+        require(!cancel(), XMAX_CANCELLED, "Operation cancelled");
+        if (input.on_send)
+            input.on_send();
         const auto result = curl_easy_perform(handle.get());
         require(
             !cancel(),

@@ -249,6 +249,11 @@ int main(void) {
     printf("offsetof xmax_interaction_frame displayed_video_width %zu\n", offsetof(xmax_interaction_frame, displayed_video_width));
     printf("offsetof xmax_interaction_frame displayed_video_height %zu\n", offsetof(xmax_interaction_frame, displayed_video_height));
     printf("offsetof xmax_interaction_frame content_mode %zu\n", offsetof(xmax_interaction_frame, content_mode));
+    printf("sizeof xmax_heartbeat_listener %zu\n", sizeof(xmax_heartbeat_listener));
+    printf("offsetof xmax_heartbeat_listener struct_size %zu\n", offsetof(xmax_heartbeat_listener, struct_size));
+    printf("offsetof xmax_heartbeat_listener on_heartbeat %zu\n", offsetof(xmax_heartbeat_listener, on_heartbeat));
+    printf("offsetof xmax_heartbeat_listener user_data %zu\n", offsetof(xmax_heartbeat_listener, user_data));
+    printf("offsetof xmax_heartbeat_listener release_user_data %zu\n", offsetof(xmax_heartbeat_listener, release_user_data));
     printf("sizeof xmax_video_beauty_error_listener %zu\n", sizeof(xmax_video_beauty_error_listener));
     printf("offsetof xmax_video_beauty_error_listener struct_size %zu\n", offsetof(xmax_video_beauty_error_listener, struct_size));
     printf("offsetof xmax_video_beauty_error_listener on_error %zu\n", offsetof(xmax_video_beauty_error_listener, on_error));

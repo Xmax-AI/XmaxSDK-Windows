@@ -319,6 +319,11 @@ class XmaxRealtimeManager {
         float value
     );
 
+    /** Observes each session HTTP heartbeat send attempt on the sending worker. */
+    void heartbeat_listener(RealtimeSessionService::HeartbeatListener listener) {
+        connection_.heartbeat_listener(std::move(listener));
+    }
+
     /**
      * Sets generated result beauty independently of generation errors; nullopt disables it.
      */

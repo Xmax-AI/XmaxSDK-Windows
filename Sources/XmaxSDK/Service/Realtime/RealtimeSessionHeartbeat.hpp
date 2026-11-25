@@ -34,13 +34,15 @@ class RealtimeSessionHeartbeat {
      * @param[in] first_grace_seconds The nonnegative startup duration, rounded up to whole seconds.
      * @param[in] interval The positive delay after each successful heartbeat.
      * @param[in] failure The receiver for one current-session failure.
+     * @param[in] on_send The observer for each HTTP send attempt.
      */
     RealtimeSessionHeartbeat(
         std::shared_ptr<ApiService> api,
         std::string session_id,
         int64_t first_grace_seconds,
         std::chrono::milliseconds interval,
-        std::function<void(Error)> failure
+        std::function<void(Error)> failure,
+        std::function<void()> on_send
     );
 
     /**
@@ -60,12 +62,14 @@ class RealtimeSessionHeartbeat {
      * @param[in] session_id The active session identifier.
      * @param[in] cancelled The cooperative request-cancellation predicate.
      * @param[in] grace The first request's startup duration; absence omits the request body.
+     * @param[in] on_send The optional observer invoked when transport starts the request.
      */
     static void request(
         const ApiService& api,
         const std::string& session_id,
         const Cancel& cancelled,
-        std::optional<int64_t> grace
+        std::optional<int64_t> grace,
+        const std::function<void()>& on_send = {}
     );
 
   private:
@@ -94,6 +98,9 @@ class RealtimeSessionHeartbeat {
      * The receiver that forwards a heartbeat failure to lifecycle cleanup.
      */
     std::function<void(Error)> failure_;
+
+    /** Send-attempt observer bound to this session before the worker starts. */
+    std::function<void()> on_send_;
 
     /**
      * Rejects delayed responses and failure delivery after session cancellation.

@@ -417,6 +417,10 @@ try
         _ = await realtime.ListMicrophoneDevicesAsync();
         Check(!await realtime.GetMicrophoneEnabledAsync(), "no camera microphone is active");
 
+        int heartbeatSends = 0;
+        await realtime.SetHeartbeatListenerAsync(_ => Interlocked.Increment(ref heartbeatSends));
+        await realtime.SetHeartbeatListenerAsync(null);
+        Check(heartbeatSends == 0, "registering a heartbeat listener before generation must not send or replay");
         var initialLevel = new TaskCompletionSource<float?>(TaskCreationOptions.RunContinuationsAsynchronously);
         await realtime.SetMicrophoneLevelListenerAsync(level => initialLevel.TrySetResult(level));
         Check(initialLevel.Task.IsCompletedSuccessfully && initialLevel.Task.Result is null, "registration awaits the initial microphone reading");

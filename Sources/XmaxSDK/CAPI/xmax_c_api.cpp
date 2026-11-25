@@ -3009,16 +3009,40 @@ xmax_result XMAX_CALL xmax_realtime_get_video_statistics(
 }
 
 namespace {
-struct BeautyListenerContext {
-    xmax_video_beauty_error_listener listener{};
+template <typename Listener>
+struct ListenerContext {
+    Listener listener{};
     bool adopted = false;
-    ~BeautyListenerContext() {
+    ~ListenerContext() {
         if (adopted && listener.release_user_data) {
             try { listener.release_user_data(listener.user_data); } catch (...) {}
         }
     }
 };
 }
+/** Registers a session-scoped HTTP send observer and retains its context through in-flight calls.
+ * @see xmax_realtime_set_heartbeat_listener in xmax.h for the public contract.
+ */
+xmax_result XMAX_CALL xmax_realtime_set_heartbeat_listener(
+    xmax_realtime realtime, const xmax_heartbeat_listener* listener
+) {
+    return protect(__func__, [&] {
+        handle(realtime);
+        if (!listener) {
+            realtime->session->heartbeat_listener({});
+            return;
+        }
+        sized(listener);
+        require(listener->on_heartbeat != nullptr, XMAX_INVALID_ARGUMENT, "A heartbeat send callback is required");
+        auto context = std::make_shared<ListenerContext<xmax_heartbeat_listener>>();
+        context->listener = *listener;
+        realtime->session->heartbeat_listener([context](const std::string& id) {
+            context->listener.on_heartbeat(context->listener.user_data, id.c_str());
+        });
+        context->adopted = true;
+    });
+}
+
 /** Delegates validated beauty configuration to the shared render pipeline.
  * @see xmax_realtime_set_remote_video_beauty in xmax.h for the public contract.
  */
@@ -3040,7 +3064,7 @@ xmax_result XMAX_CALL xmax_realtime_set_remote_video_beauty_error_listener(
         if (!listener) { realtime->session->remote_video_beauty_error_listener({}); return; }
         sized(listener);
         require(listener->on_error != nullptr, XMAX_INVALID_ARGUMENT, "A beauty error callback is required");
-        auto context = std::make_shared<BeautyListenerContext>();
+        auto context = std::make_shared<ListenerContext<xmax_video_beauty_error_listener>>();
         context->listener = *listener;
         realtime->session->remote_video_beauty_error_listener([context](Error error) {
             xmax_error_info info{}; info.struct_size = sizeof(info); info.code = error.code;
