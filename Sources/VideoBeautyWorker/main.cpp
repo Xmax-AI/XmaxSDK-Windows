@@ -70,6 +70,7 @@ struct Engine {
     base::IAgoraService* service=nullptr;
     agora_refptr<rtc::IMediaNodeFactory> factory; agora_refptr<rtc::IVideoFrameSender> sender;
     agora_refptr<rtc::ILocalVideoTrack> track; agora_refptr<Sink> sink; agora_refptr<Renderer> renderer; int64_t timestamp=0;
+    std::vector<uint8_t> inputI420;
     Engine() {
         service=createAgoraService(); if(!service) throw -10;
         base::AgoraServiceConfiguration config; config.appId="5588dfe2e7874bd08ea28f4968ec2d40"; config.enableVideo=true; config.enableAudioDevice=false; config.enableAudioProcessor=false;
@@ -91,17 +92,32 @@ struct Engine {
         return 0;
     }
     int Process(const Request& r, BYTE* memory, Response& response) {
-        {std::lock_guard<std::mutex> lock(sink->mutex); sink->waiting=true; sink->complete=false;}
         media::base::ExternalVideoFrame frame; frame.type=media::base::ExternalVideoFrame::VIDEO_BUFFER_RAW_DATA;
-        frame.format=media::base::VIDEO_PIXEL_BGRA; frame.buffer=memory; frame.stride=r.width; frame.height=r.height; frame.timestamp=timestamp=std::max<int64_t>(timestamp+1,GetTickCount64());
-        {std::lock_guard<std::mutex> lock(sink->mutex); sink->expectedTimestamp=timestamp;}
-        frame.colorSpace.primaries=media::base::ColorSpace::PRIMARYID_BT709; frame.colorSpace.transfer=media::base::ColorSpace::TRANSFERID_BT709; frame.colorSpace.matrix=media::base::ColorSpace::MATRIXID_BT709; frame.colorSpace.range=media::base::ColorSpace::RANGEID_FULL;
+        inputI420.resize(size_t(r.width) * r.height * 3 / 2);
+        xmax::beauty_worker::write_bt709_i420(memory, r.width, r.height, inputI420.data());
+        frame.format = media::base::VIDEO_PIXEL_I420;
+        frame.buffer = inputI420.data();
+        frame.stride = r.width;
+        frame.height = r.height;
+        frame.timestamp = timestamp = std::max<int64_t>(timestamp + 1, getAgoraCurrentMonotonicTimeInMs());
+        frame.colorSpace.primaries = media::base::ColorSpace::PRIMARYID_BT709;
+        frame.colorSpace.transfer = media::base::ColorSpace::TRANSFERID_BT709;
+        frame.colorSpace.matrix = media::base::ColorSpace::MATRIXID_BT709;
+        frame.colorSpace.range = media::base::ColorSpace::RANGEID_LIMITED;
+        {
+            std::lock_guard<std::mutex> lock(sink->mutex);
+            // VideoFrame::renderTimeMs uses Unix time, unlike the monotonic sender timestamp.
+            sink->expectedTimestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::system_clock::now().time_since_epoch()).count();
+            sink->complete = false;
+            sink->waiting = true;
+        }
         int sent=sender->sendVideoFrame(frame);
         std::unique_lock<std::mutex> lock(sink->mutex);
         if(sent!=0) {sink->waiting=false; return sent;}
         const auto deadline=std::chrono::steady_clock::now()+std::chrono::milliseconds(450);
         while(!sink->complete && std::chrono::steady_clock::now()<deadline) {
-            if(sink->ready.wait_for(lock,std::chrono::milliseconds(20),[&]{return sink->complete;})) break;
+            if(sink->ready.wait_for(lock,std::chrono::milliseconds(80),[&]{return sink->complete;})) break;
             // Windows starts its local video graph asynchronously. Prime it with the same owned
             // frame until the first result is delivered; subsequent frames normally need one send.
             lock.unlock(); sent=sender->sendVideoFrame(frame); lock.lock();

@@ -16,7 +16,7 @@
 #include <thread>
 
 namespace xmax::detail {
-/** One in-flight frame and one latest pending frame, shared by preview and public media delivery. */
+/** Shares one ordered output between preview and media while the optional effect warms independently. */
 class RemoteVideoBeautyPipeline {
   public:
     using Output = std::function<void(std::shared_ptr<Frame>, uint64_t)>;
@@ -30,21 +30,32 @@ class RemoteVideoBeautyPipeline {
     void reset();
     void shutdown();
   private:
-    struct Pending { std::shared_ptr<Frame> frame; uint64_t token, revision; };
+    enum class Phase { Off, Starting, FirstFrame, Warming, Active };
+    struct Pending {
+        std::shared_ptr<Frame> frame;
+        uint64_t token, revision, sequence;
+        bool sdr = false;
+    };
     std::mutex mutex_;
-    std::condition_variable wake_;
-    std::deque<std::function<void()>> commands_;
-    std::optional<Pending> pending_;
-    uint64_t token_ = 0, revision_ = 0;
+    std::condition_variable inputReady_, effectReady_;
+    std::deque<std::packaged_task<void()>> commands_;
+    std::optional<Pending> input_, effectInput_;
+    uint64_t token_ = 0, revision_ = 0, configuration_ = 0;
+    uint64_t sequence_ = 0, lastOutput_ = 0;
     bool active_ = false, stopped_ = false;
-    std::optional<BeautyOptions> options_;
+    Phase phase_ = Phase::Off;
+    // Only the effect thread creates, updates, uses and destroys the native processor.
     std::unique_ptr<VideoBeautyProcessor> processor_;
     BeautyErrorListener listener_;
     Output output_;
     BeautyProcessorFactory factory_;
-    std::thread worker_;
-    void run();
-    void command(std::function<void()> action);
+    std::thread effectWorker_, inputWorker_;
+
+    void prepareFrames();
+    void runEffect();
+    void apply(std::optional<BeautyOptions> options, uint64_t configuration);
     void process(Pending value);
+    bool current(const Pending& value) const;
+    void deliver(const Pending& value, std::shared_ptr<Frame> result);
 };
 }

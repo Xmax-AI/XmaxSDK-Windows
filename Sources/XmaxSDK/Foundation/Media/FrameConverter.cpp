@@ -103,8 +103,13 @@ void convert_yuv_rows(const uint8_t* y0, const uint8_t* y1, const uint8_t* u, co
 Frame bgra_frame(
     const Frame& source
 ) {
-    if (source.format == XMAX_BGRA)
-        return Frame::copy(source.view());
+    if (source.format == XMAX_BGRA) {
+        auto result = Frame::copy(source.view());
+        result.color_primaries = source.color_primaries;
+        result.color_transfer = source.color_transfer;
+        result.presentation_mirrored = source.presentation_mirrored;
+        return result;
+    }
 
     validate_frame(source.view());
 

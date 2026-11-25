@@ -69,10 +69,9 @@ static void fallback_and_pressure() {
         pipeline.listener([&](auto error) { CHECK(error.code == XMAX_MEDIA_ERROR); ++errors; }); pipeline.bind(1, true);
         pipeline.configure(BeautyOptions{sizeof(BeautyOptions), 0, 0, 0, 0});
         auto raw = frame(); pipeline.submit(raw, 1); eventually([&] { return calls >= 1; });
-        if (fails) {
-            eventually([&] { return outputs == 1; }); CHECK(delivered == raw && errors == 1);
-        }
-        pipeline.submit(frame(2), 1); eventually([&] { return outputs == (fails ? 2 : 1); });
+        eventually([&] { return outputs == 1; });
+        CHECK(delivered == raw && errors == (fails ? 1 : 0));
+        pipeline.submit(frame(2), 1); eventually([&] { return outputs == 2; });
         CHECK(calls == (fails ? 1 : 2) && errors == (fails ? 1 : 0));
         pipeline.shutdown();
     }
@@ -133,15 +132,106 @@ static void shared_sdr_preparation_and_hdr_fallback() {
     CHECK(delivered == source && calls == 1 && errors == 1);
 }
 
+// Make both cold phases arbitrarily slow without relying on process startup timing.
+static void live_frames_during_startup(bool cancel) {
+    std::promise<void> constructing, constructed, priming, primed;
+    auto allowConstruction = constructed.get_future().share();
+    auto allowFirstFrame = primed.get_future().share();
+    struct SlowFirst final : VideoBeautyProcessor {
+        std::promise<void>& entered;
+        std::shared_future<void> resume;
+        bool cold = true;
+        SlowFirst(std::promise<void>& started, std::shared_future<void> proceed)
+            : entered(started), resume(std::move(proceed)) {}
+        void update(BeautyOptions) override {}
+        std::shared_ptr<Frame> process(const Frame& input) override {
+            if (cold) {
+                cold = false;
+                entered.set_value();
+                CHECK(resume.wait_for(5s) == std::future_status::ready);
+            }
+            auto out = std::make_shared<Frame>(input);
+            out->planes[0][0] = 77;
+            return out;
+        }
+    };
+    std::mutex mutex;
+    std::vector<std::pair<int64_t, uint8_t>> outputs;
+    std::atomic<int> created{0};
+    RemoteVideoBeautyPipeline pipeline([&](auto value, auto) {
+        std::lock_guard<std::mutex> lock(mutex);
+        outputs.emplace_back(value->timestamp_us, value->planes[0][0]);
+    }, [&](auto) -> std::unique_ptr<VideoBeautyProcessor> {
+        ++created;
+        constructing.set_value();
+        CHECK(allowConstruction.wait_for(5s) == std::future_status::ready);
+        return std::make_unique<SlowFirst>(priming, allowFirstFrame);
+    });
+    pipeline.bind(1, true);
+    auto sendAndWait = [&](int64_t timestamp) {
+        pipeline.submit(frame(timestamp), 1);
+        eventually([&] {
+            std::lock_guard<std::mutex> lock(mutex);
+            return !outputs.empty() && outputs.back().first == timestamp;
+        });
+    };
+    sendAndWait(1);
+    CHECK(created == 0);
+    auto enable = std::async(std::launch::async, [&] {
+        pipeline.configure(BeautyOptions{sizeof(BeautyOptions), 0, 0, 0, 0});
+    });
+    CHECK(constructing.get_future().wait_for(5s) == std::future_status::ready);
+    sendAndWait(2);
+    sendAndWait(3);
+    constructed.set_value();
+    enable.get();
+    CHECK(priming.get_future().wait_for(5s) == std::future_status::ready);
+    sendAndWait(4);
+    sendAndWait(5);
+    std::future<void> disable;
+    if (cancel)
+        disable = std::async(std::launch::async, [&] { pipeline.configure(std::nullopt); });
+    primed.set_value();
+    if (cancel) disable.get();
+    // The first processed result (3) is now too old. New frames must still switch to beauty.
+    int64_t next = 6;
+    for (; next < 64; ++next) {
+        sendAndWait(next);
+        std::lock_guard<std::mutex> lock(mutex);
+        if (cancel || outputs.back().second == 77) break;
+    }
+    CHECK(next < 64);
+    sendAndWait(next + 1);
+    pipeline.shutdown();
+    CHECK(outputs.size() == size_t(next + 1));
+    for (size_t i = 0; i < outputs.size(); ++i) {
+        CHECK(outputs[i].first == int64_t(i + 1));
+        if (i < 5 || cancel) CHECK(outputs[i].second == 33);
+    }
+    if (!cancel) CHECK(outputs.back().second == 77);
+}
+
 static void real_worker() {
     auto raw = frame(456, 1920, 1080);
+    raw->color_primaries = raw->color_transfer = 1;
     for (size_t i = 0; i < raw->planes[0].size(); i += 4) {
         int noise = (int((i / 4) % 7) - 3) * 5;
         raw->planes[0][i] = uint8_t(90 + noise); raw->planes[0][i + 1] = uint8_t(120 + noise);
         raw->planes[0][i + 2] = uint8_t(160 + noise); raw->planes[0][i + 3] = 255;
     }
+    // ClearVision's full-range BGRA path used to turn saturated red into green at zero strength.
+    for (uint32_t y = 0; y < 32; ++y) {
+        auto* pixel = raw->planes[0].data() + y * raw->strides[0];
+        for (uint32_t x = 0; x < 32; ++x, pixel += 4) {
+            pixel[0] = pixel[1] = 0;
+            pixel[2] = 255;
+        }
+    }
     auto original = raw->planes[0];
     auto plainWorker = make_video_beauty_processor({sizeof(BeautyOptions), 0, 0, 0, 0}); auto plain = plainWorker->process(*raw);
+    const auto* red = plain->planes[0].data() + 16 * plain->strides[0] + 16 * 4;
+    CHECK(red[2] >= 250 && red[1] <= 5 && red[0] <= 5);
+    CHECK(plain->color_primaries == raw->color_primaries && plain->color_transfer == raw->color_transfer);
     plainWorker->update({sizeof(BeautyOptions), 1, 1, 0, 0}); auto strong = plainWorker->process(*raw);
     double delta = 0, neutral_delta = 0;
     for (size_t i = 0; i < original.size(); ++i) {
@@ -154,13 +244,16 @@ static void real_worker() {
     neutral_delta /= 1920 * 1080 * 3;
     std::cout << "ClearVision 1080p mean RGB difference with zero strengths: " << neutral_delta << '\n';
     CHECK(neutral_delta < 8);
-    CHECK(delta > 1 && strong->timestamp_us == 456 && strong->width == 1920 && strong->height == 1080 && raw->planes[0] == original);
-    std::cout << "PASS actual SDK ClearVision 1080p, mean RGB difference " << delta << '\n';
+    std::cout << "ClearVision 1080p mean RGB difference with nonzero strengths: " << delta << '\n';
+    CHECK(delta > 1);
+    CHECK(strong->timestamp_us == 456 && strong->width == 1920 && strong->height == 1080);
+    CHECK(raw->planes[0] == original);
 }
 int main(int argc, char**) {
     try {
         contracts(); fallback_and_pressure(); shared_preview_and_media(); stale_in_flight();
         shared_sdr_preparation_and_hdr_fallback();
+        live_frames_during_startup(false); live_frames_during_startup(true);
         if (argc > 1) real_worker();
         std::cout << "PASS SDK beauty defaults, validation, fallback, capacity, shared output and stale-frame isolation\n";
         return 0;
