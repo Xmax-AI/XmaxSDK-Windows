@@ -151,9 +151,9 @@ static void flash_model() {
     const auto model = xmax::client::model_info(xmax::RealtimeModel::x2_1_flash);
     CHECK(std::string(model.identifier) == identifier && std::string(model.display_name) == "X2.1 Flash");
     CHECK(model.format_count == 5 && model.default_frame_rate == 30);
-    CHECK(model.default_camera_format.width == 704 && model.default_camera_format.height == 1280);
+    CHECK(model.default_camera_format.width == 1280 && model.default_camera_format.height == 704);
     CHECK(model.default_camera_format.fps == 30);
-    CHECK(model.minimum_input_pixels == 600000 && model.maximum_input_pixels == 960 * 960);
+    CHECK(model.minimum_input_pixels == 200000 && model.maximum_input_pixels == 960 * 960);
     CHECK(model.input_size_alignment == 32);
 
     const xmax_video_format expected[]{
@@ -201,9 +201,9 @@ static void flash_model() {
     XmaxRealtimeManager manager(std::make_shared<ApiService>(config, http), [rtc] { return rtc; },
         std::chrono::seconds(10), [camera] { return std::make_unique<ProbeCamera>(camera); });
     manager.adaptive(false);
-    manager.create_local_camera_stream("one", model.default_camera_format, false);
+    manager.create_local_camera_stream("one", expected[0], false);
     expect_error(XMAX_INVALID_ARGUMENT, [&] { manager.update_camera_format(full_hd); });
-    manager.update_camera_format(expected[1]);
+    manager.update_camera_format(model.default_camera_format);
     CHECK(manager.camera_format().width == 1280 && manager.camera_format().height == 704);
     manager.start("prompt", "", false, false);
     CHECK(json::parse(http->requests.front().body)["model"] == identifier);
@@ -213,7 +213,7 @@ static void flash_model() {
     manager.quality_level(0, 5);
     const auto uplink = manager.quality().uplink;
     CHECK(uplink.width == rtc->encoding.format.width && uplink.height == rtc->encoding.format.height);
-    CHECK(uplink.width * uplink.height >= model.minimum_input_pixels);
+    CHECK(uplink.width == 640 && uplink.height == 352 && uplink.fps == 16);
 }
 
 static void camera_configuration() {

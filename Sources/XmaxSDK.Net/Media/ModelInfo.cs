@@ -17,7 +17,7 @@ namespace Xmax.SDK;
 /// <param name="DisplayName">The model display name.</param>
 /// <param name="SupportedFormats">The model-supported generation canvas sizes with their default frame rates.</param>
 /// <param name="DefaultCameraFormat">The default camera output format.</param>
-/// <param name="MinimumInputPixels">The model minimum input-pixel metadata, expressed as width multiplied by height.</param>
+/// <param name="MinimumInputPixels">The minimum area in pixels used for external media sizing and adaptive uplink encoding.</param>
 /// <param name="MaximumInputPixels">The maximum input-pixel count, expressed as width multiplied by height.</param>
 /// <param name="InputSizeAlignment">The canvas dimension alignment used when the model has no fixed format list.</param>
 public sealed record ModelInfo(

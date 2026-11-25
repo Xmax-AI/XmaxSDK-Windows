@@ -1362,8 +1362,7 @@ typedef struct xmax_model_info {
     uint32_t format_count;
 
     /**
-     * The minimum generation canvas pixel count when no fixed-size list exists; input frames need not be
-     * enlarged.
+     * The minimum area in pixels used for external media sizing and adaptive uplink encoding.
      */
     uint32_t minimum_input_pixels;
 

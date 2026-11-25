@@ -188,7 +188,7 @@ target_link_libraries(YourApp PRIVATE Xmax::SDK)
 The default realtime model is X2.1. Select `RealtimeModel.X2_1Flash` in .NET,
 `xmax::RealtimeModel::x2_1_flash` in C++, or `"x2.1-flash"` in the C API to use
 X2.1 Flash over Agora. Flash supports 704×1280, 1280×704, 960×960, 1024×768, and
-768×1024, with 704×1280 at 30 FPS as the default camera format.
+768×1024, with 1280×704 at 30 FPS as the default camera format.
 
 Use your front camera to turn yourself into a character from a reference image in real time.
 

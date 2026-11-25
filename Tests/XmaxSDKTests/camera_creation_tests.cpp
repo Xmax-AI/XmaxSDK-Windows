@@ -157,9 +157,10 @@ struct Fixture {
     std::shared_ptr<FakeHttp> http = std::make_shared<FakeHttp>();
     std::shared_ptr<FakeRtc> rtc = std::make_shared<FakeRtc>();
     std::unique_ptr<xmax_realtime_impl> handle;
-    Fixture() {
+    explicit Fixture(const char* model = "x2.1") {
         camera->source = pixels(640, 480);
         Config config; config.key = "offline-test";
+        config.model = model;
         auto service = std::make_shared<ApiService>(config, http);
         handle = std::make_unique<xmax_realtime_impl>(std::make_unique<XmaxRealtimeManager>(service,
             [value = rtc] { return value; }, 10s, [value = camera] { return std::make_unique<Camera>(value); }));
@@ -171,6 +172,15 @@ struct Fixture {
         return options;
     }
 };
+
+static void flash_camera_defaults_to_landscape() {
+    Fixture f("x2.1-flash");
+    xmax_camera_stream_options options{};
+    options.struct_size = sizeof(options);
+    CHECK(xmax_realtime_create_local_camera_stream_with_options(f.handle.get(), &options) == XMAX_OK);
+    const auto output = f.handle->session->camera_format();
+    CHECK(output.width == 1280 && output.height == 704 && output.fps == 30);
+}
 
 static void creation_defaults_and_retained_settings() {
     Fixture f;
@@ -261,7 +271,7 @@ static void warmup_before_publication_and_cancellation() {
 int main() {
     try {
         orientation_retry_matches_web(); rotated_capture_geometry(); camera_rate_limit_preserves_nominal_rate_with_jitter();
-        creation_defaults_and_retained_settings(); selection_and_validation();
+        flash_camera_defaults_to_landscape(); creation_defaults_and_retained_settings(); selection_and_validation();
         warmup_before_publication_and_cancellation();
         std::cout << "Camera creation alignment tests passed\n";
         return 0;

@@ -70,7 +70,7 @@ inline constexpr xmax_model_info model_capabilities(
         info.supported_formats[2] = {1408, 1408, 30};
         info.supported_formats[3] = {1152, 1536, 30};
         info.supported_formats[4] = {1536, 1152, 30};
-        info.minimum_input_pixels = 200000;
+        info.default_camera_format = info.supported_formats[0];
         info.maximum_input_pixels = 2100000;
         break;
     case RealtimeModel::x2_1_flash:
@@ -80,16 +80,16 @@ inline constexpr xmax_model_info model_capabilities(
         info.supported_formats[2] = {960, 960, 30};
         info.supported_formats[3] = {1024, 768, 30};
         info.supported_formats[4] = {768, 1024, 30};
-        info.minimum_input_pixels = 600000;
+        info.default_camera_format = info.supported_formats[1];
         info.maximum_input_pixels = 960 * 960;
         break;
     default:
         return info;
     }
     info.format_count = 5;
+    info.minimum_input_pixels = 200000;
     info.input_size_alignment = 32;
     info.default_frame_rate = 30;
-    info.default_camera_format = info.supported_formats[0];
     return info;
 }
 } // namespace xmax

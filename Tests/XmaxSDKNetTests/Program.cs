@@ -252,13 +252,15 @@ try
     {
         var model = XmaxClient.GetModelInfo(RealtimeModel.X2_1Flash);
         Check(model.Identifier == "x2.1-flash" && model.DisplayName == "X2.1 Flash", "Flash model identity");
-        Check(model.DefaultCameraFormat == new RealtimeVideoFormat(704, 1280), "Flash defaults to 704×1280 capture");
+        Check(model.DefaultCameraFormat == new RealtimeVideoFormat(1280, 704, 30), "Flash defaults to 1280×704 at 30 fps");
         Check(model.SupportedFormats.SequenceEqual(new[] { new RealtimeVideoFormat(704, 1280), new RealtimeVideoFormat(1280, 704),
             new RealtimeVideoFormat(960, 960), new RealtimeVideoFormat(1024, 768), new RealtimeVideoFormat(768, 1024) }), "five Flash formats");
-        Check(model.MaximumInputPixels == 960 * 960, "Flash pixel limit");
+        Check(model.MinimumInputPixels == 200000 && model.MaximumInputPixels == 960 * 960, "Flash pixel limits");
 
         using var client = new XmaxClient();
         var media = client.CreateMediaService(RealtimeModel.X2_1Flash);
+        Check(media.ResolveMediaSize(new(640, 352), RealtimeMediaSource.Image) == new MediaSize(640, 352),
+            "Flash preserves external input above its 200,000-pixel minimum");
         Check(media.ResolveGenerationSize(new(1920, 1080)) == new MediaSize(1280, 704), "Flash landscape canvas");
         await using var manager = client.CreateRealtimeManager(new() { Model = RealtimeModel.X2_1Flash });
         await ThrowsAsync<ArgumentException>(() => manager.CreateLocalCameraStreamAsync(RealtimeCameraFormat.Resolution1920x1080));
